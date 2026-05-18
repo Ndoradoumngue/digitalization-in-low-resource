@@ -166,6 +166,58 @@ pnpm dev
 # Dashboard at http://localhost:5173
 ```
 
+## Testing
+
+The project has two independent test suites: Python (pytest) for the API server, and TypeScript (vitest) for the Zod schemas.
+
+### Python — API server tests
+
+Tests cover all auth flows, OCR and VLM endpoint behaviour, image serving, and auth-guard enforcement. The filesystem is fully mocked with temporary directories — no real documents or result files are required.
+
+```bash
+# Install test dependencies (once)
+pip install -r requirements.test.txt
+
+# Run all API tests
+pytest tests/ -v
+
+# Run a specific file
+pytest tests/test_auth.py -v
+
+# Run with coverage (needs pytest-cov)
+pip install pytest-cov
+pytest tests/ --cov=api_server --cov-report=term-missing
+```
+
+Or via the root package.json shortcut:
+
+```bash
+pnpm test:api
+```
+
+### TypeScript — Zod schema tests
+
+Tests cover `parseVlmResult` (all confidence tiers, error cases, field fallbacks) and all Zod schemas in `@sdai/types`.
+
+```bash
+# Install workspace deps (once)
+pnpm install
+
+# Run TypeScript tests
+pnpm --filter @sdai/types test
+
+# Or run all package tests from the root
+pnpm test
+```
+
+### Running both at once
+
+```bash
+pnpm test && pnpm test:api
+```
+
+---
+
 ## API reference
 
 All routes are read-only (`GET`).
