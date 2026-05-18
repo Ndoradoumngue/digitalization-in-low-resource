@@ -1,0 +1,26 @@
+# Government documents — never commit
+documents/
+
+# Dependencies
+node_modules/
+venv311/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables
+.env
+.env.local
+
+# Mac
+.DS_Store
+
+# Python virtual env
+*.egg-info/
+dist/
+
+# Build outputs
+apps/*/dist/
+packages/*/dist/

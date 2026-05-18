@@ -1,0 +1,17 @@
+{
+  "name": "sdai-digitalization",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @sdai/dashboard dev",
+    "build": "pnpm -r --filter=./packages/** build && pnpm --filter @sdai/dashboard build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
