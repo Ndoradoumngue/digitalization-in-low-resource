@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { useDocuments, useOcrResult } from "./hooks/useDocuments";
-import { useVlmDocuments, useVlmResult } from "./hooks/useVlm";
-import DocumentList from "./components/DocumentList";
-import OcrPanel from "./components/OcrPanel";
-import VlmPanel from "./components/VlmPanel";
+import { useDocuments, useOcrResult } from "../hooks/useDocuments";
+import { useVlmDocuments, useVlmResult } from "../hooks/useVlm";
+import { useAuth } from "../context/AuthContext";
+import DocumentList from "../components/DocumentList";
+import OcrPanel from "../components/OcrPanel";
+import VlmPanel from "../components/VlmPanel";
 
 type Tab = "vlm" | "ocr";
 
@@ -19,34 +20,29 @@ const SKELETON = (
   </div>
 );
 
-export default function App() {
+export default function DashboardPage() {
+  const { user, logout } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("vlm");
 
-  // Both document lists are fetched eagerly so switching tabs is instant.
-  // Each list carries its own hasResult flag reflecting that backend's data.
   const { data: ocrDocs, isLoading: ocrDocsLoading, error: ocrDocsError } = useDocuments();
   const { data: vlmDocs, isLoading: vlmDocsLoading, error: vlmDocsError } = useVlmDocuments();
 
-  const documents = tab === "vlm" ? vlmDocs : ocrDocs;
+  const documents   = tab === "vlm" ? vlmDocs    : ocrDocs;
   const docsLoading = tab === "vlm" ? vlmDocsLoading : ocrDocsLoading;
-  const docsError = tab === "vlm" ? vlmDocsError : ocrDocsError;
+  const docsError   = tab === "vlm" ? vlmDocsError   : ocrDocsError;
 
-  // Only fetch the active tab's result — no wasted request when switching
-  const { data: ocrDoc, isLoading: ocrLoading, error: ocrError } = useOcrResult(
-    tab === "ocr" ? selected : null
-  );
-  const { data: vlmResult, isLoading: vlmLoading, error: vlmError } = useVlmResult(
-    tab === "vlm" ? selected : null
-  );
+  const { data: ocrDoc,    isLoading: ocrLoading,  error: ocrError  } = useOcrResult(tab === "ocr" ? selected : null);
+  const { data: vlmResult, isLoading: vlmLoading,  error: vlmError  } = useVlmResult(tab === "vlm" ? selected : null);
 
-  const isLoading = tab === "ocr" ? ocrLoading : vlmLoading;
-  const fetchError = tab === "ocr" ? ocrError : vlmError;
+  const isLoading  = tab === "ocr" ? ocrLoading : vlmLoading;
+  const fetchError = tab === "ocr" ? ocrError   : vlmError;
 
   return (
     <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
       {/* Sidebar */}
       <aside className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-hidden">
+        {/* Header */}
         <div className="px-4 py-4 border-b border-gray-200">
           <h1 className="text-lg font-bold text-indigo-700 tracking-tight">
             SDAI Digitalization
@@ -73,6 +69,7 @@ export default function App() {
           ))}
         </div>
 
+        {/* Document list */}
         <div className="overflow-y-auto flex-1">
           {docsError ? (
             <p className="p-4 text-sm text-red-500">
@@ -88,6 +85,19 @@ export default function App() {
               isLoading={docsLoading}
             />
           )}
+        </div>
+
+        {/* User / logout footer */}
+        <div className="px-4 py-3 border-t border-gray-200 flex items-center gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-gray-700 truncate">{user?.username}</p>
+          </div>
+          <button
+            onClick={logout}
+            className="flex-shrink-0 text-xs text-gray-400 hover:text-red-500 transition-colors"
+          >
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -108,11 +118,9 @@ export default function App() {
           </div>
         ) : (
           <div className="p-8">
-            <h2 className="text-xl font-semibold text-gray-800 truncate mb-6">
-              {selected}
-            </h2>
-            {tab === "ocr" && ocrDoc && <OcrPanel doc={ocrDoc} />}
-            {tab === "vlm" && vlmResult && <VlmPanel result={vlmResult} />}
+            <h2 className="text-xl font-semibold text-gray-800 truncate mb-6">{selected}</h2>
+            {tab === "ocr" && ocrDoc    && <OcrPanel   doc={ocrDoc}       />}
+            {tab === "vlm" && vlmResult && <VlmPanel   result={vlmResult} />}
           </div>
         )}
       </main>

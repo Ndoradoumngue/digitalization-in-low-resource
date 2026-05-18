@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "pnpm --filter @sdai/dashboard dev",
-    "build": "pnpm -r --filter=./packages/** build && pnpm --filter @sdai/dashboard build",
+    "dev": "pnpm --filter @sdai/frontend dev",
+    "build": "pnpm -r --filter=./packages/** build && pnpm --filter @sdai/frontend build",
     "typecheck": "pnpm -r typecheck"
   },
   "engines": {
@@ -13,5 +13,8 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

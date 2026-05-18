@@ -1,5 +1,5 @@
 {
-  "name": "@sdai/dashboard",
+  "name": "@sdai/frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -14,7 +14,8 @@
     "@sdai/types": "workspace:*",
     "@tanstack/react-query": "^5.100.10",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.26.2"
   },
   "devDependencies": {
     "@types/react": "^18.2.15",

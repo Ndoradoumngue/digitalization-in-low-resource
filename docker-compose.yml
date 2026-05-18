@@ -1,0 +1,34 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    volumes:
+      # Mount the documents directory read-only — results and images live here
+      - ./documents:/app/documents:ro
+    environment:
+      # In Docker, nginx proxies /api/* internally so CORS is not required.
+      # Set to a comma-separated list of origins for local dev without Docker.
+      - CORS_ORIGINS=
+      # JWT secret — change this in production
+      - AUTH_SECRET_KEY=change-me-in-production
+      # Single admin user — change these in production
+      - AUTH_USERNAME=admin
+      - AUTH_PASSWORD=changeme
+      # Set to "true" when running behind HTTPS in production
+      - AUTH_SECURE_COOKIES=false
+    restart: unless-stopped
+    # Port not exposed to host — only the frontend container talks to it via Docker DNS.
+    # Uncomment to reach the API directly at http://localhost:8000
+    # ports:
+    #   - "8000:8000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped

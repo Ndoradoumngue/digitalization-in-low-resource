@@ -1,0 +1,27 @@
+# Python environments and caches
+venv/
+venv311/
+__pycache__/
+*.pyc
+*.pyo
+
+# Node dependencies — reinstalled inside the build container
+node_modules/
+**/node_modules/
+
+# Build output
+apps/dashboard/dist/
+
+# Git and editor
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Documents are mounted at runtime, not baked into images
+# (comment this out if you ever want to bake them in)
+documents/
+
+# OS
+.DS_Store
+Thumbs.db
