@@ -1,5 +1,67 @@
 # Architecture
 
+## System topology
+
+```
+                            Internet / LAN
+                                  │
+                             port 80/443
+                                  │
+                          ┌───────▼────────┐
+                          │   frontend     │
+                          │  nginx + React │
+                          │  (SPA + proxy) │
+                          └──┬────────┬───┘
+                             │        │
+                     /api/*  │        │  /images/*
+                   /images/* │        │  (nginx cache — 24 h)
+                             │        │
+                     ┌───────▼────────▼───┐
+                     │        api         │
+                     │  FastAPI + Uvicorn │
+                     │  port 8000         │
+                     └──┬────────┬────────┘
+                        │        │
+              SQL (async)│        │ HTTP REST
+              asyncpg    │        │ (Ollama API)
+                         │        │
+              ┌──────────▼──┐  ┌──▼──────────┐
+              │     db      │  │   ollama    │
+              │ PostgreSQL  │  │ qwen2.5vl:7b│
+              │ port 5432   │  │ port 11434  │
+              └─────────────┘  └─────────────┘
+                        │
+              ┌─────────▼───────┐
+              │     redis       │
+              │  response cache │
+              │  port 6379      │
+              └─────────────────┘
+```
+
+### Request flow
+
+| Path | Route |
+|---|---|
+| `GET /` and all SPA routes | nginx serves `index.html` from the built React bundle |
+| `POST/GET /api/*` | nginx proxies to `api:8000` — no round-trip to the internet |
+| `GET /images/*` | nginx proxies to `api:8000/images/*`, caching `200` responses for 24 h |
+| VLM inference | `api` calls `ollama:11434/api/chat` on the internal Docker network |
+| Database reads/writes | `api` connects to `db:5432` via asyncpg (async SQLAlchemy) |
+| Schema/types cache | `api` reads/writes Redis keys via `fastapi-cache2` |
+
+### Port exposure
+
+| Port | Exposed to | Service |
+|---|---|---|
+| 80 | Host | `frontend` — redirects to 443 |
+| 443 | Host | `frontend` — HTTPS (self-signed or Let's Encrypt) |
+| 5432 | Host (optional) | `db` — for local database tooling |
+| 8000 | Internal only | `api` — accessed only via nginx proxy |
+| 11434 | Internal only | `ollama` — accessed only by `api` |
+| 6379 | Internal only | `redis` — accessed only by `api` |
+
+---
+
 ## Five-stage pipeline
 
 ### 1 — Preprocessing
@@ -126,7 +188,7 @@ Rather than maintaining a fixed database schema, the system creates and evolves 
 | OCR | Tesseract 4 (`fra+ara`) | Cheap classifier + legacy benchmarking |
 | Image processing | OpenCV, Pillow, pdf2image | Preprocessing pipeline |
 | Backend framework | FastAPI + Uvicorn | Async REST API |
-| Auth | python-jose JWT, passlib/bcrypt | httpOnly cookie auth |
+| Auth | python-jose JWT, bcrypt | httpOnly cookie auth |
 | Database driver | SQLAlchemy (async) + asyncpg | PostgreSQL async I/O |
 | Database | PostgreSQL 15 | Dynamic document storage |
 | Task queue | asyncio.Queue + background task | Single-worker ingestion queue |
