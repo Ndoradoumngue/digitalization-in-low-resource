@@ -10,9 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.0.0",
     "@sdai/api-client": "workspace:*",
     "@sdai/types": "workspace:*",
     "@tanstack/react-query": "^5.100.10",
+    "@xyflow/react": "^12.10.2",
+    "html-to-image": "^1.11.13",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.26.2"

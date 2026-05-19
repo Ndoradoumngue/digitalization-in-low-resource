@@ -1,24 +1,130 @@
+# SDAI Digitalisation — Docker Compose
+#
+# Services:
+#   redis     — Redis 7            (internal; caches schema / types / review count)
+#   db        — PostgreSQL 15      (port 5432 — exposed for local tooling)
+#   ollama    — Ollama VLM server  (internal port 11434, exposed optionally)
+#   api       — FastAPI backend    (internal port 8000, proxied via nginx)
+#   frontend  — React + Nginx      (public ports 80 → redirect, 443 → HTTPS)
+#
+# Quick start:
+#   cp .env.example .env                               # edit AUTH_SECRET_KEY at minimum
+#   docker compose up --build
+#   docker compose exec api python create_admin.py --email admin@example.com --password secret
+#
+# HTTPS modes (set HTTPS_MODE in .env):
+#   self_signed  — default; self-signed cert baked in at build time; no config needed.
+#   letsencrypt  — certbot with the nginx plugin; requires LETSENCRYPT_DOMAIN + email.
+#                  See README § HTTPS for the one-time certbot command.
+#
+# Offline deployment (no internet on the target server):
+#   Run ./setup.sh once on an internet-connected machine, then transfer the
+#   whole directory and run ./install.sh on the offline server.
+
 services:
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER:     sdai
+      POSTGRES_PASSWORD: sdai
+      POSTGRES_DB:       sdai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sdai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      # Persistent model storage — survives container restarts
+      - ollama_data:/root/.ollama
+      # Offline model archive produced by setup.sh (read-only at runtime)
+      - ./models:/models:ro
+    ports:
+      # Expose for direct host access (curl http://localhost:11434); safe to remove
+      - "11434:11434"
+    environment:
+      # Allow up to 2 concurrent VLM requests (Stage 2 is single-worker but
+      # allows slight overlap between the outgoing request and response parsing).
+      OLLAMA_NUM_PARALLEL: 2
+      # Keep only one model loaded; qwen2.5vl:7b fills most of GPU/RAM already.
+      OLLAMA_MAX_LOADED_MODELS: 1
+    restart: unless-stopped
+    # Override the default entrypoint so we can run a shell script that
+    # restores the offline bundle before starting the server.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -f /models/ollama-models.tar.gz ]; then
+          echo "Restoring model from offline archive (first run only)..."
+          tar xzf /models/ollama-models.tar.gz -C /root/.ollama
+        fi
+        /bin/ollama serve &
+        OLLAMA_PID=$$!
+        echo "Waiting for Ollama server to be ready..."
+        until /bin/ollama list >/dev/null 2>&1; do sleep 2; done
+        if /bin/ollama list | grep -q 'qwen2.5vl'; then
+          echo "Model ready."
+        else
+          echo "Pulling qwen2.5vl:7b (requires internet)..."
+          /bin/ollama pull qwen2.5vl:7b
+        fi
+        wait $$OLLAMA_PID
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s   # allow time for model extraction on first boot
+
   api:
     build:
-      context: .
-      dockerfile: Dockerfile.api
+      context: ./apps/api
+      dockerfile: Dockerfile
     volumes:
-      # Mount the documents directory read-only — results and images live here
-      - ./documents:/app/documents:ro
+      # documents/ is read-write so Google Drive imports can land in anonymized_docs/
+      - ./documents:/app/documents
+      # Persistent volume for processed images and uploaded files
+      - apidata:/data
     environment:
       # In Docker, nginx proxies /api/* internally so CORS is not required.
-      # Set to a comma-separated list of origins for local dev without Docker.
       - CORS_ORIGINS=
-      # JWT secret — change this in production
+      # JWT auth — run create_admin.py after first boot to seed the first user
       - AUTH_SECRET_KEY=change-me-in-production
-      # Single admin user — change these in production
-      - AUTH_USERNAME=admin
-      - AUTH_PASSWORD=changeme
-      # Set to "true" when running behind HTTPS in production
       - AUTH_SECURE_COOKIES=false
+      # PostgreSQL (asyncpg driver)
+      - DATABASE_URL=postgresql+asyncpg://sdai:sdai@db:5432/sdai
+      # Ollama — use the containerised service (override with host.docker.internal:11434
+      # if you prefer to use a host-installed Ollama instead)
+      - OLLAMA_HOST=http://ollama:11434
+      # Directory for processed images and file uploads
+      - DATA_DIR=/data
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
-    # Port not exposed to host — only the frontend container talks to it via Docker DNS.
     # Uncomment to reach the API directly at http://localhost:8000
     # ports:
     #   - "8000:8000"
@@ -29,6 +135,24 @@ services:
       dockerfile: Dockerfile.frontend
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      # Let's Encrypt certificates — persists across restarts and rebuilds.
+      # Empty in self_signed mode (cert is baked into the image).
+      - letsencrypt_data:/etc/letsencrypt
+    environment:
+      # HTTPS mode: self_signed (default) or letsencrypt
+      - HTTPS_MODE=${HTTPS_MODE:-self_signed}
+      # Required only when HTTPS_MODE=letsencrypt
+      - LETSENCRYPT_DOMAIN=${LETSENCRYPT_DOMAIN:-}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
     depends_on:
       - api
     restart: unless-stopped
+
+volumes:
+  pgdata:
+  apidata:
+  ollama_data:
+  redis_data:
+  letsencrypt_data:

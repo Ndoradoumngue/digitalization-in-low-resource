@@ -1,6 +1,12 @@
 # Government documents — never commit
 documents/
 
+# TLS certificates and private keys — never commit
+certs/
+
+# Database and file backups — never commit
+backups/
+
 # Dependencies
 node_modules/
 venv311/

@@ -5,7 +5,7 @@ import type { User } from "@sdai/types";
 interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -22,8 +22,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
-  async function login(username: string, password: string) {
-    const u = await apiLogin(username, password);
+  async function login(email: string, password: string) {
+    const u = await apiLogin(email, password);
     setUser(u);
   }
 

@@ -25,12 +25,30 @@ RUN pnpm --filter @sdai/frontend build
 # ── Stage 2: serve ────────────────────────────────────────────────────────────
 FROM nginx:alpine
 
+# openssl  — generates the self-signed certificate below
+# certbot certbot-nginx — issues and renews Let's Encrypt certificates
+RUN apk add --no-cache openssl certbot certbot-nginx
+
+# Generate self-signed certificate at build time.
+# Used by HTTPS_MODE=self_signed (the default).  No volume or runtime openssl call needed.
+RUN mkdir -p /etc/nginx/ssl && \
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout /etc/nginx/ssl/key.pem \
+      -out    /etc/nginx/ssl/cert.pem \
+      -subj   "/CN=sdai.local/O=SDAI/C=TD" 2>/dev/null
+
 # Static files from the build stage
 COPY --from=builder /app/apps/frontend/dist /usr/share/nginx/html
 
-# nginx config: SPA routing + reverse proxy to the api service
-COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
+# nginx config templates — entrypoint picks one based on HTTPS_MODE at startup
+COPY apps/frontend/nginx.conf                    /etc/nginx/templates/self_signed.conf
+COPY apps/frontend/nginx.letsencrypt.conf        /etc/nginx/templates/letsencrypt.conf
+COPY apps/frontend/nginx.letsencrypt_pending.conf /etc/nginx/templates/letsencrypt_pending.conf
 
-EXPOSE 80
+# Entrypoint writes /etc/nginx/conf.d/default.conf from the chosen template
+COPY apps/frontend/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
-CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 80 443
+
+ENTRYPOINT ["/docker-entrypoint.sh"]

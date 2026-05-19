@@ -9,12 +9,24 @@ See [CONTEXT.md](./CONTEXT.md) for the current state of the project: what is bui
 ## Quick reference
 
 ```bash
-pnpm install          # install all workspace deps
-pnpm dev              # start React dev server (port 5173)
-python api_server.py  # start FastAPI (port 8000)
-pnpm typecheck        # type-check all packages
-docker compose up --build  # full stack via Docker
-pre-commit run --all-files # run all linters manually
+pnpm install                    # install all workspace deps
+pnpm dev                        # start React dev server (port 5173)
+cd apps/api && uvicorn api_server:app --reload --port 8000  # start FastAPI
+pnpm typecheck                  # type-check all packages
+pnpm test:api                   # run Python tests
+docker compose up --build       # full stack via Docker
+pre-commit run --all-files      # run all linters manually
+```
+
+## Project layout
+
+```
+apps/
+  api/          ← FastAPI backend (api_server.py + routers)
+  frontend/     ← React + Vite frontend
+packages/
+  api-client/   ← fetch functions
+  types/        ← Zod schemas shared by frontend and api-client
 ```
 
 ## Critical rules

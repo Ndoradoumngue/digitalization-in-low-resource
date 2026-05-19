@@ -7,7 +7,7 @@
     "build": "pnpm -r --filter=./packages/** build && pnpm --filter @sdai/frontend build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --if-present test",
-    "test:api": "pytest tests/ -v"
+    "test:api": "pytest apps/api/tests/ -v"
   },
   "engines": {
     "node": ">=18",

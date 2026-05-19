@@ -1,17 +1,35 @@
 import {
   AllOcrResultsSchema,
   AllVlmResultsSchema,
+  AuditLogPageSchema,
+  BatchCreatedSchema,
+  BatchStatusSchema,
+  DbDocumentDetailSchema,
+  DbDocumentListSchema,
+  DbSchemaSchema,
+  DbTypesSchema,
   DocumentListSchema,
   LoginResponseSchema,
   OcrDocumentSchema,
   RawVlmResultSchema,
+  ReviewCountSchema,
+  ReviewQueueSchema,
   UserSchema,
   parseVlmResult,
   type AllOcrResults,
+  type AuditLogPage,
+  type BatchCreated,
+  type BatchStatus,
+  type DbDocumentDetail,
+  type DbDocumentList,
+  type DbSchema,
+  type DbType,
   type DocumentEntry,
   type ExtractionResult,
   type ImageVariant,
   type OcrDocument,
+  type ReviewCount,
+  type ReviewQueue,
   type User,
 } from "@sdai/types";
 
@@ -29,12 +47,12 @@ async function fetchJson<T>(
 
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
-export async function login(username: string, password: string): Promise<User> {
+export async function login(email: string, password: string): Promise<User> {
   const res = await fetch("/api/auth/login", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -97,4 +115,158 @@ export async function fetchVlmDocuments(): Promise<DocumentEntry[]> {
 
 export function imageUrl(filename: string, variant: ImageVariant): string {
   return `/images/${variant}/${encodeURIComponent(filename)}`;
+}
+
+// ── Ingest endpoints ──────────────────────────────────────────────────────────
+
+export async function uploadFiles(files: File[]): Promise<BatchCreated> {
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+
+  const res = await fetch("/api/ingest/upload", {
+    method: "POST",
+    credentials: "include",
+    body: fd,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return BatchCreatedSchema.parse(await res.json());
+}
+
+export async function ingestFromPath(
+  payload: { path?: string; google_drive_folder_id?: string }
+): Promise<BatchCreated> {
+  const res = await fetch("/api/ingest/path", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return BatchCreatedSchema.parse(await res.json());
+}
+
+export async function fetchBatchStatus(batchId: string): Promise<BatchStatus> {
+  return fetchJson(`/api/ingest/status/${encodeURIComponent(batchId)}`, BatchStatusSchema);
+}
+
+// ── Document DB endpoints ─────────────────────────────────────────────────────
+
+export interface DbListParams {
+  page?: number;
+  page_size?: number;
+  document_type?: string;
+  confidence?: string;
+  review_status?: string;
+  date_from?: string;
+  date_to?: string;
+  q?: string;
+}
+
+export async function fetchDbDocuments(params: DbListParams = {}): Promise<DbDocumentList> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "" && v !== null) qs.set(k, String(v));
+  }
+  return fetchJson(`/api/db/documents?${qs}`, DbDocumentListSchema);
+}
+
+export async function fetchDbDocumentDetail(
+  tableName: string,
+  id: string,
+): Promise<DbDocumentDetail> {
+  return fetchJson(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
+    DbDocumentDetailSchema,
+  );
+}
+
+export async function fetchDbTypes(): Promise<DbType[]> {
+  return fetchJson("/api/db/types", DbTypesSchema);
+}
+
+export async function fetchDbSchema(): Promise<DbSchema> {
+  return fetchJson("/api/db/schema", DbSchemaSchema);
+}
+
+// ── Review queue endpoints ────────────────────────────────────────────────────
+
+export interface ReviewQueueParams {
+  page?:          number;
+  page_size?:     number;
+  document_type?: string;
+}
+
+export interface ReviewPatchBody {
+  fields: Record<string, string | string[] | null>;
+  action: "approve" | "reject";
+}
+
+export async function fetchReviewQueue(params: ReviewQueueParams = {}): Promise<ReviewQueue> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "" && v !== null) qs.set(k, String(v));
+  }
+  return fetchJson(`/api/review/queue?${qs}`, ReviewQueueSchema);
+}
+
+export async function fetchReviewCount(): Promise<ReviewCount> {
+  return fetchJson("/api/review/count", ReviewCountSchema);
+}
+
+export async function patchReview(
+  tableName: string,
+  id: string,
+  body: ReviewPatchBody,
+): Promise<DbDocumentDetail> {
+  const res = await fetch(
+    `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
+    {
+      method:      "PATCH",
+      credentials: "include",
+      headers:     { "Content-Type": "application/json" },
+      body:        JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return DbDocumentDetailSchema.parse(await res.json());
+}
+
+export async function flagReview(tableName: string, id: string): Promise<void> {
+  const res = await fetch(
+    `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/flag`,
+    { method: "POST", credentials: "include" },
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export function dbImageUrl(sourcePath: string): string {
+  return `/api/db/image?path=${encodeURIComponent(sourcePath)}`;
+}
+
+// ── Admin endpoints ───────────────────────────────────────────────────────────
+
+export interface AuditLogParams {
+  page?:      number;
+  page_size?: number;
+  user_id?:   string;
+  action?:    string;
+  date_from?: string;
+  date_to?:   string;
+}
+
+export async function fetchAuditLog(params: AuditLogParams = {}): Promise<AuditLogPage> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "" && v !== null) qs.set(k, String(v));
+  }
+  return fetchJson(`/api/admin/audit-log?${qs}`, AuditLogPageSchema);
 }
