@@ -23,8 +23,7 @@ def _user_row(active: bool = True):
 
 def test_login_success(client, mock_db, monkeypatch):
     mock_db.execute.return_value = make_result(one_or_none=_user_row())
-    monkeypatch.setattr(api_server, "_pwd_ctx",
-                        type("_FakePwdCtx", (), {"verify": staticmethod(lambda p, h: True)})())
+    monkeypatch.setattr(api_server._bcrypt, "checkpw", lambda p, h: True)
 
     resp = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "secret"})
 
@@ -37,8 +36,7 @@ def test_login_success(client, mock_db, monkeypatch):
 
 def test_login_sets_jwt_cookie(client, mock_db, monkeypatch):
     mock_db.execute.return_value = make_result(one_or_none=_user_row())
-    monkeypatch.setattr(api_server, "_pwd_ctx",
-                        type("_FakePwdCtx", (), {"verify": staticmethod(lambda p, h: True)})())
+    monkeypatch.setattr(api_server._bcrypt, "checkpw", lambda p, h: True)
 
     resp = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "secret"})
 
@@ -50,8 +48,7 @@ def test_login_sets_jwt_cookie(client, mock_db, monkeypatch):
 
 def test_login_wrong_password(client, mock_db, monkeypatch):
     mock_db.execute.return_value = make_result(one_or_none=_user_row())
-    monkeypatch.setattr(api_server, "_pwd_ctx",
-                        type("_FakePwdCtx", (), {"verify": staticmethod(lambda p, h: False)})())
+    monkeypatch.setattr(api_server._bcrypt, "checkpw", lambda p, h: False)
 
     resp = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "wrong"})
 

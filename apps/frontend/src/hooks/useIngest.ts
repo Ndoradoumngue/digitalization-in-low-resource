@@ -11,6 +11,7 @@ const TERMINAL = new Set([
   "crashed",
   "out_of_scope",
   "review_required",
+  "duplicate",
 ]);
 
 function isDone(status: BatchStatus): boolean {

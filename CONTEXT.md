@@ -42,6 +42,8 @@ This file captures what has been built, why, and what is known to be incomplete 
 - Dynamic schema management: `_ensure_table()` creates or alters tables based on extracted fields.
 - Extracted fields stored in per-type tables (e.g., `doc_invoice`, `doc_permit`).
 - `UploadPage` at `/upload` with drag-and-drop file selector.
+- **Content-hash deduplication**: SHA-256 hash computed before preprocessing. If an identical file was previously ingested, the pipeline is skipped and the document is recorded with `status='duplicate'`. The `GET /api/ingest/status/{batch_id}` response includes `duplicates_skipped` count. The Upload page shows a violet duplicate badge and counter.
+- All per-type document tables have a `content_hash TEXT` column with a unique index (`idx_{table_name}_content_hash`) to enforce deduplication at the database layer.
 
 ### Document Database Browser
 
@@ -91,6 +93,18 @@ This file captures what has been built, why, and what is known to be incomplete 
   - Waits for Ollama to be ready, pulls model if not already loaded.
   - Health check gating: `api` service only starts after Ollama is healthy.
 
+### Request Timing Middleware
+
+- `api_server.py` includes an HTTP middleware that measures wall-clock time per request using `time.perf_counter()`.
+- Every response carries an `X-Process-Time` header (4 decimal places, e.g. `0.0123`).
+- Requests exceeding **2.0 s** emit a `WARNING` log: `Slow request: METHOD /path took X.XXXXs`.
+
+### Nginx Image Caching
+
+- All three nginx config files (`nginx.conf`, `nginx.letsencrypt.conf`, `nginx.letsencrypt_pending.conf`) include a `proxy_cache_path` at the `http` context (10 MB key zone, up to 1 GB on disk, 24-hour idle eviction).
+- The `/images/` location block caches `200` responses for 24 hours; cache misses hit FastAPI once and subsequent requests are served from disk.
+- The `X-Cache-Status` response header reports `HIT / MISS / EXPIRED / STALE / BYPASS`.
+
 ### Docker Deployment
 
 - `Dockerfile.api`: Python 3.11 FastAPI, `documents/` mounted as volume.
@@ -114,6 +128,9 @@ This file captures what has been built, why, and what is known to be incomplete 
 | `log_action()` swallows exceptions | Audit failures must never disrupt the calling endpoint's response |
 | `_ensure_table()` returns `"created"/"altered"/"unchanged"` | Lets `_store_extraction()` fire schema audit events without duplicating the table check |
 | Docker volume export for offline Ollama | `ollama save/load` don't exist — volume tarball is the only portable approach |
+| SHA-256 dedup checked before preprocessing | Avoids VLM cost on duplicates; the hash is cheap relative to Ollama inference |
+| `proxy_cache_path` before `server {}` in nginx conf | nginx includes these files inside its `http {}` block, so the directive is at the correct context level |
+| `@pytest.mark.benchmark` for perf tests | Keeps the standard CI run fast; benchmarks opt-in with `pytest -m benchmark` |
 
 ---
 
@@ -143,14 +160,24 @@ documents/                          # NOT in git, mounted at runtime
       <filename>.json               # per-document OCR results
 
 apps/api/
-  api_server.py                     # FastAPI app, auth routes, router registration
+  api_server.py                     # FastAPI app, auth routes, X-Process-Time middleware
   auth.py                           # get_current_user, require_admin, CurrentUser dataclass
   audit.py                          # log_action() helper, client_ip()
-  ingest_router.py                  # /api/ingest, dynamic DDL, _engine(), _INIT_DDL
+  ingest_router.py                  # /api/ingest, dynamic DDL, _engine(), SHA-256 dedup
   documents_router.py               # /api/documents/* browse endpoints
   review_router.py                  # /api/review/* approve/reject/flag
   admin_router.py                   # /api/admin/audit-log (admin only)
   create_admin.py                   # seed script to create/upsert admin user
+  tests/
+    conftest.py                     # fixtures: auth_client, mock_db, make_result()
+    test_auth.py                    # auth routes, token blocklist, admin guard
+    test_cache.py                   # cache key builder, invalidate_cache()
+    test_documents.py               # /api/db/* browse + schema endpoints
+    test_ingest.py                  # /api/ingest/*, _compute_hash, _find_duplicate, dedup paths
+    test_middleware.py              # X-Process-Time header + slow-request WARNING
+    test_performance.py             # benchmark tests (excluded from CI with -m "not benchmark")
+    test_rate_limit.py              # SlowAPI rate-limit key builder
+    test_review.py                  # /api/review/* approve/reject/flag/count
 
 apps/frontend/src/
   context/AuthContext.tsx           # global auth state (user, login, logout)

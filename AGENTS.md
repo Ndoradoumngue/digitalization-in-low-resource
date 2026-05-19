@@ -19,14 +19,24 @@ sdai_digitalization/
 │   └── api-client/     # @sdai/api-client — typed fetch wrapper (credentials: include)
 ├── apps/
 │   ├── api/            # FastAPI backend
-│   │   ├── api_server.py        # App entry point + auth routes
+│   │   ├── api_server.py        # App entry point + auth routes + X-Process-Time middleware
 │   │   ├── auth.py              # DB-backed auth: CurrentUser, get_current_user, require_admin
 │   │   ├── audit.py             # log_action() — never raises, writes to sdai_audit_log
-│   │   ├── ingest_router.py     # /api/ingest/* + _engine() + DDL helpers
+│   │   ├── ingest_router.py     # /api/ingest/* + _engine() + DDL helpers + SHA-256 dedup
 │   │   ├── documents_router.py  # /api/db/*
 │   │   ├── review_router.py     # /api/review/*
 │   │   ├── admin_router.py      # /api/admin/* (admin-only)
-│   │   └── create_admin.py      # Seed script for first admin account
+│   │   ├── create_admin.py      # Seed script for first admin account
+│   │   └── tests/
+│   │       ├── conftest.py          # fixtures: auth_client, admin_client, mock_db, make_result()
+│   │       ├── test_auth.py         # login, logout, token blocklist, admin guard
+│   │       ├── test_cache.py        # _path_key_builder, invalidate_cache()
+│   │       ├── test_documents.py    # /api/db/* browse, schema, image endpoints
+│   │       ├── test_ingest.py       # upload, path, status, _compute_hash, _find_duplicate, dedup
+│   │       ├── test_middleware.py   # X-Process-Time header + slow-request WARNING log
+│   │       ├── test_performance.py  # benchmark tests — opt-in with pytest -m benchmark
+│   │       ├── test_rate_limit.py   # SlowAPI key builder
+│   │       └── test_review.py       # approve, reject, flag, count
 │   └── frontend/       # @sdai/frontend — React 18 + Vite + Tailwind + TanStack Query
 ├── docker-compose.yml
 ├── Dockerfile.frontend
@@ -89,6 +99,29 @@ docker compose up --build api
 docker compose up --build frontend
 ```
 
+### Tests
+
+```bash
+cd apps/api
+pip install -r requirements.test.txt
+
+# Standard run (excludes performance benchmarks)
+pytest tests/ -m "not benchmark" -v
+
+# Benchmark tests only
+pytest tests/ -m benchmark -v
+
+# From repo root
+pnpm test:api
+```
+
+Key test patterns:
+- `mock_db` fixture — patches `ingest_router.engine`; configure with `mock_db.execute.return_value` or `mock_db.execute.side_effect`.
+- `_make_fake_session(monkeypatch, fetchall=[...])` — patches `ingest_router.SessionLocal` for status endpoint tests.
+- `asyncio.run(ingest_router._some_async_fn(...))` — call async helpers from sync test functions.
+- Benchmark tests use `benchmark(fn)` for uncached endpoints and `benchmark.pedantic(fn, setup=InMemoryBackend._store.clear, rounds=N)` for cached ones. Do **not** use `benchmark.stats.mean` (broken in pytest-benchmark 4.0.0); use `time.perf_counter()` for timing assertions.
+- Slow-request middleware test: patch `api_server.time` (not global `time`) so only `api_server.py`'s calls are affected.
+
 ### Pre-commit
 
 ```bash
@@ -108,9 +141,18 @@ pre-commit run --all-files  # run manually
 - CORS is **disabled in Docker** (nginx proxies internally). Enable via `CORS_ORIGINS` env var for local dev only.
 - `log_action()` in `audit.py` is called after state-changing operations. It swallows all exceptions — never let it propagate to callers.
 - `ingest_router.py` owns `_engine()`. Both `auth.py` and `audit.py` import it lazily (inside function bodies) to avoid the circular import: `ingest_router → auth → ingest_router`.
+- **Deduplication**: `_compute_hash(path)` computes SHA-256 in 64 KB chunks; `_find_duplicate(hash)` queries all tables with a `content_hash` column. `_register_and_enqueue()` calls both before touching the queue. Duplicates get `status='duplicate'` in `batch_documents` and are counted in the `duplicates_skipped` field of `GET /api/ingest/status/{batch_id}`.
+- Every per-type document table has a `content_hash TEXT` column with a unique index (`idx_{table_name}_content_hash`).
+- **Middleware**: `add_process_time_header` in `api_server.py` adds `X-Process-Time` (4 d.p.) to every response and logs a `WARNING` for requests exceeding 2.0 s.
 - VLM results are read from `documents/ocr_results/json/vlm_qwen25_results.json`.
 - OCR results are read from `documents/ocr_results/json/`.
 - Images served from `documents/raw/` and `documents/preprocessed/`.
+
+### Nginx (`apps/frontend/`)
+
+- Three config templates: `nginx.conf` (self-signed TLS), `nginx.letsencrypt.conf` (Let's Encrypt HTTPS), `nginx.letsencrypt_pending.conf` (HTTP-only pending first cert).
+- All three include `proxy_cache_path` at the `http` level (before `server {}`) and a `/images/` location block with 24-hour caching and `X-Cache-Status` header.
+- Only the pending config omits `X-Forwarded-Proto: https` (HTTP-only until cert is issued).
 
 ### Packages (`packages/`)
 

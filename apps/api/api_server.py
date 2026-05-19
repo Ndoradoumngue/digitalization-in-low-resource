@@ -25,18 +25,22 @@ Run locally:
 """
 
 import json
+import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -93,6 +97,22 @@ if _cors_env:
 app.add_middleware(SlowAPIMiddleware)
 
 
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration = time.perf_counter() - start
+    response.headers["X-Process-Time"] = f"{duration:.4f}"
+    if duration > 2.0:
+        logger.warning(
+            "Slow request: %s %s took %.4fs",
+            request.method,
+            request.url.path,
+            duration,
+        )
+    return response
+
+
 @app.exception_handler(RateLimitExceeded)
 async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     try:
@@ -107,7 +127,6 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONR
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def _create_token(user_id: str, jti: str) -> str:
@@ -156,7 +175,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
         )
         user = row.one_or_none()
 
-    if user is None or not user[5] or not _pwd_ctx.verify(body.password, user[4]):
+    if user is None or not user[5] or not _bcrypt.checkpw(body.password.encode(), user[4].encode()):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
 
     jti   = str(uuid.uuid4())

@@ -12,6 +12,7 @@ const STATUS_STYLES: Record<DocumentStatus, string> = {
   pending:          "bg-gray-100    text-gray-500",
   processing:       "bg-gray-100    text-gray-500",
   out_of_scope:     "bg-blue-100    text-blue-700",
+  duplicate:        "bg-violet-100  text-violet-700",
 };
 
 const STATUS_LABELS: Record<DocumentStatus, string> = {
@@ -21,6 +22,7 @@ const STATUS_LABELS: Record<DocumentStatus, string> = {
   pending:         "Pending",
   processing:      "Processing…",
   out_of_scope:    "Out of scope",
+  duplicate:       "Duplicate",
 };
 
 function StatusBadge({ status }: { status: DocumentStatus }) {
@@ -42,12 +44,12 @@ function ProgressTable({ batchId }: { batchId: string }) {
     return <p className="text-sm text-gray-400 mt-6">Loading batch status…</p>;
   }
 
-  const done = data.completed + data.crashed + data.review_required + data.out_of_scope;
+  const done = data.completed + data.crashed + data.review_required + data.out_of_scope + data.duplicates_skipped;
 
   return (
     <div className="mt-8 space-y-4">
       {/* Summary bar */}
-      <div className="flex items-center gap-6 text-sm">
+      <div className="flex items-center gap-6 text-sm flex-wrap">
         <span className="font-medium text-gray-700">
           {done} / {data.total} processed
         </span>
@@ -55,6 +57,17 @@ function ProgressTable({ batchId }: { batchId: string }) {
         <span className="text-amber-600">⚑ {data.review_required} review</span>
         <span className="text-red-500">✕ {data.crashed} crashed</span>
         <span className="text-blue-500">◌ {data.out_of_scope} out of scope</span>
+        {data.duplicates_skipped > 0 && (
+          <span className="text-violet-600 inline-flex items-center gap-1">
+            ⊜ {data.duplicates_skipped} duplicate
+            <span
+              className="cursor-help text-violet-400"
+              title="These files were already ingested. Their content hash matched an existing document so processing was skipped."
+            >
+              ⓘ
+            </span>
+          </span>
+        )}
       </div>
 
       {/* Progress bar */}

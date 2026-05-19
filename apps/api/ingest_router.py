@@ -26,6 +26,7 @@ Three-stage parallel pipeline:
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import os
@@ -173,21 +174,23 @@ _postprocess_sem = asyncio.Semaphore(4)
 
 
 class _PreparedDoc(NamedTuple):
-    doc_id:    str
-    batch_id:  str
-    dest_path: Path
-    filename:  str
-    t0:        float
+    doc_id:       str
+    batch_id:     str
+    dest_path:    Path
+    filename:     str
+    t0:           float
+    content_hash: str
 
 
 class _VlmResult(NamedTuple):
-    doc_id:    str
-    batch_id:  str
-    dest_path: Path
-    filename:  str
-    t0:        float
-    fields:    dict         # VLM result fields, or {} on any error
-    error:     Optional[str]  # None on success; message on crash/timeout/parse error
+    doc_id:       str
+    batch_id:     str
+    dest_path:    Path
+    filename:     str
+    t0:           float
+    fields:       dict         # VLM result fields, or {} on any error
+    error:        Optional[str]  # None on success; message on crash/timeout/parse error
+    content_hash: str
 
 
 async def startup() -> None:
@@ -355,6 +358,39 @@ async def _run_vlm(img_path: Path) -> dict:
         return {"_parse_error": True, "_raw": raw_text}
 
 
+# ── Content-hash deduplication ────────────────────────────────────────────────
+
+def _compute_hash(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+async def _find_duplicate(content_hash: str) -> dict | None:
+    """Return {table_name, id} for the first doc with this hash, or None."""
+    async with _engine().connect() as conn:
+        tables_result = await conn.execute(
+            text(
+                "SELECT table_name FROM information_schema.columns"
+                " WHERE column_name = 'content_hash' AND table_schema = 'public'"
+            )
+        )
+        tables = [row[0] for row in tables_result]
+
+    for table_name in tables:
+        async with _engine().connect() as conn:
+            row = await conn.execute(
+                text(f'SELECT id FROM "{table_name}" WHERE content_hash = :h LIMIT 1'),
+                {"h": content_hash},
+            )
+            match = row.one_or_none()
+            if match:
+                return {"table_name": table_name, "id": str(match[0])}
+    return None
+
+
 # ── Schema inference + storage ────────────────────────────────────────────────
 
 def _sanitize_identifier(name: str, max_len: int = 63) -> str:
@@ -401,6 +437,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             "ingested_at      TIMESTAMPTZ DEFAULT now()",
             "confidence       TEXT",
             "review_status    TEXT DEFAULT 'pending'",
+            "content_hash     TEXT",
         ]
         field_cols = [
             f"{_sanitize_identifier(k)} {_pg_type(k, v)}"
@@ -423,6 +460,11 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 f"CREATE INDEX IF NOT EXISTS idx_{table_name}_{suffix}"
                 f' ON "{table_name}" ({expr})'
             ))
+
+        await conn.execute(text(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_content_hash"
+            f' ON "{table_name}" (content_hash)'
+        ))
 
         # GIN full-text index over whichever FTS columns were actually created.
         # The VLM prompt always requests all four, but guard against missing keys.
@@ -469,6 +511,17 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             if col in _FTS_COLS:
                 fts_col_added = True
 
+    if "content_hash" not in existing:
+        await conn.execute(text(
+            f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS content_hash TEXT'
+        ))
+        altered = True
+
+    await conn.execute(text(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_content_hash"
+        f' ON "{table_name}" (content_hash)'
+    ))
+
     if fts_col_added:
         # A column that contributes to the FTS expression was added.
         # Drop and rebuild the GIN index so the new column is included.
@@ -499,6 +552,7 @@ async def _store_extraction(
     fields: dict,
     confidence: str,
     review_status: str,
+    content_hash: str | None = None,
 ) -> None:
     doc_type   = fields.get("document_type") or "document"
     table_name = _sanitize_identifier(doc_type)
@@ -508,6 +562,10 @@ async def _store_extraction(
 
         col_names = ["source_image_path", "batch_id", "confidence", "review_status"]
         col_vals  = [image_path, batch_id, confidence, review_status]
+
+        if content_hash is not None:
+            col_names.append("content_hash")
+            col_vals.append(content_hash)
 
         for k, v in fields.items():
             if k.startswith("_") or k == "extraction_confidence":
@@ -592,7 +650,7 @@ async def _update_doc_status(
 # ── Stage 1: Preprocessing pool ───────────────────────────────────────────────
 
 async def _stage1_process(
-    doc_id: str, batch_id: str, src_path: Path, filename: str
+    doc_id: str, batch_id: str, src_path: Path, filename: str, content_hash: str
 ) -> None:
     """Preprocess one document under the semaphore; push to _preprocessed_queue."""
     async with _preprocess_sem:
@@ -616,7 +674,7 @@ async def _stage1_process(
                 return
 
             await _preprocessed_queue.put(
-                _PreparedDoc(doc_id, batch_id, dest_path, filename, t0)
+                _PreparedDoc(doc_id, batch_id, dest_path, filename, t0, content_hash)
             )
         except Exception as e:
             await _update_doc_status(
@@ -660,13 +718,14 @@ async def _stage2_worker() -> None:
 
             await _vlm_queue.put(
                 _VlmResult(
-                    doc_id    = prepared.doc_id,
-                    batch_id  = prepared.batch_id,
-                    dest_path = prepared.dest_path,
-                    filename  = prepared.filename,
-                    t0        = prepared.t0,
-                    fields    = fields,
-                    error     = error,
+                    doc_id       = prepared.doc_id,
+                    batch_id     = prepared.batch_id,
+                    dest_path    = prepared.dest_path,
+                    filename     = prepared.filename,
+                    t0           = prepared.t0,
+                    fields       = fields,
+                    error        = error,
+                    content_hash = prepared.content_hash,
                 )
             )
         finally:
@@ -686,7 +745,8 @@ async def _stage3_process(result: _VlmResult) -> None:
                 processing_time=round(time.monotonic() - result.t0, 2),
             )
             await _store_extraction(
-                result.batch_id, str(result.dest_path), {}, "unknown", "manual_entry"
+                result.batch_id, str(result.dest_path), {}, "unknown", "manual_entry",
+                content_hash=result.content_hash,
             )
             return
 
@@ -699,6 +759,7 @@ async def _stage3_process(result: _VlmResult) -> None:
             await _store_extraction(
                 result.batch_id, str(result.dest_path),
                 result.fields, confidence, review_status,
+                content_hash=result.content_hash,
             )
         except Exception as e:
             await _update_doc_status(
@@ -742,6 +803,21 @@ async def _create_batch(source_type: str) -> str:
 async def _register_and_enqueue(
     batch_id: str, src_path: Path, filename: str
 ) -> None:
+    content_hash = await asyncio.to_thread(_compute_hash, src_path)
+    duplicate    = await _find_duplicate(content_hash)
+
+    if duplicate:
+        async with _session()() as sess:
+            await sess.execute(
+                text(
+                    "INSERT INTO batch_documents (batch_id, filename, status)"
+                    " VALUES (:b, :f, 'duplicate')"
+                ),
+                {"b": batch_id, "f": filename},
+            )
+            await sess.commit()
+        return
+
     async with _session()() as sess:
         result = await sess.execute(
             text(
@@ -752,7 +828,7 @@ async def _register_and_enqueue(
         )
         doc_id = str(result.scalar())
         await sess.commit()
-    await _queue.put((doc_id, batch_id, src_path, filename))
+    await _queue.put((doc_id, batch_id, src_path, filename, content_hash))
 
 
 # ── Google Drive helper ───────────────────────────────────────────────────────
@@ -980,12 +1056,13 @@ async def get_batch_status(
         return sum(1 for d in documents if d["status"] == s)
 
     return {
-        "batch_id":        batch_id,
-        "total":           len(documents),
-        "completed":       _count("completed"),
-        "crashed":         _count("crashed"),
-        "review_required": _count("review_required"),
-        "out_of_scope":    _count("out_of_scope"),
-        "pending":         _count("pending") + _count("processing"),
-        "documents":       documents,
+        "batch_id":           batch_id,
+        "total":              len(documents),
+        "completed":          _count("completed"),
+        "crashed":            _count("crashed"),
+        "review_required":    _count("review_required"),
+        "out_of_scope":       _count("out_of_scope"),
+        "pending":            _count("pending") + _count("processing"),
+        "duplicates_skipped": _count("duplicate"),
+        "documents":          documents,
     }

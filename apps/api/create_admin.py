@@ -13,7 +13,7 @@ import asyncio
 import os
 import sys
 
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -21,12 +21,10 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql+asyncpg://sdai:sdai@localhost:5432/sdai"
 )
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 async def main(email: str, password: str, full_name: str) -> None:
     engine = create_async_engine(DATABASE_URL, echo=False)
-    hashed = _pwd_ctx.hash(password)
+    hashed = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
 
     async with engine.begin() as conn:
         result = await conn.execute(

@@ -7,6 +7,7 @@ export const DocumentStatusEnum = z.enum([
   "crashed",
   "out_of_scope",
   "review_required",
+  "duplicate",
 ]);
 export type DocumentStatus = z.infer<typeof DocumentStatusEnum>;
 
@@ -23,14 +24,15 @@ export const IngestDocumentSchema = z.object({
 export type IngestDocument = z.infer<typeof IngestDocumentSchema>;
 
 export const BatchStatusSchema = z.object({
-  batch_id:        z.string(),
-  total:           z.number(),
-  completed:       z.number(),
-  crashed:         z.number(),
-  review_required: z.number(),
-  out_of_scope:    z.number(),
-  pending:         z.number(),
-  documents:       z.array(IngestDocumentSchema),
+  batch_id:           z.string(),
+  total:              z.number(),
+  completed:          z.number(),
+  crashed:            z.number(),
+  review_required:    z.number(),
+  out_of_scope:       z.number(),
+  pending:            z.number(),
+  duplicates_skipped: z.number(),
+  documents:          z.array(IngestDocumentSchema),
 });
 export type BatchStatus = z.infer<typeof BatchStatusSchema>;
 

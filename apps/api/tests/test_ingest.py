@@ -1,8 +1,12 @@
 """Tests for /api/ingest/* endpoints."""
 
+import asyncio
+import hashlib
 import io
+import uuid as _uuid_mod
+
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import ingest_router
 from conftest import make_result
@@ -168,6 +172,138 @@ def test_status_returns_batch_progress(auth_client, monkeypatch):
     body = resp.json()
     assert body["total"] == 1
     assert body["documents"][0]["status"] == "completed"
+
+
+# ── _compute_hash ─────────────────────────────────────────────────────────────
+
+def test_compute_hash_matches_hashlib(tmp_path):
+    content = b"known content for sha256 test"
+    f = tmp_path / "test.bin"
+    f.write_bytes(content)
+    assert ingest_router._compute_hash(f) == hashlib.sha256(content).hexdigest()
+
+
+def test_compute_hash_is_deterministic(tmp_path):
+    f = tmp_path / "repeat.bin"
+    f.write_bytes(b"repeatable content")
+    assert ingest_router._compute_hash(f) == ingest_router._compute_hash(f)
+
+
+def test_compute_hash_differs_for_different_content(tmp_path):
+    a = tmp_path / "a.bin"
+    b = tmp_path / "b.bin"
+    a.write_bytes(b"content A")
+    b.write_bytes(b"content B")
+    assert ingest_router._compute_hash(a) != ingest_router._compute_hash(b)
+
+
+# ── _find_duplicate ───────────────────────────────────────────────────────────
+
+def test_find_duplicate_no_tables_returns_none(mock_db):
+    mock_db.execute.return_value = make_result(rows=[])
+    assert asyncio.run(ingest_router._find_duplicate("a" * 64)) is None
+
+
+def test_find_duplicate_no_match_returns_none(mock_db):
+    mock_db.execute.side_effect = [
+        make_result(rows=[("some_table",)]),
+        make_result(one_or_none=None),
+    ]
+    assert asyncio.run(ingest_router._find_duplicate("b" * 64)) is None
+
+
+def test_find_duplicate_returns_matching_record(mock_db):
+    the_uuid = "12345678-1234-5678-1234-567812345678"
+    mock_db.execute.side_effect = [
+        make_result(rows=[("some_table",)]),
+        make_result(one_or_none=(the_uuid,)),
+    ]
+    result = asyncio.run(ingest_router._find_duplicate("c" * 64))
+    assert result == {"table_name": "some_table", "id": the_uuid}
+
+
+def test_find_duplicate_stops_at_first_match(mock_db):
+    uuid_b = "bbbbbbbb-0000-0000-0000-000000000002"
+    mock_db.execute.side_effect = [
+        make_result(rows=[("table_a",), ("table_b",)]),
+        make_result(one_or_none=None),          # table_a: no match
+        make_result(one_or_none=(uuid_b,)),     # table_b: match
+    ]
+    result = asyncio.run(ingest_router._find_duplicate("d" * 64))
+    assert result == {"table_name": "table_b", "id": uuid_b}
+    assert mock_db.execute.await_count == 3
+
+
+# ── _register_and_enqueue ─────────────────────────────────────────────────────
+
+def test_register_and_enqueue_duplicate_skips_queue(monkeypatch, tmp_path):
+    the_hash = "a" * 64
+    monkeypatch.setattr(ingest_router, "_compute_hash", lambda p: the_hash)
+    monkeypatch.setattr(
+        ingest_router, "_find_duplicate",
+        AsyncMock(return_value={"table_name": "orders", "id": "dup-id"}),
+    )
+    session = _make_fake_session(monkeypatch, fetchall=[])
+
+    queue_mock = MagicMock()
+    queue_mock.put = AsyncMock()
+    monkeypatch.setattr(ingest_router, "_queue", queue_mock)
+
+    src = tmp_path / "dup.png"
+    src.write_bytes(b"\x89PNG")
+    asyncio.run(ingest_router._register_and_enqueue("batch-dup", src, "dup.png"))
+
+    queue_mock.put.assert_not_awaited()
+    first_sql = str(session.execute.call_args_list[0][0][0])
+    assert "duplicate" in first_sql
+
+
+def test_register_and_enqueue_normal_path_enqueues_with_hash(monkeypatch, tmp_path):
+    the_hash = "b" * 64
+    doc_id   = str(_uuid_mod.uuid4())
+
+    monkeypatch.setattr(ingest_router, "_compute_hash", lambda p: the_hash)
+    monkeypatch.setattr(ingest_router, "_find_duplicate", AsyncMock(return_value=None))
+
+    result_mock = MagicMock()
+    result_mock.scalar.return_value = doc_id
+    session = MagicMock()
+    session.execute = AsyncMock(return_value=result_mock)
+    session.commit  = AsyncMock()
+    sess_ctx = MagicMock()
+    sess_ctx.__aenter__ = AsyncMock(return_value=session)
+    sess_ctx.__aexit__  = AsyncMock(return_value=False)
+    monkeypatch.setattr(ingest_router, "SessionLocal", MagicMock(return_value=sess_ctx))
+
+    queue_mock = MagicMock()
+    queue_mock.put = AsyncMock()
+    monkeypatch.setattr(ingest_router, "_queue", queue_mock)
+
+    src = tmp_path / "new.png"
+    src.write_bytes(b"\x89PNG")
+    asyncio.run(ingest_router._register_and_enqueue("batch-new", src, "new.png"))
+
+    queue_mock.put.assert_awaited_once()
+    enqueued = queue_mock.put.call_args[0][0]
+    assert enqueued[4] == the_hash
+
+
+# ── duplicates_skipped in batch status ────────────────────────────────────────
+
+def test_status_includes_duplicates_skipped(auth_client, monkeypatch):
+    rows = [
+        (_uuid_mod.uuid4(), "doc1.png", "duplicate", None, None, None, None, None),
+        (_uuid_mod.uuid4(), "doc2.png", "duplicate", None, None, None, None, None),
+        (_uuid_mod.uuid4(), "doc3.png", "completed", "ordre_de_mission", "high", 1.5, None, "/img.png"),
+    ]
+    _make_fake_session(monkeypatch, fetchall=rows)
+
+    resp = auth_client.get("/api/ingest/status/some-batch")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["duplicates_skipped"] == 2
+    assert body["total"] == 3
+    assert body["completed"] == 1
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

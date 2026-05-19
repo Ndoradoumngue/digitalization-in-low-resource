@@ -361,13 +361,18 @@ python vlm_local_test.py
 │   │   ├── vlm_ollama_test.py      ← VLM extraction via Ollama
 │   │   ├── vlm_local_test.py       ← VLM extraction via HuggingFace
 │   │   ├── requirements.txt        ← Production Python deps
-│   │   ├── requirements.test.txt   ← Test-only deps
+│   │   ├── requirements.test.txt   ← Test-only deps (includes pytest-benchmark)
 │   │   ├── Dockerfile
 │   │   └── tests/
-│   │       ├── conftest.py
-│   │       ├── test_auth.py
-│   │       ├── test_ocr.py
-│   │       └── test_vlm.py
+│   │       ├── conftest.py           ← fixtures, make_result(), mock_db
+│   │       ├── test_auth.py          ← login, logout, token blocklist, admin guard
+│   │       ├── test_cache.py         ← cache key builder, invalidate_cache()
+│   │       ├── test_documents.py     ← /api/db/* browse + schema
+│   │       ├── test_ingest.py        ← upload, path, status, dedup helpers
+│   │       ├── test_middleware.py    ← X-Process-Time header + slow-request WARNING
+│   │       ├── test_performance.py   ← benchmark tests (opt-in with -m benchmark)
+│   │       ├── test_rate_limit.py    ← SlowAPI key builder
+│   │       └── test_review.py        ← approve, reject, flag, count
 │   └── frontend/                   ← React + Vite + Tailwind + TanStack Query
 │       └── src/
 │           ├── components/
@@ -417,6 +422,13 @@ python vlm_local_test.py
 
 All routes require authentication via a JWT cookie set by `POST /api/auth/login`. Interactive documentation is available at **http://localhost:8000/docs** when the API is running.
 
+### Response headers
+
+| Header | Origin | Description |
+|---|---|---|
+| `X-Process-Time` | FastAPI middleware | Wall-clock seconds the server spent on the request (4 decimal places, e.g. `0.0123`). Requests exceeding **2.0 s** also emit a `WARNING` log entry with the method, path, and duration. |
+| `X-Cache-Status` | nginx | Present on `/images/*` responses. Values: `HIT` (served from nginx disk cache), `MISS` (fetched from FastAPI and cached), `EXPIRED`, `STALE`, `BYPASS`. Cached for **24 hours**; cache stored in `/var/cache/nginx` (up to 1 GB). |
+
 ### Auth
 
 | Method | Route | Description |
@@ -432,6 +444,8 @@ All routes require authentication via a JWT cookie set by `POST /api/auth/login`
 | `POST` | `/api/ingest/upload` | Upload one or more files (multipart/form-data) |
 | `POST` | `/api/ingest/path` | Ingest from a local filesystem path or Google Drive folder ID |
 | `GET` | `/api/ingest/status/{batch_id}` | Poll batch processing status |
+
+`GET /api/ingest/status/{batch_id}` response includes `duplicates_skipped` — the count of files whose SHA-256 hash already exists in the database and were therefore skipped without VLM processing.
 
 ### Document database (`/api/db`)
 
@@ -489,21 +503,24 @@ Requires admin role — HTTP 403 for reviewer accounts.
 
 ### Python — API server tests
 
-Tests cover auth flows, OCR/VLM endpoints, image serving, and auth-guard enforcement. The filesystem is fully mocked — no real documents or result files required.
+Tests cover auth, ingest (including dedup helpers), document browsing, schema, review, middleware, caching, rate limiting, and auth-guard enforcement. The filesystem and database are fully mocked — no real documents, Postgres connection, or Ollama required.
 
 ```bash
 cd apps/api
 pip install -r requirements.test.txt
 
-# Run all tests
-pytest tests/ -v
+# Run all tests (excludes performance benchmarks)
+pytest tests/ -m "not benchmark" -v
 
 # Or from the repo root
 pnpm test:api
 
 # With coverage
 pip install pytest-cov
-pytest tests/ --cov=api_server --cov-report=term-missing
+pytest tests/ -m "not benchmark" --cov=api_server --cov-report=term-missing
+
+# Run only performance benchmarks (requires a live-ish environment)
+pytest tests/ -m benchmark -v
 ```
 
 ### TypeScript — Zod schema tests
