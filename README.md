@@ -1,6 +1,6 @@
 # SDAI Digitalization
 
-A full-stack document digitalization system for government administrative records in low-resource settings. It ingests scanned documents, extracts structured fields using a vision-language model (VLM), routes results through a three-tier confidence-based workflow, stores everything in a dynamically-inferred PostgreSQL schema, and exposes the data through a review queue, a document browser, and a live schema visualizer.
+A full-stack document digitalization system for low-resource settings. It ingests scanned documents, extracts structured fields using a vision-language model (VLM), routes results through a three-tier confidence-based workflow, stores everything in a dynamically-inferred PostgreSQL schema, and exposes the data through a review queue, a document browser, and a live schema visualizer.
 
 ---
 
