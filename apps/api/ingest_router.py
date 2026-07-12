@@ -48,15 +48,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from audit import log_action
-from auth import get_current_user
+from auth import get_current_user, require_admin
 from cache import invalidate_cache
 from rate_limit import limiter
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql+asyncpg://sdai:sdai@localhost:5432/sdai"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DATA_DIR    = Path(os.getenv("DATA_DIR", "./data"))
 IMAGES_DIR  = DATA_DIR / "images"
@@ -69,6 +69,12 @@ ALLOWED_EXTS  = {".jpg", ".jpeg", ".png", ".pdf"}
 VLM_MAX_SIZE  = 1600
 THUMB_SIZE    = 400
 MIN_CHAR_COUNT = 50
+
+# Admins using POST /api/ingest/path can only read from this directory tree.
+# Prevents arbitrary filesystem traversal even by authenticated admin accounts.
+INGEST_ROOT = Path(os.getenv("INGEST_ROOT", "/data/ingest")).resolve()
+
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))  # 50 MB
 
 # ── DB setup (lazily initialised in startup()) ────────────────────────────────
 # Not created at import time so that api_server can be imported in tests
@@ -914,7 +920,13 @@ async def upload_files(
     for f in files:
         filename = f.filename or f"file_{uuid.uuid4().hex}"
         dest     = batch_dir / filename
-        content  = await f.read()
+        content  = await f.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"{filename} exceeds the maximum upload size "
+                       f"({MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+            )
         dest.write_bytes(content)
         await _register_and_enqueue(batch_id, dest, filename)
 
@@ -931,9 +943,13 @@ class PathRequest(BaseModel):
 async def ingest_from_path(
     request: Request,
     body: PathRequest,
-    current_user: str = Depends(get_current_user),
+    current_user: str = Depends(require_admin),
 ):
-    """Ingest from a server-side directory path or a Google Drive folder."""
+    """Ingest from a server-side directory path or a Google Drive folder.
+
+    Requires admin role. Server-side paths are restricted to INGEST_ROOT to
+    prevent an admin account from reading arbitrary filesystem locations.
+    """
     if not body.path and not body.google_drive_folder_id:
         raise HTTPException(
             status_code=422,
@@ -952,7 +968,12 @@ async def ingest_from_path(
             dest_dir,
         )
     else:
-        src_dir = Path(body.path)
+        src_dir = Path(body.path).resolve()
+        if not src_dir.is_relative_to(INGEST_ROOT):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Path is outside the allowed ingest directory ({INGEST_ROOT}).",
+            )
         if not src_dir.exists() or not src_dir.is_dir():
             raise HTTPException(status_code=404, detail=f"Path not found: {body.path}")
         files = [

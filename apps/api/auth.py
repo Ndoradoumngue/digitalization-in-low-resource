@@ -13,8 +13,10 @@ from typing import Optional
 from fastapi import Cookie, Depends, HTTPException
 from jose import JWTError, jwt
 
-SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-secret-key-change-in-production")
-ALGORITHM  = "HS256"
+SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("AUTH_SECRET_KEY environment variable is not set")
+ALGORITHM = "HS256"
 
 
 @dataclass

@@ -34,6 +34,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+import redis.asyncio as aioredis
+
 logger = logging.getLogger(__name__)
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response

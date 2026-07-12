@@ -22,10 +22,15 @@ from fastapi import Request
 # ── IP extraction ─────────────────────────────────────────────────────────────
 
 def client_ip(request: Request) -> Optional[str]:
-    """Return the real client IP, honouring X-Forwarded-For behind a proxy."""
+    """Return the real client IP from X-Forwarded-For.
+
+    nginx appends the true client IP as the *last* entry in X-Forwarded-For,
+    so we read from the right.  This prevents a client from spoofing their IP
+    by sending a fabricated X-Forwarded-For header.
+    """
     xff = request.headers.get("X-Forwarded-For")
     if xff:
-        return xff.split(",")[0].strip()
+        return xff.split(",")[-1].strip()
     return request.client.host if request.client else None
 
 

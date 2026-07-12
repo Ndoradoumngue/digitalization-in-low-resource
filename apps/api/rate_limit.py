@@ -15,7 +15,7 @@ from fastapi import Request
 from jose import ExpiredSignatureError, JWTError, jwt
 from slowapi import Limiter
 
-_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-secret-key-change-in-production")
+_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "")
 _ALGORITHM  = "HS256"
 
 
@@ -33,7 +33,8 @@ def _user_or_ip(request: Request) -> str:
             pass  # expired / tampered token → fall back to IP
 
     xff = request.headers.get("X-Forwarded-For")
-    ip  = xff.split(",")[0].strip() if xff else (
+    # Use the last entry — appended by nginx and not spoofable by the client.
+    ip  = xff.split(",")[-1].strip() if xff else (
         request.client.host if request.client else "unknown"
     )
     return f"ip:{ip}"

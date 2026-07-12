@@ -24,11 +24,12 @@
 services:
   redis:
     image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -36,16 +37,16 @@ services:
   db:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER:     sdai
-      POSTGRES_PASSWORD: sdai
-      POSTGRES_DB:       sdai
+      POSTGRES_USER:     ${POSTGRES_USER:-sdai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB:-sdai}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Port 5432 is NOT exposed to the host in production.
+    # Use: docker compose exec db psql -U sdai sdai
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sdai"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sdai}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -107,16 +108,16 @@ services:
       # In Docker, nginx proxies /api/* internally so CORS is not required.
       - CORS_ORIGINS=
       # JWT auth — run create_admin.py after first boot to seed the first user
-      - AUTH_SECRET_KEY=change-me-in-production
+      - AUTH_SECRET_KEY=${AUTH_SECRET_KEY}
       - AUTH_SECURE_COOKIES=false
       # PostgreSQL (asyncpg driver)
-      - DATABASE_URL=postgresql+asyncpg://sdai:sdai@db:5432/sdai
+      - DATABASE_URL=${DATABASE_URL}
       # Ollama — use the containerised service (override with host.docker.internal:11434
       # if you prefer to use a host-installed Ollama instead)
       - OLLAMA_HOST=http://ollama:11434
       # Directory for processed images and file uploads
       - DATA_DIR=/data
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=${REDIS_URL}
     depends_on:
       db:
         condition: service_healthy
