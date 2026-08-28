@@ -7,7 +7,7 @@ export const AuditLogEntrySchema = z.object({
   action:      z.string(),
   table_name:  z.string().nullable(),
   document_id: z.string().nullable(),
-  details:     z.record(z.unknown()).nullable(),
+  details:     z.record(z.string(), z.unknown()).nullable(),
   ip_address:  z.string().nullable(),
   created_at:  z.string(),
 });
