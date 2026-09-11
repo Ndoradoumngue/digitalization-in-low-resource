@@ -150,7 +150,12 @@ CREATE TABLE IF NOT EXISTS batch_documents (
 
 async def _init_db() -> None:
     async with _engine().begin() as conn:
-        await conn.execute(text(_INIT_DDL))
+        # asyncpg's extended query protocol can't prepare multiple commands
+        # in one statement, so each DDL statement is executed separately.
+        for statement in _INIT_DDL.split(";"):
+            statement = statement.strip()
+            if statement:
+                await conn.execute(text(statement))
         # Purge expired blocklist entries on each startup
         await conn.execute(
             text("DELETE FROM sdai_token_blocklist WHERE expired_at < NOW()")

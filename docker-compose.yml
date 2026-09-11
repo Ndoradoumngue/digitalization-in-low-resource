@@ -135,8 +135,8 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:80"
+      - "8443:443"
     volumes:
       # Let's Encrypt certificates — persists across restarts and rebuilds.
       # Empty in self_signed mode (cert is baked into the image).
