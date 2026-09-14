@@ -61,7 +61,7 @@ async def get_current_user(
         row = await conn.execute(
             text(
                 "SELECT id, email, full_name, role, is_active"
-                " FROM sdai_users WHERE id = :id::uuid"
+                " FROM sdai_users WHERE id = CAST(:id AS uuid)"
             ),
             {"id": user_id},
         )

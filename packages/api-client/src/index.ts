@@ -1,9 +1,11 @@
+import { z } from "zod";
 import {
   AllOcrResultsSchema,
   AllVlmResultsSchema,
   AuditLogPageSchema,
   BatchCreatedSchema,
   BatchStatusSchema,
+  BatchSummarySchema,
   DbDocumentDetailSchema,
   DbDocumentListSchema,
   DbSchemaSchema,
@@ -11,6 +13,7 @@ import {
   DocumentListSchema,
   LoginResponseSchema,
   OcrDocumentSchema,
+  PageListSchema,
   RawVlmResultSchema,
   ReviewCountSchema,
   ReviewQueueSchema,
@@ -20,6 +23,7 @@ import {
   type AuditLogPage,
   type BatchCreated,
   type BatchStatus,
+  type BatchSummary,
   type DbDocumentDetail,
   type DbDocumentList,
   type DbSchema,
@@ -28,6 +32,7 @@ import {
   type ExtractionResult,
   type ImageVariant,
   type OcrDocument,
+  type PageList,
   type ReviewCount,
   type ReviewQueue,
   type User,
@@ -155,6 +160,83 @@ export async function fetchBatchStatus(batchId: string): Promise<BatchStatus> {
   return fetchJson(`/api/ingest/status/${encodeURIComponent(batchId)}`, BatchStatusSchema);
 }
 
+export async function fetchRecentBatches(limit = 20): Promise<BatchSummary[]> {
+  return fetchJson(`/api/ingest/batches?limit=${limit}`, z.array(BatchSummarySchema));
+}
+
+export async function fetchPageStatus(batchDocumentId: string): Promise<PageList> {
+  return fetchJson(`/api/ingest/pages/${encodeURIComponent(batchDocumentId)}`, PageListSchema);
+}
+
+export async function retryPage(pageId: string): Promise<void> {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/retry`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function reloadPage(pageId: string): Promise<void> {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/reload`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function manualEnterPage(pageId: string, fields: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/manual`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function skipPage(pageId: string): Promise<void> {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/skip`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function resumeDocument(batchDocumentId: string): Promise<{ queued: number }> {
+  const res = await fetch(`/api/ingest/pages/resume/${encodeURIComponent(batchDocumentId)}`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteIngestedDocument(batchDocumentId: string): Promise<void> {
+  const res = await fetch(`/api/ingest/documents/${encodeURIComponent(batchDocumentId)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
 // ── Document DB endpoints ─────────────────────────────────────────────────────
 
 export interface DbListParams {
@@ -246,6 +328,29 @@ export async function flagReview(tableName: string, id: string): Promise<void> {
     { method: "POST", credentials: "include" },
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function retryDocument(tableName: string, id: string): Promise<{ batch_id: string }> {
+  const res = await fetch(
+    `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/retry`,
+    { method: "POST", credentials: "include" },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteDocument(tableName: string, id: string): Promise<void> {
+  const res = await fetch(
+    `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
 }
 
 export function dbImageUrl(sourcePath: string): string {

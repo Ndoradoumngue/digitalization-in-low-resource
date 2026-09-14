@@ -1,0 +1,70 @@
+This document is a page from a Kabalay-French bilingual lexicon compiled by Abbé Waingue.
+Most pages list dictionary entries. Each entry has a Kabalay headword, optional
+grammatical markers (N. = noun, V. = verb, etc. — see "Signes et Abréviations" below),
+and a French definition or translation. Some pages (cover, title page, introduction,
+table of contents, "Signes et Abréviations") carry document-level information instead
+of entries.
+
+CRITICAL — merging multi-line entries: an entry's French definition often wraps across
+several printed lines, and a word at the end of a line may be hyphenated and continue
+on the next line. A new line starts a NEW entry ONLY when it begins with a new Kabalay
+headword (typically followed by a colon or a grammatical marker like "V." or "N."). Any
+line that continues the sentence from the entry above it — no new headword, a lowercase
+continuation, a hyphenated word broken across the line break, an incomplete sentence —
+belongs to the SAME entry. Merge it into that entry's "french" text (rejoining hyphenated
+words into one) instead of creating a new entry with an empty "kabalay" or "french" field.
+Never leave a field empty because you split a definition across entries by mistake — if
+you produce an entry with an empty "kabalay" or "french", that is a bug: merge it into
+the entry above instead.
+
+Example — these five printed lines are only TWO dictionary entries, not five:
+  Source:
+    àjìgé :N. poquet
+    tè àjìgé : mettre les grains
+    dans les poquets générale-
+    ment avant la saison des
+    pluies.
+  Correct output:
+    {"kabalay": "àjìgé", "french": "N. poquet"}
+    {"kabalay": "tè àjìgé", "french": "mettre les grains dans les poquets généralement avant la saison des pluies."}
+
+Return ONLY a JSON object in this exact shape:
+
+{
+  "document_type": "Lexique Kabalay",
+  "title": "the document's title as written, only if this page shows it, else empty",
+  "author": "the author's name as written, only if this page shows it, else empty",
+  "intro": "any introduction, preface, or foreword text on this page, only if present, else empty",
+  "table_of_contents": [
+    {
+      "section": "the section or chapter title as written (e.g. 'Introduction', 'Annexe I : Noms des saisons et mois')",
+      "pages": "the page number or range as written (e.g. '1-2', '88,89')"
+    }
+  ],
+  "abbreviations": [
+    {
+      "abbreviation": "the abbreviation exactly as written (e.g. 'N.', 'V.', 'o.a.')",
+      "meaning": "its full meaning as written on this page"
+    }
+  ],
+  "entries": [
+    {
+      "kabalay": "the word or sentence as written in Kabalay",
+      "french": "its complete French definition or translation, fully merged per the rule above"
+    }
+  ],
+  "extraction_confidence": "high or medium or low"
+}
+
+If this page is titled "Signes et Abréviations" (or similar — a legend of the
+grammatical abbreviations used throughout the dictionary), extract every
+abbreviation and its full meaning into "abbreviations", in order — leave
+"entries": [] on that page. This legend matters: it is what lets a reader
+later interpret the grammatical markers inside every entry's "french" field.
+
+If this page is a table of contents, list every line of it in "table_of_contents"
+exactly as written, in order — do not summarize or skip lines. Leave "entries": []
+on such a page; do not invent entries. If this page is a cover or title page with
+no table of contents, no abbreviations, and no entries, leave those lists empty
+but still fill in "title", "author", or "intro" if visible. Always report
+"extraction_confidence" for whatever information (if any) is present on the page.

@@ -7,7 +7,8 @@ Endpoints:
   GET /api/db/documents              — paginated list with filters & full-text search
   GET /api/db/documents/{tbl}/{id}   — full field detail for one document
   GET /api/db/types                  — table inventory with counts
-  GET /api/db/image                  — serve a processed image from DATA_DIR
+  GET /api/db/image                  — serve a processed image, original PDF,
+                                        or path/Drive-ingested source file
 """
 
 import os
@@ -22,12 +23,23 @@ from sqlalchemy import text
 from auth import get_current_user
 from cache import _path_key_builder
 from fastapi_cache.decorator import cache
+from ingest_router import DOCS_DIR as _INGEST_DOCS_DIR
+from ingest_router import UPLOADS_DIR as _INGEST_UPLOADS_DIR
 from ingest_router import _engine  # lazy accessor — None until startup()
 from rate_limit import limiter
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
+
+# Directories the /image endpoint is allowed to serve files from —
+# processed page images, original uploads (incl. source PDFs), and files
+# ingested via a server path or Google Drive.
+_SAFE_FILE_ROOTS = [
+    (DATA_DIR / "images").resolve(),
+    _INGEST_UPLOADS_DIR.resolve(),
+    _INGEST_DOCS_DIR.resolve(),
+]
 
 # ── Identifier helpers ────────────────────────────────────────────────────────
 
@@ -115,9 +127,9 @@ def _per_table_select(
     if review_status:
         where.append("review_status = :review_status")
     if date_from:
-        where.append("ingested_at >= :date_from::timestamptz")
+        where.append("ingested_at >= CAST(:date_from AS timestamptz)")
     if date_to:
-        where.append("ingested_at <= :date_to::timestamptz")
+        where.append("ingested_at <= CAST(:date_to AS timestamptz)")
 
     where_str = ("WHERE " + " AND ".join(where)) if where else ""
     return f'SELECT {", ".join(sel)}\nFROM "{table}"\n{where_str}'
@@ -207,10 +219,16 @@ async def list_types(current_user: str = Depends(get_current_user)):
 
         results = []
         for table in sorted(tables_cols):
+            # document_type is a dynamic VLM-derived column, not a
+            # guaranteed base one — tables populated only by crashed
+            # extractions (empty fields) never get it created.
+            doc_type_expr = (
+                "MAX(document_type)" if "document_type" in tables_cols[table] else "NULL"
+            )
             row = await conn.execute(
                 text(
                     f'SELECT COUNT(*), MAX(ingested_at), '
-                    f'MAX(document_type) FROM "{table}"'
+                    f'{doc_type_expr} FROM "{table}"'
                 )
             )
             count, last_ingested, doc_type = row.one()
@@ -291,7 +309,7 @@ async def get_document_detail(
             raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
 
         result = await conn.execute(
-            text(f'SELECT * FROM "{safe}" WHERE id = :id::uuid'),
+            text(f'SELECT * FROM "{safe}" WHERE id = CAST(:id AS uuid)'),
             {"id": doc_id},
         )
         row = result.mappings().one_or_none()
@@ -374,8 +392,15 @@ async def get_schema(request: Request, current_user: str = Depends(get_current_u
 
         results = []
         for table_name in sorted(tables_cols):
+            # document_type is a dynamic VLM-derived column, not a
+            # guaranteed base one — tables populated only by crashed
+            # extractions (empty fields) never get it created.
+            has_doc_type  = any(
+                c["name"] == "document_type" for c in table_columns.get(table_name, [])
+            )
+            doc_type_expr = "MAX(document_type)" if has_doc_type else "NULL"
             stat = await conn.execute(
-                text(f'SELECT COUNT(*), MAX(ingested_at), MAX(document_type) FROM "{table_name}"')
+                text(f'SELECT COUNT(*), MAX(ingested_at), {doc_type_expr} FROM "{table_name}"')
             )
             count, last_ingested, doc_type = stat.one()
             results.append({
@@ -396,16 +421,15 @@ async def serve_processed_image(
     current_user: str = Depends(get_current_user),
 ):
     """
-    Serve a processed image from DATA_DIR/images/.
-    Validates that the requested path resolves within DATA_DIR to prevent
-    path-traversal attacks.
+    Serve a document-pipeline file by absolute path — a processed page
+    image, an original uploaded PDF, or a source file ingested via a
+    server path or Google Drive.
+    Validates that the requested path resolves within one of the known
+    ingest directories to prevent path-traversal attacks.
     """
-    img_path  = Path(path).resolve()
-    safe_root = (DATA_DIR / "images").resolve()
-    try:
-        img_path.relative_to(safe_root)
-    except ValueError:
+    file_path = Path(path).resolve()
+    if not any(file_path.is_relative_to(root) for root in _SAFE_FILE_ROOTS):
         raise HTTPException(status_code=403, detail="Access denied")
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
-    return FileResponse(img_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path)

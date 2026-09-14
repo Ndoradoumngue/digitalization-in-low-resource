@@ -18,8 +18,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import Dagre from "@dagrejs/dagre";
 import { toPng } from "html-to-image";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useDbSchema } from "../hooks/useSchema";
+import NavSidebar from "../components/NavSidebar";
 import type { DbTableInfo } from "@sdai/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -365,22 +366,14 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
 // ── Page shell ────────────────────────────────────────────────────────────────
 
 export default function SchemaPage() {
-  const navigate                               = useNavigate();
   const [autoRefresh, setAutoRefresh]          = useState(false);
   const { data, isLoading, error, refetch }    = useDbSchema({ autoRefresh });
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 font-sans text-gray-900">
+    <div className="flex h-screen bg-slate-50 font-sans text-gray-900 overflow-hidden">
+      <NavSidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-shrink-0">
-        <button
-          onClick={() => navigate("/")}
-          className="text-gray-500 hover:text-gray-800 transition-colors"
-          aria-label="Back to dashboard"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-          </svg>
-        </button>
         <h1 className="text-base font-bold text-indigo-700 tracking-tight">Schema Visualisation</h1>
         {error && <span className="text-xs text-red-500">Failed to load schema</span>}
       </header>
@@ -396,6 +389,7 @@ export default function SchemaPage() {
             onRefresh={() => { void refetch(); }}
           />
         </ReactFlowProvider>
+      </div>
       </div>
     </div>
   );

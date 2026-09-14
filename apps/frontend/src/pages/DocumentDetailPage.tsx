@@ -1,7 +1,10 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
-import { dbImageUrl } from "@sdai/api-client";
+import { useAuth } from "../context/AuthContext";
+import NavSidebar from "../components/NavSidebar";
+import { dbImageUrl, retryDocument, deleteDocument } from "@sdai/api-client";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,7 +30,7 @@ function reviewColor(status: string) {
   return "bg-gray-50 text-gray-500 border-gray-200";
 }
 
-const SKIP_FIELDS = new Set(["id", "source_image_path"]);
+const SKIP_FIELDS = new Set(["id", "source_image_path", "source_pdf_path", "page_image_paths"]);
 
 function labelFor(key: string) {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -102,7 +105,36 @@ export default function DocumentDetailPage() {
   const list      = state.list ?? [];
   const idx       = state.currentIndex ?? -1;
 
+  const { user }        = useAuth();
+  const queryClient     = useQueryClient();
   const { data, isLoading, error } = useDbDocumentDetail(tableName, id);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  function afterDestructiveAction() {
+    queryClient.invalidateQueries({ queryKey: ["db-documents"] });
+    queryClient.invalidateQueries({ queryKey: ["db-types"] });
+    navigate("/documents");
+  }
+
+  const retryMutation = useMutation({
+    mutationFn: () => retryDocument(tableName, id),
+    onSuccess:  afterDestructiveAction,
+    onError:    (e: Error) => setActionError(e.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteDocument(tableName, id),
+    onSuccess:  afterDestructiveAction,
+    onError:    (e: Error) => setActionError(e.message),
+  });
+
+  const pageImagePaths = Array.isArray(data?.page_image_paths)
+    ? (data.page_image_paths as unknown[]).map(String)
+    : [];
+  const pdfPath = data?.source_pdf_path ? String(data.source_pdf_path) : null;
+
+  const [activePage, setActivePage] = useState(0);
+  useEffect(() => { setActivePage(0); }, [tableName, id]);
 
   // Key press for prev/next
   useEffect(() => {
@@ -122,7 +154,9 @@ export default function DocumentDetailPage() {
     });
   }
 
-  const imgSrc = data?.source_image_path
+  const imgSrc = pageImagePaths.length > 0
+    ? dbImageUrl(pageImagePaths[Math.min(activePage, pageImagePaths.length - 1)])
+    : data?.source_image_path
     ? dbImageUrl(String(data.source_image_path))
     : null;
 
@@ -135,7 +169,9 @@ export default function DocumentDetailPage() {
     : [];
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 font-sans text-gray-900">
+    <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
+      <NavSidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3 flex-shrink-0">
         <button
@@ -162,6 +198,37 @@ export default function DocumentDetailPage() {
           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${reviewColor(reviewStatus)}`}>
             {reviewStatus.replace(/_/g, " ")}
           </span>
+        )}
+
+        {(reviewStatus === "manual_entry" || user?.role === "admin") && (
+          <div className="flex items-center gap-2">
+            {reviewStatus === "manual_entry" && (
+              <button
+                onClick={() => retryMutation.mutate()}
+                disabled={retryMutation.isPending}
+                className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+              >
+                {retryMutation.isPending ? "Retrying…" : "Retry"}
+              </button>
+            )}
+            {user?.role === "admin" && (
+              <button
+                onClick={() => {
+                  if (window.confirm("Permanently delete this document? This cannot be undone.")) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+                className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50 transition-colors"
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {actionError && (
+          <span className="text-xs text-red-600 truncate max-w-xs">{actionError}</span>
         )}
 
         {/* Spacer */}
@@ -205,14 +272,44 @@ export default function DocumentDetailPage() {
       ) : (
         <div className="flex flex-1 overflow-hidden">
           {/* Left — image viewer (55%) */}
-          <div className="w-[55%] flex-shrink-0 border-r border-gray-200">
-            {imgSrc ? (
-              <PanZoomImage src={imgSrc} />
-            ) : (
-              <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
-                No image available
+          <div className="w-[55%] flex-shrink-0 border-r border-gray-200 flex flex-col">
+            {(pageImagePaths.length > 1 || pdfPath) && (
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white flex-shrink-0 overflow-x-auto">
+                {pageImagePaths.length > 1 &&
+                  pageImagePaths.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setActivePage(i)}
+                      className={`flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+                        i === activePage
+                          ? "bg-indigo-600 border-indigo-600 text-white"
+                          : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      Page {i + 1}
+                    </button>
+                  ))}
+                {pdfPath && (
+                  <a
+                    href={dbImageUrl(pdfPath)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-shrink-0 ml-auto px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+                  >
+                    View original PDF ↗
+                  </a>
+                )}
               </div>
             )}
+            <div className="flex-1 overflow-hidden">
+              {imgSrc ? (
+                <PanZoomImage src={imgSrc} key={imgSrc} />
+              ) : (
+                <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
+                  No image available
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Right — extracted fields (45%) */}
@@ -237,6 +334,7 @@ export default function DocumentDetailPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

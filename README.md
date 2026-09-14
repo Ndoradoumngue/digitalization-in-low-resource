@@ -24,7 +24,7 @@ A full-stack document digitalization system for low-resource settings. It ingest
 Document image
       │
       ├─ 1. Preprocessing ─── orientation fix · flag-stripe removal · PDF→PNG · resize
-      ├─ 2. Classifier ─────── Tesseract on 400 px thumbnail · < 50 chars → skip
+      ├─ 2. Classifier ─────── ink-coverage check on 400 px thumbnail · blank page → skip
       ├─ 3. VLM Extraction ─── qwen2.5vl:7b via Ollama · structured JSON + confidence
       ├─ 4. Schema Inference ─ dynamic CREATE TABLE / ALTER TABLE per document type
       └─ 5. Router ──────────  high confidence  → auto_approved   → database
@@ -33,6 +33,44 @@ Document image
 ```
 
 The application layer is a FastAPI backend (`apps/api/`) consumed by a React + Vite frontend (`apps/frontend/`). See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full pipeline description, routing table, and technology stack.
+
+---
+
+## Customizing the extraction schema
+
+The VLM extraction prompt is a **per-deployment schema**, not a fixed contract. The built-in default (used automatically whenever `VLM_PROMPT_FILE` is unset) is tailored to Chadian government administrative documents (`document_type`, `reference_number`, `signatory`, ...) — a different document corpus (invoices, a lexicon, land titles, medical records...) needs different fields entirely. There is currently no UI for this; it's a configuration step you do once per deployment, before ingesting that corpus.
+
+**Starting point — the built-in default**: [`apps/api/prompts/examples/admin_document.txt`](./apps/api/prompts/examples/admin_document.txt) is an exact tracked copy of the prompt the pipeline uses out of the box (`_DEFAULT_VLM_PROMPT` in `apps/api/ingest_router.py`). If your corpus is reasonably close to administrative documents — a form with a handful of labeled fields, one page each, no repeating structure — copy this file, tweak the field names/descriptions for your document, and you likely don't need anything else on this page. If your corpus has a genuinely different *shape* (many repeating records per page, multi-page documents, a two-column layout, a legend of abbreviations to capture) — read on; that's exactly what the lexicon example below works through.
+
+**Set environment variables** (see `.env.example`):
+
+- `VLM_PROMPT_FILE` — path to a text file containing your full prompt. Put it under `documents/` (already volume-mounted into the API container) so it survives image rebuilds, e.g. `VLM_PROMPT_FILE=/app/documents/prompts/lexicon.txt`.
+- `VLM_LIST_FIELDS` — comma-separated names of the fields in your schema that should **accumulate across pages** rather than take the first value found (see "Multi-page reconciliation" in [ARCHITECTURE.md](./ARCHITECTURE.md)). Get this wrong and a list field silently keeps only page 1's values.
+- `VLM_PAGE_TIMEOUT_SECONDS` — per-page VLM call timeout (default 120). A schema that asks for a lot of output per page (e.g. a long list of dictionary entries) needs more generation time — raise this if pages fail with a VLM timeout.
+- `SPLIT_PAGE_COLUMNS` — set to `true` if your document is typeset in two independent side-by-side columns (e.g. a dictionary, each entry self-contained within its column — **not** parallel-text translation, which needs both columns visible together to pair correctly). Splits each page down the middle before extraction, roughly halving content — and generation time — per VLM call.
+
+No code change or rebuild needed — just set the vars and restart the `api` service (`docker compose up -d api`).
+
+**Full worked example**: [`apps/api/prompts/examples/lexicon.txt`](./apps/api/prompts/examples/lexicon.txt) is a real, battle-tested prompt for a bilingual dictionary corpus (multi-page PDF, two-column layout, dense entries) — not a toy snippet. Copy it into `documents/prompts/` (or write your own there) and point `VLM_PROMPT_FILE` at it:
+
+```bash
+# .env
+VLM_PROMPT_FILE=/app/documents/prompts/lexicon.txt
+VLM_LIST_FIELDS=entries,table_of_contents,abbreviations
+SPLIT_PAGE_COLUMNS=true
+```
+
+Without every accumulating field listed in `VLM_LIST_FIELDS`, reconciliation treats it as a scalar and keeps only page 1's value — every other page's content is silently dropped, exactly like the pre-fix blank-page bug this schema is meant to avoid.
+
+**Lessons learned writing that example** (apply these to your own prompt):
+
+- **Multi-line entries need explicit merging instructions.** A dictionary/glossary-style schema where one logical entry wraps across several printed lines will get *silently split into multiple broken entries* (empty fields, truncated text) unless the prompt explicitly explains how to recognize a continuation line vs. a new entry, ideally with a worked example. See the "CRITICAL — merging multi-line entries" paragraph in the example — this was the single highest-impact fix in this schema's development.
+- **Tell the model to never emit an empty field.** An instruction like *"if you produce an entry with an empty field, that's a bug — merge it into the entry above instead"* gives the model a concrete self-check, and works far better than just describing the desired shape.
+- **Capture the document's own legend/abbreviations, not just its content.** If your corpus uses abbreviations or codes (grammatical markers, status codes, etc.), add a field for them and instruct the model to extract that legend from wherever it appears (e.g. a "Signes et Abréviations" page) — otherwise the abbreviations littered through every entry are meaningless to anyone (or any model) consuming the data later.
+- **Non-content fields shouldn't count toward a page's confidence.** A fixed field like `document_type` (repeated on every page, including blank/cover pages) shouldn't make a content-free page look like it "contributed" data — see `_NON_CONTENT_FIELDS` in `apps/api/ingest_router.py`'s `_reconcile_pages`, which excludes it from the "did this page have real content" check used for confidence aggregation across pages.
+- **`SPLIT_PAGE_COLUMNS` only fits independent-column layouts.** It's for a dictionary/glossary where each column's entries are self-contained (right column doesn't need the left column's context) — *not* parallel-text translation (e.g. two columns of the same passage in different languages, meant to be read side by side), which needs both columns visible together to pair correctly. The pipeline auto-detects a genuine whitespace gutter per page before splitting, so full-width pages (covers, TOCs) in the same document are left whole.
+
+> **Known limitation:** full-text search (`/documents` search box) and the FTS column list are hardcoded to the default admin-document field names (`reference_number`, `organisation`, `destination_or_subject`, `signatory`). A custom schema's fields won't be full-text indexed or searchable there — only filterable via `/schema` and the raw document browser. Extending search to arbitrary schemas is a larger change than the prompt/list-fields config above.
 
 ---
 
@@ -51,6 +89,17 @@ docker compose exec api python create_admin.py \
 The dashboard is available at **http://localhost**. The API is at **http://localhost/api** (proxied internally by Nginx; expose port 8000 in docker-compose for direct access).
 
 > **Ollama is now containerised.** The stack includes an `ollama` service that starts automatically. If you prefer to use a host-installed Ollama instead, change `OLLAMA_HOST=http://ollama:11434` in `docker-compose.yml` to `OLLAMA_HOST=http://host.docker.internal:11434` and remove the `ollama` service and `depends_on` entry from `api`.
+
+### First steps after install
+
+1. **Log in** at `/login` with the admin account created above.
+2. **Upload a document** at `/upload` — drag and drop a file (or ingest from a local path / Google Drive folder). This runs the full pipeline: preprocessing → VLM extraction → schema inference → confidence-based routing.
+3. **Check the review queue** at `/review` — anything not auto-approved (medium/low confidence) lands here for a human to approve (with corrections), reject, or flag for manual entry.
+4. **Browse ingested documents** at `/documents` — paginated, searchable/filterable view over the PostgreSQL-backed tables. Click a row for full field detail.
+5. **Inspect the schema** at `/schema` — live diagram of every dynamically-created table, its columns, and foreign keys.
+6. **Review the audit log** (admin only) at `/admin/audit` — every login, approval, rejection, and schema change, with filters and CSV export.
+
+> The default `/` dashboard (VLM Extraction / OCR Comparison tabs) is a **legacy benchmark viewer**, not part of the ingestion pipeline above — it reads static JSON files produced by the standalone scripts in [OCR benchmarking](#ocr-benchmarking-optional) and [VLM extraction scripts](#vlm-extraction-scripts-optional--the-ingestion-api-replaces-these), and will show "results not found" until those are run manually. Skip it for normal use.
 
 ---
 
@@ -225,9 +274,12 @@ Add to cron for automatic monthly renewal:
 | Dependency | Minimum version | Notes |
 |---|---|---|
 | Docker + Compose | 24 / 2.20 | Compose v2 (`docker compose`, not `docker-compose`) |
+| Memory allocated to Docker | 16 GiB+ | See note below — this is a common source of silent ingestion crashes |
 | `qwen2.5vl:7b` model | — | Downloaded automatically on first boot via the containerised Ollama service |
 
 Ollama runs as a Docker service — no host installation required. The model (~5 GB) is pulled automatically on first boot. For offline environments see the [Offline deployment](#offline-deployment) section.
+
+> **Memory matters.** `qwen2.5vl:7b` is ~6 GB on disk and needs meaningfully more RAM than that to run (weights + KV cache + inference overhead), on top of Postgres, Redis, the API, and nginx all sharing the same Docker VM. If Docker is only given the default ~8 GiB, the OS will silently kill the model process mid-inference — documents will show `status: crashed` with an error like `Server error '500 Internal Server Error' for url 'http://ollama:11434/api/chat'`, and Ollama's own logs (`docker compose logs ollama`) will show `llama-server process has terminated: signal: killed`. That signature means **out of memory**, not a bug. On Docker Desktop: Settings → Resources → Memory, raise to at least 16 GiB, apply, and restart Docker Desktop.
 
 ---
 

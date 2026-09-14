@@ -10,6 +10,7 @@ import DocumentDetailPage from "./pages/DocumentDetailPage";
 import SchemaPage from "./pages/SchemaPage";
 import ReviewPage from "./pages/ReviewPage";
 import AuditPage from "./pages/AuditPage";
+import BenchmarksPage from "./pages/BenchmarksPage";
 
 export default function App() {
   return (
@@ -76,6 +77,15 @@ export default function App() {
           element={
             <AdminRoute>
               <AuditPage />
+            </AdminRoute>
+          }
+        />
+
+        <Route
+          path="/admin/benchmarks"
+          element={
+            <AdminRoute>
+              <BenchmarksPage />
             </AdminRoute>
           }
         />

@@ -3,10 +3,12 @@ Human review queue — serves review_required documents and accepts
 approve / reject / flag actions.
 
 Endpoints:
-  GET   /api/review/queue              — paginated queue, oldest first
-  GET   /api/review/count              — pending count (sidebar badge)
-  PATCH /api/review/{table}/{id}       — approve (+ field corrections) or reject
-  POST  /api/review/{table}/{id}/flag  — escalate to manual_entry
+  GET    /api/review/queue              — paginated queue, oldest first
+  GET    /api/review/count              — pending count (sidebar badge)
+  PATCH  /api/review/{table}/{id}       — approve (+ field corrections) or reject
+  POST   /api/review/{table}/{id}/flag  — escalate to manual_entry
+  POST   /api/review/{table}/{id}/retry — re-run VLM on a crashed (manual_entry) document
+  DELETE /api/review/{table}/{id}       — permanently remove a document (admin only)
 """
 
 import json
@@ -18,12 +20,12 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from audit import client_ip, log_action
-from auth import CurrentUser, get_current_user
+from auth import CurrentUser, get_current_user, require_admin
 from cache import _path_key_builder, invalidate_cache
 from fastapi_cache.decorator import cache
 from rate_limit import limiter
 from documents_router import _get_tables_columns, _sanitize
-from ingest_router import _engine
+from ingest_router import _engine, _retry_document
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -246,12 +248,12 @@ async def patch_review(
                     set_parts.append(f'"{col}" = :{pname}')
                     params[pname] = None
                 elif is_jsonb and isinstance(val, list):
-                    set_parts.append(f'"{col}" = :{pname}::jsonb')
+                    set_parts.append(f'"{col}" = CAST(:{pname} AS jsonb)')
                     params[pname] = json.dumps(val)
                 elif is_jsonb and isinstance(val, str):
                     # Comma-separated string → JSON array
                     arr = [s.strip() for s in val.split(",") if s.strip()]
-                    set_parts.append(f'"{col}" = :{pname}::jsonb')
+                    set_parts.append(f'"{col}" = CAST(:{pname} AS jsonb)')
                     params[pname] = json.dumps(arr)
                 else:
                     set_parts.append(f'"{col}" = :{pname}')
@@ -260,21 +262,21 @@ async def patch_review(
             set_parts += [
                 "review_status = 'approved'",
                 "reviewed_at   = NOW()",
-                "reviewed_by   = :reviewed_by_id::uuid",
+                "reviewed_by   = CAST(:reviewed_by_id AS uuid)",
             ]
             params["reviewed_by_id"] = current_user.id
 
             sql = (
                 f'UPDATE "{safe}" SET {", ".join(set_parts)} '
-                f"WHERE id = :doc_id::uuid RETURNING *"
+                f"WHERE id = CAST(:doc_id AS uuid) RETURNING *"
             )
 
         else:  # reject
             sql    = (
                 f"UPDATE \"{safe}\""
                 f" SET review_status = 'rejected',"
-                f"     reviewed_by   = :reviewed_by_id::uuid"
-                f" WHERE id = :doc_id::uuid RETURNING *"
+                f"     reviewed_by   = CAST(:reviewed_by_id AS uuid)"
+                f" WHERE id = CAST(:doc_id AS uuid) RETURNING *"
             )
             params = {"doc_id": doc_id, "reviewed_by_id": current_user.id}
 
@@ -322,7 +324,7 @@ async def flag_review(
         result = await conn.execute(
             text(
                 f"UPDATE \"{safe}\" SET review_status = 'manual_entry' "
-                f"WHERE id = :doc_id::uuid RETURNING id"
+                f"WHERE id = CAST(:doc_id AS uuid) RETURNING id"
             ),
             {"doc_id": doc_id},
         )
@@ -340,5 +342,78 @@ async def flag_review(
         ip_address=client_ip(request),
     )
     await invalidate_cache("review")
+
+
+@router.post("/{table_name}/{doc_id}/retry")
+@limiter.limit("20/minute")
+async def retry_document(
+    request:      Request,
+    table_name:   str,
+    doc_id:       str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Re-run VLM extraction on a crashed document, reusing its already
+    preprocessed image(s) — no re-upload needed. Only valid for documents
+    in manual_entry (crashed) status; the old stub row is replaced."""
+    safe = _sanitize(table_name)
+
+    async with _engine().connect() as conn:
+        tables_cols = await _get_tables_columns(conn)
+        if safe not in tables_cols:
+            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+
+    batch_id = await _retry_document(safe, doc_id)
+
+    await log_action(
+        action="document_retried",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        table_name=safe,
+        document_id=doc_id,
+        details={"new_batch_id": batch_id},
+        ip_address=client_ip(request),
+    )
+    await invalidate_cache("review")
+
+    return {"batch_id": batch_id}
+
+
+@router.delete("/{table_name}/{doc_id}")
+@limiter.limit("30/minute")
+async def delete_document(
+    request:      Request,
+    table_name:   str,
+    doc_id:       str,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """Permanently remove a document. Admin only — this is irreversible,
+    unlike reject/flag which just change review_status."""
+    safe = _sanitize(table_name)
+
+    async with _engine().connect() as conn:
+        tables_cols = await _get_tables_columns(conn)
+        if safe not in tables_cols:
+            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+
+        result = await conn.execute(
+            text(f'DELETE FROM "{safe}" WHERE id = CAST(:doc_id AS uuid) RETURNING id'),
+            {"doc_id": doc_id},
+        )
+        await conn.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    await log_action(
+        action="document_deleted",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        table_name=safe,
+        document_id=doc_id,
+        ip_address=client_ip(request),
+    )
+    await invalidate_cache("review")
+
+    return {"ok": True}
 
     return {"ok": True}

@@ -145,6 +145,7 @@ This file captures what has been built, why, and what is known to be incomplete 
 | Email notifications | Not built — review queue is pull-only |
 | Bulk review actions | Not built — documents are approved/rejected one at a time |
 | Audit log user filter in UI | Backend supports `user_id` filter but UI exposes only `action` and date range |
+| Full-text search on custom schemas | `/documents` search and FTS indexing are hardcoded to the default admin-document field names (`reference_number`, `organisation`, `destination_or_subject`, `signatory`). A deployment using `VLM_PROMPT_FILE` to define a different schema won't get search on its own fields. |
 
 ---
 

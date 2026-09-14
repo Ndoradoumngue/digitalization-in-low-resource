@@ -73,6 +73,19 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        MEM_KB=$$(awk '/MemTotal/ {print $$2}' /proc/meminfo)
+        MEM_GB=$$(( MEM_KB / 1024 / 1024 ))
+        if [ "$$MEM_KB" -lt 12582912 ]; then
+          echo "WARNING: Docker only has ~$${MEM_GB} GiB of memory available."
+          echo "qwen2.5vl:7b needs significantly more RAM than its ~6 GB on-disk"
+          echo "size (weights + KV cache + inference overhead), on top of"
+          echo "Postgres/Redis/the API/nginx sharing the same Docker VM."
+          echo "Below ~16 GiB, ingestion will likely crash with a 500 error from"
+          echo "Ollama and 'signal: killed' in this log — that means the OS"
+          echo "killed the model process for lack of memory, not a bug."
+          echo "Fix: Docker Desktop > Settings > Resources > Memory, raise to"
+          echo "16 GiB+, apply, and restart Docker Desktop."
+        fi
         if [ -f /models/ollama-models.tar.gz ]; then
           echo "Restoring model from offline archive (first run only)..."
           tar xzf /models/ollama-models.tar.gz -C /root/.ollama
@@ -118,6 +131,13 @@ services:
       # Directory for processed images and file uploads
       - DATA_DIR=/data
       - REDIS_URL=${REDIS_URL}
+      # Optional — customize the VLM extraction schema for your document
+      # corpus without a rebuild. See README.md "Customizing the extraction
+      # schema" and .env.example for details.
+      - VLM_PROMPT_FILE=${VLM_PROMPT_FILE:-}
+      - VLM_LIST_FIELDS=${VLM_LIST_FIELDS:-}
+      - VLM_PAGE_TIMEOUT_SECONDS=${VLM_PAGE_TIMEOUT_SECONDS:-}
+      - SPLIT_PAGE_COLUMNS=${SPLIT_PAGE_COLUMNS:-}
     depends_on:
       db:
         condition: service_healthy

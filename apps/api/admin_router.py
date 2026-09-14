@@ -57,16 +57,16 @@ async def get_audit_log(
     }
 
     if user_id:
-        where.append("user_id = :user_id::uuid")
+        where.append("user_id = CAST(:user_id AS uuid)")
         params["user_id"] = user_id
     if action:
         where.append("action = :action")
         params["action"] = action
     if date_from:
-        where.append("created_at >= :date_from::timestamptz")
+        where.append("created_at >= CAST(:date_from AS timestamptz)")
         params["date_from"] = date_from
     if date_to:
-        where.append("created_at <= :date_to::timestamptz")
+        where.append("created_at <= CAST(:date_to AS timestamptz)")
         params["date_to"] = date_to
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""

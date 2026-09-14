@@ -4,11 +4,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { flagReview, patchReview, dbImageUrl } from "@sdai/api-client";
 import { useReviewQueue } from "../hooks/useReview";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
+import NavSidebar from "../components/NavSidebar";
 import type { ReviewQueueItem } from "@sdai/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -177,7 +178,6 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange }: FormProps)
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ReviewPage() {
-  const navigate     = useNavigate();
   const queryClient  = useQueryClient();
 
   // Load entire queue (up to 100) for navigation
@@ -332,19 +332,12 @@ export default function ReviewPage() {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 font-sans text-gray-900">
+    <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
+      <NavSidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex-shrink-0">
         <div className="flex items-center gap-3 mb-2">
-          <button
-            onClick={() => navigate("/")}
-            className="text-gray-500 hover:text-gray-800 transition-colors"
-            aria-label="Back to dashboard"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-            </svg>
-          </button>
           <h1 className="text-base font-bold text-indigo-700 tracking-tight">Review Queue</h1>
 
           {!queueLoading && (
@@ -506,6 +499,7 @@ export default function ReviewPage() {
       )}
 
       <Toast message={toast.message} visible={toast.visible} />
+      </div>
     </div>
   );
 }

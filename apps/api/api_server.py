@@ -254,6 +254,17 @@ def _stem(filename: str) -> str:
     return Path(filename).stem
 
 
+def _list_images(dir_path: Path) -> list[str]:
+    """Sorted image filenames in dir_path, or [] if it doesn't exist yet
+    (e.g. no documents have been ingested)."""
+    if not dir_path.is_dir():
+        return []
+    return sorted(
+        f for f in os.listdir(dir_path)
+        if f.lower().endswith((".png", ".jpg", ".jpeg"))
+    )
+
+
 def _load_vlm_all() -> dict:
     if not VLM_RESULTS_FILE.exists():
         raise HTTPException(
@@ -272,10 +283,7 @@ def list_documents(current_user: str = Depends(get_current_user)):
     `hasResult` flag indicating whether a pre-computed OCR JSON result exists.
     Used by the legacy OCR comparison dashboard tab.
     """
-    images = sorted(
-        f for f in os.listdir(DOCS_DIR)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    )
+    images = _list_images(DOCS_DIR)
     return [
         {
             "filename": fname,
@@ -316,10 +324,7 @@ def list_vlm_documents(current_user: str = Depends(get_current_user)):
     VLM extraction result exists. Used by the VLM Extraction dashboard tab.
     """
     all_results = _load_vlm_all()
-    images = sorted(
-        f for f in os.listdir(DOCS_DIR)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    )
+    images = _list_images(DOCS_DIR)
     return [{"filename": fname, "hasResult": fname in all_results} for fname in images]
 
 

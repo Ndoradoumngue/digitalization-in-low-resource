@@ -69,7 +69,7 @@
 Each incoming document image passes through a deterministic preprocessing chain before any model sees it:
 
 - **Orientation correction** — Tesseract OSD detects rotation in 90° increments and applies the inverse transform.
-- **Flag-stripe removal** — an HSV colour mask blanks out the blue/yellow/red stripes of the Mauritanian national flag watermark that appears on official letterheads.
+- **Flag-stripe removal** — an HSV colour mask blanks out the blue/yellow/red stripes of the Chadian national flag watermark that appears on official letterheads.
 - **PDF → PNG conversion** — `pdf2image` (backed by Poppler) renders each page at 200 DPI before the image pipeline runs.
 - **Resize** — images are resized to a maximum of 1600 px on the longest axis to stay within the VLM's context budget.
 
@@ -77,21 +77,26 @@ Each incoming document image passes through a deterministic preprocessing chain 
 
 A cheap heuristic gate runs before the VLM to filter non-documents (cover sheets, blank pages, photographs):
 
-- Tesseract is run on a 400 px thumbnail.
-- If the extracted text is fewer than 50 characters the document is marked `out_of_scope` and processing stops.
-- Documents that pass continue to VLM extraction.
+- Pixel ink-coverage is measured on a 400 px grayscale thumbnail (fraction of non-background pixels).
+- If coverage is below the threshold the page is treated as blank; if every page of a document is blank it's marked `out_of_scope` and processing stops.
+- This check is intentionally language/script-agnostic — an OCR-based check was tried first but wrongly classified real content written in a script the OCR engine couldn't recognize as blank, silently dropping most of a document.
+- Documents (or individual pages) that pass continue to VLM extraction.
 
 ### 3 — VLM extraction
 
-`qwen2.5vl:7b` is called via the Ollama REST API (`POST /api/chat`) with a deterministic zero-shot prompt requesting a JSON object containing:
+`qwen2.5vl:7b` is called via the Ollama REST API (`POST /api/chat`), once per page, with a deterministic zero-shot prompt requesting a JSON object. The **default** prompt (tailored to Chadian government administrative documents) requests:
 
 ```
-document_type · reference_number · date · person_names · functions
+document_type · reference_number · date · person_names
 destination_or_subject · organisation · signatory · budget_line
-language · bilingual_layout · quality_issues · extraction_confidence
+language · quality_issues · extraction_confidence
 ```
 
-The model self-reports `extraction_confidence` as `high`, `medium`, or `low`. A 115-second per-document timeout guards against GGML crashes.
+The prompt is a per-deployment extraction schema, not a fixed contract — a different document corpus (invoices, a lexicon, land titles...) needs different fields. It's configurable via `VLM_PROMPT_FILE` / `VLM_LIST_FIELDS` without a code change or rebuild; see README.md "Customizing the extraction schema".
+
+The model self-reports `extraction_confidence` as `high`, `medium`, or `low`. A 120-second per-page timeout guards against GGML crashes.
+
+For multi-page documents, every page is extracted independently, then reconciled into one record: scalar fields take the first non-empty value found (letterhead metadata is usually on page 1), fields listed in `VLM_LIST_FIELDS` are unioned across all pages, and `extraction_confidence` takes the *worst* tier seen across any page — so one problematic page still routes the whole document to human review instead of being masked by a confident page 1. The original source PDF and every page image are kept and linked to the record.
 
 ### 4 — Dynamic schema inference
 

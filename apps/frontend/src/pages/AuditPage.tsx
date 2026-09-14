@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
-import { Link } from "react-router-dom";
 import { useAuditLog } from "../hooks/useAudit";
+import NavSidebar from "../components/NavSidebar";
 import type { AuditLogEntry } from "@sdai/types";
 
 // ── Action badge ──────────────────────────────────────────────────────────────
@@ -112,20 +112,12 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 font-sans text-gray-900">
+    <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
+      <NavSidebar />
+      <div className="flex-1 flex flex-col overflow-hidden">
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4 flex-shrink-0">
-        <Link
-          to="/"
-          className="text-gray-400 hover:text-gray-600 transition-colors"
-          aria-label="Back to dashboard"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-          </svg>
-        </Link>
-
         <div className="flex-1">
           <h1 className="text-lg font-bold text-gray-900">Audit Log</h1>
           {data && (
@@ -287,6 +279,7 @@ export default function AuditPage() {
           </div>
         </footer>
       )}
+      </div>
     </div>
   );
 }

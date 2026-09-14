@@ -74,7 +74,7 @@ async def log_action(
                          document_id, details, ip_address)
                     VALUES
                         (:uid, :email, :action, :tname,
-                         :did, :details::jsonb, :ip)
+                         :did, CAST(:details AS jsonb), :ip)
                 """),
                 {
                     "uid":     _to_uuid(user_id),
