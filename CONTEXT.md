@@ -12,9 +12,9 @@ This file captures what has been built, why, and what is known to be incomplete 
 - PostgreSQL-backed user management: `sdai_users` table with email, bcrypt password, role (`admin` | `reviewer`), and `is_active` flag.
 - JWT includes a `jti` (UUID v4) for token blocklisting; logout writes `jti` to `sdai_token_blocklist`.
 - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
-- `CurrentUser` dataclass (`id`, `email`, `full_name`, `role`) returned by `get_current_user` dependency.
-- `require_admin` FastAPI dependency — raises HTTP 403 for non-admin users.
-- `create_admin.py` seed script: `python create_admin.py --email admin@example.com --password secret`.
+- `CurrentUser` dataclass (`id`, `email`, `full_name`, `role`, `tenant_id`, `tenant_slug`, `tenant_name`) returned by `get_current_user` dependency — the tenant fields come from a join to `sdai_tenants`, so a user always resolves to exactly one tenant.
+- `require_admin` FastAPI dependency — raises HTTP 403 for non-admin users (admin is tenant-scoped, not global).
+- `create_admin.py` seed script: `python create_admin.py --email admin@example.com --password secret --tenant default` (`--tenant` required; the tenant must already exist).
 - React: `AuthContext` + `ProtectedRoute` + `AdminRoute` + `LoginPage`.
 - All API data routes require a valid JWT — unauthenticated requests get HTTP 401.
 
@@ -35,6 +35,31 @@ This file captures what has been built, why, and what is known to be incomplete 
 
 - Images served from `GET /images/raw/{filename}` and `GET /images/preprocessed/{filename}`.
 - Rendered inside `OcrPanel` alongside the extracted text.
+
+### Multi-Tenancy
+
+- `sdai_tenants` table (`id`, `slug`, `name`, `prompt_file`, `list_fields`, `page_timeout_seconds`, `split_page_columns`, `is_active`). Every deployment auto-seeds a `default` tenant on startup, so a standalone/single-ministry deployment behaves exactly as before — tenancy only becomes visible once a second tenant is created.
+- **Physical isolation, not row filtering**: each tenant's dynamically-created per-document-type tables are named `t_<tenant-slug>_<document_type>` (e.g. `t_land_titre_foncier`). `documents_router._get_tables_columns()` (the single discovery function nearly every endpoint routes through) filters by this prefix via `starts_with()`, so a missed filter returns nothing instead of leaking another tenant's rows.
+- `sdai_users.tenant_id` and `batches.tenant_id` — every user belongs to exactly one tenant; `batch_documents`/`batch_document_pages` are *not* directly tenant-tagged (resolved via a JOIN through `batches` instead, to avoid duplicated/driftable columns).
+- Per-tenant VLM config: `prompt_file` / `list_fields` / `page_timeout_seconds` / `split_page_columns` on `sdai_tenants` override the deployment-wide env vars (`VLM_PROMPT_FILE` etc.) for that tenant only, resolved via `ingest_router._get_tenant_config()` (30s in-process cache). NULL columns fall back to the env-var defaults — this is what makes the `default` tenant behave byte-identically to the pre-tenancy single-config deployment.
+- Content-hash dedup and the ingest pipeline's Stage 1-3 (`_stage1_process`/`_stage2_worker`/`_stage3_process`) all thread `tenant_id`/`tenant_slug` end-to-end so a new document always lands in the uploader's own tenant's table.
+- IDOR fix: `ingest_router.py`'s page/document/batch endpoints (previously reachable by any authenticated user via a guessed UUID, since they query `batches`/`batch_documents`/`batch_document_pages` directly rather than through the discovery layer) now check the resolved tenant against `current_user.tenant_id` and 404 on mismatch.
+- Cache isolation: `cache._path_key_builder` includes `current_user.tenant_slug` in the Redis key (previously path-only, which would have let one tenant's cached `/api/db/types`/`/api/db/schema`/`/api/review/count` response leak to another tenant).
+- Provisioning is CLI-only: `create_tenant.py --slug <slug> --name <name> [--prompt-file ...] [--list-fields ...] [--page-timeout-seconds ...] [--split-page-columns]`, then `create_admin.py --tenant <slug>`. No in-app "create tenant" UI in this version. `default` is a reserved slug.
+
+### Generalized Search
+
+- Full-text search and the document list's displayed fields are **not** hardcoded to the admin-document field names anymore (they were until this was built — see the now-resolved "Full-text search on custom schemas" entry that used to be in Known Limitations below). `documents_router._get_tables_columns()` returns `{table: {col: data_type}}` instead of `{table: {col, ...}}`; `_searchable_cols()`/`_extra_cols()` (documents_router.py) classify columns as "TEXT and not a system column" (searchable) vs. "not a system column, not document_type" (goes into the `extra_fields` JSONB blob every list/queue row now carries instead of 5 fixed named columns).
+- `ingest_router._ensure_table()`'s GIN FTS index is built over every TEXT-typed VLM-extracted field at ingest time (`_BASE_COLS` frozenset excludes system columns), not a fixed 4-field tuple — mirrored exactly at query time so the WHERE clause always matches the index expression. A one-time startup migration, `_backfill_fts_indexes()` (called from `_init_db()`), rebuilds every existing table's index under this rule so pre-existing tenants/tables aren't stuck with the old narrower index.
+- Frontend: `DbDocumentSchema`/`ReviewQueueItemSchema` (`packages/types/src/documents_db.ts`/`review.ts`) carry `extra_fields: Record<string, unknown>` instead of the 5 removed fields. `DocumentsPage.tsx`'s result table shows a single "Details" column summarizing `extra_fields` (`summarizeExtra()` in `apps/frontend/src/utils/format.ts`) instead of 3 fixed columns. `ReviewPage.tsx`/`ReviewForm` needed no changes — they already operated on the fully-dynamic per-document detail fetch, not the queue-item list shape.
+
+### Document Links (chain-of-custody)
+
+- `sdai_document_links` table (control-plane, not tenant-table-prefixed — `tenant_id` is a real column, like `batches`/`sdai_users`): `from_table`/`from_id` → `to_table`/`to_id`, a free-text `relation` (UI suggests "concerns"/"supersedes"/"transfers"/"amends"/"renews" but doesn't enforce a fixed vocabulary), optional `note`, `created_by`. Unique index on `(tenant_id, from_table, from_id, to_table, to_id, relation)` makes duplicate link requests idempotent (`ON CONFLICT DO NOTHING` + fallback SELECT returns the existing row rather than erroring).
+- Endpoints in `documents_router.py`: `GET/POST /api/db/documents/{table}/{id}/links`, `DELETE /api/db/links/{link_id}`. Both `from_table`/`to_table` must be in the caller's own tenant's `_get_tables_columns()` result — this app-layer check is the entire tenant-isolation boundary for this feature, since a real FK against a dynamically-named table isn't possible. `DELETE` is `get_current_user`-level (any tenant user), not admin-only — removing a link doesn't destroy extracted data.
+- Cascade-delete: hard-deleting a document (`review_router.delete_document`, admin-only; `ingest_router._delete_document_by_batch_document_id`, the re-upload/dedup-replace path) also deletes any links referencing it, via a shared `documents_router._delete_links_for_document()` helper (imported into `ingest_router.py` via a lazy import to avoid a circular dependency, same pattern already used for `auth`/`audit`'s use of `ingest_router._engine`), in the same transaction as the document delete.
+- Frontend: `LinksSection.tsx` (mounted on `DocumentDetailPage.tsx`, below the field list) shows "Relates to"/"Referenced by" groups; `DocumentLinkPicker.tsx` is a from-scratch searchable picker (no reusable autocomplete component existed before this) reusing the generalized-search `fetchDbDocuments({q})` call.
+- **Known gotcha already fixed once**: `_INIT_DDL` is naively split on `;` by `_init_db()` — a semicolon inside a `--` SQL *comment* (not just inside a `DO $$` block, the previously-known gotcha from the multi-tenancy migration) silently breaks this and produces a confusing SQLAlchemy/asyncpg `TypeError` on startup, not a clear SQL error. Hit and fixed during this feature's development; no semicolon characters are allowed in any comment line inside the `_INIT_DDL` string.
 
 ### Document Upload & Ingestion
 
@@ -131,6 +156,9 @@ This file captures what has been built, why, and what is known to be incomplete 
 | SHA-256 dedup checked before preprocessing | Avoids VLM cost on duplicates; the hash is cheap relative to Ollama inference |
 | `proxy_cache_path` before `server {}` in nginx conf | nginx includes these files inside its `http {}` block, so the directive is at the correct context level |
 | `@pytest.mark.benchmark` for perf tests | Keeps the standard CI run fast; benchmarks opt-in with `pytest -m benchmark` |
+| Tenant-prefixed tables, not a shared table + `tenant_id` column | Physical isolation — a missed `WHERE` clause returns nothing instead of leaking another ministry's rows; matches the "internal government archive" sensitivity level |
+| Tenant/user provisioning is CLI-only (no in-app UI) | Keeps v1 scope controlled; onboarding a new ministry is a deliberate ops action, same pattern as `create_admin.py` already used |
+| Per-tenant VLM config falls back to env vars when unset | Makes the auto-seeded `default` tenant byte-identical to the pre-tenancy single-config deployment — no behavior change for standalone deployments |
 
 ---
 
@@ -145,7 +173,8 @@ This file captures what has been built, why, and what is known to be incomplete 
 | Email notifications | Not built — review queue is pull-only |
 | Bulk review actions | Not built — documents are approved/rejected one at a time |
 | Audit log user filter in UI | Backend supports `user_id` filter but UI exposes only `action` and date range |
-| Full-text search on custom schemas | `/documents` search and FTS indexing are hardcoded to the default admin-document field names (`reference_number`, `organisation`, `destination_or_subject`, `signatory`). A deployment using `VLM_PROMPT_FILE` to define a different schema won't get search on its own fields. |
+| Tenant deactivate/delete flow | `sdai_tenants.is_active` exists but nothing sets it to `false` — retiring a tenant currently means a manual SQL `UPDATE` |
+| `serve_processed_image` (`/api/db/image`) not tenant-scoped | Serves a file by raw path within known ingest directories, with no check that the path belongs to the caller's tenant — lower severity since paths aren't guessable, but a gap flagged and not yet fixed |
 
 ---
 
@@ -168,7 +197,8 @@ apps/api/
   documents_router.py               # /api/documents/* browse endpoints
   review_router.py                  # /api/review/* approve/reject/flag
   admin_router.py                   # /api/admin/audit-log (admin only)
-  create_admin.py                   # seed script to create/upsert admin user
+  create_admin.py                   # seed script to create/upsert a user within a tenant
+  create_tenant.py                  # seed script to create/upsert a tenant (ministry)
   tests/
     conftest.py                     # fixtures: auth_client, mock_db, make_result()
     test_auth.py                    # auth routes, token blocklist, admin guard
@@ -195,23 +225,28 @@ apps/frontend/src/
   components/DocumentList.tsx
   components/OcrPanel.tsx
   components/VlmPanel.tsx
+  components/LinksSection.tsx       # "Related documents" panel on DocumentDetailPage
+  components/DocumentLinkPicker.tsx # searchable picker for creating a new link
   hooks/useDocuments.ts             # TanStack Query hooks for OCR
   hooks/useVlm.ts                   # TanStack Query hooks for VLM
   hooks/useDocumentsDb.ts           # hooks for database document browser
+  hooks/useDocumentLinks.ts         # hooks for chain-of-custody links
   hooks/useIngest.ts                # upload mutation hook
   hooks/useReview.ts                # review actions + count hook
   hooks/useSchema.ts                # schema query hook
   hooks/useAudit.ts                 # audit log query hook
+  utils/format.ts                   # labelFor(), summarizeExtra() — shared across pages/components
 
 packages/types/src/
   auth.ts                           # UserSchema, LoginResponseSchema
   ocr.ts                            # OcrDocument, DocumentEntry, EngineResult schemas
   vlm.ts                            # ExtractionResult discriminated union + parseVlmResult()
-  documents_db.ts                   # DocumentRecord, DbType schemas
+  documents_db.ts                   # DbDocument (with extra_fields), DbType schemas
   ingest.ts                         # IngestResult schema
-  review.ts                         # ReviewRecord, ReviewPatch schemas
+  review.ts                         # ReviewQueueItem (with extra_fields), ReviewPatch schemas
   schema.ts                         # SchemaInfo schemas
   audit.ts                          # AuditLogEntry, AuditLogPage schemas
+  links.ts                          # DocumentLink, CreateLinkBody schemas
 
 packages/api-client/src/
   index.ts                          # all fetch functions, imageUrl helper, fetchAuditLog()
@@ -225,8 +260,9 @@ install.sh                          # offline server: install from bundle + dock
 ## Suggested Next Steps
 
 1. **Audit log user filter** — expose the `user_id` filter in `AuditPage` with a user email autocomplete.
-2. **Document search** — add full-text or field-value search to `DocumentsPage`.
-3. **VLM model switcher** — allow selecting between multiple `vlm_*_results.json` files via a dropdown.
-4. **Bulk review** — select multiple documents in `ReviewPage` and approve/reject in batch.
-5. **Field correction** — allow users to edit extracted fields in `DocumentDetailPage` and save to the database.
-6. **Email notifications** — notify reviewers when new documents are ingested and pending review.
+2. **VLM model switcher** — allow selecting between multiple `vlm_*_results.json` files via a dropdown.
+3. **Bulk review** — select multiple documents in `ReviewPage` and approve/reject in batch.
+4. **Field correction** — allow users to edit extracted fields in `DocumentDetailPage` and save to the database.
+5. **Email notifications** — notify reviewers when new documents are ingested and pending review.
+6. **Auto-suggest document links** — when a VLM-extracted field (e.g. `reference_number`) matches an existing record, suggest a link during review instead of requiring the reviewer to search for it manually via `DocumentLinkPicker`.
+7. **Tenant deactivate/delete flow** and **tenant-scoping `/api/db/image`** — see Known Limitations.

@@ -24,15 +24,18 @@ from auth import CurrentUser, get_current_user, require_admin
 from cache import _path_key_builder, invalidate_cache
 from fastapi_cache.decorator import cache
 from rate_limit import limiter
-from documents_router import _get_tables_columns, _sanitize
+from documents_router import (
+    _access_params,
+    _access_where_clause,
+    _delete_links_for_document,
+    _document_visible,
+    _extra_cols,
+    _get_tables_columns,
+    _sanitize,
+)
 from ingest_router import _engine, _retry_document
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-
-_OPTIONAL_COLS = [
-    "document_type", "reference_number", "date",
-    "organisation", "destination_or_subject", "signatory",
-]
 
 # Fields the reviewer is not allowed to overwrite
 _PROTECTED = frozenset({
@@ -56,21 +59,33 @@ def _serial(v):
 
 # ── Queue query helpers ───────────────────────────────────────────────────────
 
-def _queue_select(table: str, cols: set[str]) -> str:
-    """Build one UNION branch for review_required rows in `table`."""
-    sel = ["id::text", f"'{table}'::text AS table_name"]
-    for col in _OPTIONAL_COLS:
-        sel.append(f"{col}::text" if col in cols else f"NULL::text AS {col}")
-    sel += [
+def _queue_select(table: str, cols: dict[str, str], current_user: CurrentUser) -> str:
+    """Build one UNION branch for review_required rows in `table`. Same
+    fixed-shape/extra_fields approach as documents_router._per_table_select
+    — see that function's docstring for why."""
+    extra = _extra_cols(cols)
+    extra_expr = (
+        "jsonb_build_object(" + ", ".join(f"'{c}', {c}" for c in extra) + ")"
+        if extra else "'{}'::jsonb"
+    )
+    sel = [
+        "id::text", f"'{table}'::text AS table_name",
+        "document_type::text AS document_type" if "document_type" in cols else "NULL::text AS document_type",
+        "record_id::text AS record_id" if "record_id" in cols else "NULL::text AS record_id",
         "confidence::text     AS confidence",
         "review_status::text  AS review_status",
         "ingested_at::text    AS ingested_at",
         "source_image_path",
+        f"{extra_expr} AS extra_fields",
     ]
+    where = "review_status = 'review_required'"
+    access_clause = _access_where_clause(table, current_user)
+    if access_clause:
+        where += f" AND {access_clause}"
     return (
         f"SELECT {', '.join(sel)}\n"
         f"FROM \"{table}\"\n"
-        f"WHERE review_status = 'review_required'"
+        f"WHERE {where}"
     )
 
 
@@ -81,6 +96,7 @@ async def _run_queue(
     only_table: Optional[str],
     page: int,
     page_size: int,
+    current_user: CurrentUser,
 ) -> tuple[list[dict], int]:
     scope = (
         {only_table: tables_cols[only_table]}
@@ -90,7 +106,7 @@ async def _run_queue(
     if not scope:
         return [], 0
 
-    parts = [_queue_select(tbl, cols) for tbl, cols in scope.items()]
+    parts = [_queue_select(tbl, cols, current_user) for tbl, cols in scope.items()]
     union = "\nUNION ALL\n".join(parts)
 
     sql = f"""
@@ -102,7 +118,7 @@ async def _run_queue(
     """
     result = await conn.execute(
         text(sql),
-        {"page_size": page_size, "offset": (page - 1) * page_size},
+        {"page_size": page_size, "offset": (page - 1) * page_size, **_access_params(current_user)},
     )
     rows  = result.mappings().all()
     total = int(rows[0]["total_count"]) if rows else 0
@@ -112,15 +128,21 @@ async def _run_queue(
     ], total
 
 
-async def _pending_count(conn, tables_cols: dict) -> int:
+async def _pending_count(conn, tables_cols: dict, current_user: CurrentUser) -> int:
     if not tables_cols:
         return 0
-    parts = [
-        f"SELECT COUNT(*) AS n FROM \"{t}\" WHERE review_status = 'review_required'"
-        for t in tables_cols
-    ]
+    parts = []
+    for t in tables_cols:
+        where = "review_status = 'review_required'"
+        access_clause = _access_where_clause(t, current_user)
+        if access_clause:
+            where += f" AND {access_clause}"
+        parts.append(f'SELECT COUNT(*) AS n FROM "{t}" WHERE {where}')
     union  = "\nUNION ALL\n".join(parts)
-    result = await conn.execute(text(f"SELECT COALESCE(SUM(n), 0) FROM ({union}) sub"))
+    result = await conn.execute(
+        text(f"SELECT COALESCE(SUM(n), 0) FROM ({union}) sub"),
+        _access_params(current_user),
+    )
     return int(result.scalar() or 0)
 
 
@@ -145,8 +167,8 @@ async def review_count(current_user: CurrentUser = Depends(get_current_user)):
     sidebar badge without fetching the full queue.
     """
     async with _engine().connect() as conn:
-        tables_cols = await _get_tables_columns(conn)
-        return {"pending": await _pending_count(conn, tables_cols)}
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+        return {"pending": await _pending_count(conn, tables_cols, current_user)}
 
 
 @router.get("/queue", summary="List pending review items")
@@ -166,7 +188,7 @@ async def review_queue(
     only_table = _sanitize(document_type) if document_type else None
 
     async with _engine().connect() as conn:
-        tables_cols = await _get_tables_columns(conn)
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if only_table and only_table not in tables_cols:
             return {"total": 0, "items": []}
 
@@ -175,6 +197,7 @@ async def review_queue(
             only_table=only_table,
             page=page,
             page_size=page_size,
+            current_user=current_user,
         )
 
     return {"total": total, "items": items}
@@ -200,9 +223,11 @@ async def patch_review(
     safe = _sanitize(table_name)
 
     async with _engine().connect() as conn:
-        tables_cols = await _get_tables_columns(conn)
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
             raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+        if not await _document_visible(conn, safe, doc_id, current_user):
+            raise HTTPException(status_code=404, detail="Document not found")
 
         cols = tables_cols[safe]
 
@@ -222,13 +247,10 @@ async def patch_review(
             await conn.commit()
 
         if body.action == "approve":
-            # Fetch column data types to handle JSONB correctly
-            type_rows = await conn.execute(text("""
-                SELECT column_name, data_type
-                FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = :t
-            """), {"t": safe})
-            col_types = {r[0]: r[1] for r in type_rows}
+            # cols is already {column_name: data_type} (from
+            # _get_tables_columns), so no second information_schema query
+            # is needed here to handle JSONB vs. scalar columns correctly.
+            col_types = cols
 
             # Build SET clause — only valid, non-protected columns
             editable = {
@@ -300,7 +322,10 @@ async def patch_review(
         details=audit_details,
         ip_address=client_ip(request),
     )
-    await invalidate_cache("review")
+    # Both approve and reject set reviewed_by — invalidate the reviewer
+    # filter list too, since this may be the first review on this table
+    # (the reviewed_by column, and this user's entry in the list, are new).
+    await invalidate_cache("review", "reviewers")
 
     return {k: _serial(v) for k, v in dict(row).items()}
 
@@ -317,9 +342,11 @@ async def flag_review(
     safe = _sanitize(table_name)
 
     async with _engine().connect() as conn:
-        tables_cols = await _get_tables_columns(conn)
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
             raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+        if not await _document_visible(conn, safe, doc_id, current_user):
+            raise HTTPException(status_code=404, detail="Document not found")
 
         result = await conn.execute(
             text(
@@ -358,11 +385,13 @@ async def retry_document(
     safe = _sanitize(table_name)
 
     async with _engine().connect() as conn:
-        tables_cols = await _get_tables_columns(conn)
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
             raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+        if not await _document_visible(conn, safe, doc_id, current_user):
+            raise HTTPException(status_code=404, detail="Document not found")
 
-    batch_id = await _retry_document(safe, doc_id)
+    batch_id = await _retry_document(safe, doc_id, current_user.tenant_id, current_user.tenant_slug)
 
     await log_action(
         action="document_retried",
@@ -387,11 +416,13 @@ async def delete_document(
     current_user: CurrentUser = Depends(require_admin),
 ):
     """Permanently remove a document. Admin only — this is irreversible,
-    unlike reject/flag which just change review_status."""
+    unlike reject/flag which just change review_status. Also removes any
+    chain-of-custody links referencing this document, in the same
+    transaction, so nothing is left pointing at a gone row."""
     safe = _sanitize(table_name)
 
     async with _engine().connect() as conn:
-        tables_cols = await _get_tables_columns(conn)
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
             raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
 
@@ -399,6 +430,8 @@ async def delete_document(
             text(f'DELETE FROM "{safe}" WHERE id = CAST(:doc_id AS uuid) RETURNING id'),
             {"doc_id": doc_id},
         )
+        if result.rowcount > 0:
+            await _delete_links_for_document(conn, current_user.tenant_id, safe, doc_id)
         await conn.commit()
 
     if result.rowcount == 0:
@@ -413,7 +446,5 @@ async def delete_document(
         ip_address=client_ip(request),
     )
     await invalidate_cache("review")
-
-    return {"ok": True}
 
     return {"ok": True}

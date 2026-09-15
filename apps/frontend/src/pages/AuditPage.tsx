@@ -14,6 +14,13 @@ const ACTION_STYLES: Record<string, string> = {
   user_logout:       "bg-gray-100   text-gray-600",
   schema_created:    "bg-purple-100 text-purple-800",
   schema_altered:    "bg-yellow-100 text-yellow-800",
+  document_linked:          "bg-cyan-100   text-cyan-800",
+  document_link_removed:    "bg-gray-100   text-gray-600",
+  document_access_granted:  "bg-amber-100  text-amber-800",
+  document_access_revoked:  "bg-gray-100   text-gray-600",
+  series_created:           "bg-teal-100   text-teal-800",
+  series_assigned:          "bg-teal-100   text-teal-800",
+  integrity_check_failed:   "bg-red-100    text-red-800",
 };
 
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);

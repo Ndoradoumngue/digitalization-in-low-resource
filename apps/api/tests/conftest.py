@@ -9,11 +9,20 @@ from auth import CurrentUser, get_current_user, require_admin
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
+TENANT_ID   = "00000000-0000-0000-0000-000000000099"
+TENANT_SLUG = "default"
+TENANT_NAME = "Default"
+
 REVIEWER = CurrentUser(
     id="00000000-0000-0000-0000-000000000001",
     email="reviewer@example.com",
     full_name="Test Reviewer",
     role="reviewer",
+    tenant_id=TENANT_ID,
+    tenant_slug=TENANT_SLUG,
+    tenant_name=TENANT_NAME,
+    can_manage_access=False,
+    group_ids=[],
 )
 
 ADMIN = CurrentUser(
@@ -21,6 +30,25 @@ ADMIN = CurrentUser(
     email="admin@example.com",
     full_name="Test Admin",
     role="admin",
+    tenant_id=TENANT_ID,
+    tenant_slug=TENANT_SLUG,
+    tenant_name=TENANT_NAME,
+    can_manage_access=False,
+    group_ids=[],
+)
+
+# A reviewer delegated the can_manage_access permission — for testing the
+# "admin OR can_manage_access" tier separately from plain reviewer/admin.
+ACCESS_MANAGER = CurrentUser(
+    id="00000000-0000-0000-0000-000000000003",
+    email="access-manager@example.com",
+    full_name="Test Access Manager",
+    role="reviewer",
+    tenant_id=TENANT_ID,
+    tenant_slug=TENANT_SLUG,
+    tenant_name=TENANT_NAME,
+    can_manage_access=True,
+    group_ids=[],
 )
 
 
@@ -119,6 +147,18 @@ def admin_client(dirs):
     """TestClient authenticated as an admin via dependency override."""
     api_server.app.dependency_overrides[get_current_user] = lambda: ADMIN
     api_server.app.dependency_overrides[require_admin]    = lambda: ADMIN
+    with TestClient(api_server.app, raise_server_exceptions=True) as c:
+        yield c
+    api_server.app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def access_manager_client(dirs):
+    """TestClient authenticated as a reviewer with can_manage_access=True.
+    Only get_current_user is overridden — require_access_manager's real
+    logic still runs and evaluates can_manage_document_access itself,
+    the same way require_admin's real 403 check runs for auth_client."""
+    api_server.app.dependency_overrides[get_current_user] = lambda: ACCESS_MANAGER
     with TestClient(api_server.app, raise_server_exceptions=True) as c:
         yield c
     api_server.app.dependency_overrides.clear()

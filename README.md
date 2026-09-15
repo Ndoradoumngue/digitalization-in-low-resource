@@ -70,7 +70,9 @@ Without every accumulating field listed in `VLM_LIST_FIELDS`, reconciliation tre
 - **Non-content fields shouldn't count toward a page's confidence.** A fixed field like `document_type` (repeated on every page, including blank/cover pages) shouldn't make a content-free page look like it "contributed" data — see `_NON_CONTENT_FIELDS` in `apps/api/ingest_router.py`'s `_reconcile_pages`, which excludes it from the "did this page have real content" check used for confidence aggregation across pages.
 - **`SPLIT_PAGE_COLUMNS` only fits independent-column layouts.** It's for a dictionary/glossary where each column's entries are self-contained (right column doesn't need the left column's context) — *not* parallel-text translation (e.g. two columns of the same passage in different languages, meant to be read side by side), which needs both columns visible together to pair correctly. The pipeline auto-detects a genuine whitespace gutter per page before splitting, so full-width pages (covers, TOCs) in the same document are left whole.
 
-> **Known limitation:** full-text search (`/documents` search box) and the FTS column list are hardcoded to the default admin-document field names (`reference_number`, `organisation`, `destination_or_subject`, `signatory`). A custom schema's fields won't be full-text indexed or searchable there — only filterable via `/schema` and the raw document browser. Extending search to arbitrary schemas is a larger change than the prompt/list-fields config above.
+Full-text search (`/documents` search box) is **not** hardcoded to any fixed field list — every TEXT-typed field your own prompt/schema extracts is automatically indexed and searchable, whatever your schema's field names are. The GIN index is rebuilt automatically whenever a table's columns change (`_ensure_table` in `apps/api/ingest_router.py`), and a one-time startup migration (`_backfill_fts_indexes`) widens the index on any table created before this behavior existed.
+
+**Document links** — a document's detail page (`/documents/:table/:id`) has a "Related documents" section where any user can link two documents together (e.g. a sale deed "concerns" the original title deed it transfers), with a searchable picker and a free-text relation label. This builds a traceable chain of custody across otherwise-independent records — search finds one document, links let you follow it to the ones it came from or led to. Links are removed automatically when either document is permanently deleted.
 
 ---
 
@@ -82,8 +84,12 @@ cp .env.example .env          # edit AUTH_SECRET_KEY at minimum
 docker compose up --build     # downloads qwen2.5vl:7b on first boot (~5 GB)
 
 # Create the first admin user (run once, after the stack is healthy)
+# --tenant default: every deployment auto-seeds a 'default' tenant, so a
+# standalone/single-ministry deployment (the common case) never needs to
+# think about tenants beyond this — see "Multi-tenancy" below only if you
+# plan to host more than one ministry on this instance.
 docker compose exec api python create_admin.py \
-  --email admin@example.com --password yourpassword
+  --email admin@example.com --password yourpassword --tenant default
 ```
 
 The dashboard is available at **http://localhost**. The API is at **http://localhost/api** (proxied internally by Nginx; expose port 8000 in docker-compose for direct access).
@@ -157,7 +163,7 @@ This loads the Docker images, installs local dependencies, and starts the stack.
 
 ```bash
 docker compose exec api python create_admin.py \
-  --email admin@ministry.td --password yourpassword
+  --email admin@ministry.td --password yourpassword --tenant default
 ```
 
 ### How the offline model loading works
@@ -342,6 +348,91 @@ Users are stored in PostgreSQL, not in environment variables. Use `create_admin.
 
 ---
 
+## Multi-tenancy
+
+This platform supports two deployment models from the same codebase, so a ministry that needs to run fully independently and a shared instance serving several ministries are both first-class, not a fork or a different branch:
+
+- **Standalone / autonomous** — one ministry, one instance (e.g. a ministry like Defense that needs to run fully independently). This is the default: every deployment auto-seeds a single `default` tenant, so if you only ever run `create_admin.py --tenant default`, tenancy is invisible and everything behaves exactly as a single-tenant deployment always has.
+- **Shared instance** — multiple ministries on one instance (e.g. Land, Oil, Finance), each with its own documents, extraction schema, and users, fully isolated from each other. Each ministry's dynamically-created tables are **physically separated** (`t_<tenant-slug>_<document_type>`, e.g. `t_land_titre_foncier` vs. `t_oil_contrat`) rather than filtered rows in one shared table, so a bug in a query returns nothing instead of leaking another ministry's data. A ministry can log in, search its own land titles, contracts, or HR records by whatever fields its own extraction schema defines, without ever seeing another ministry's tables — this is the "automatic data schema load" idea: each tenant gets its own inferred schema from its own documents.
+
+### Why provisioning a tenant is an engineer/ops action, not an in-app screen
+
+Creating a tenant and editing its extraction prompt are both **deliberately** CLI-only, requiring shell access to the server — there is no "add ministry" or "edit schema" button anywhere in the app, and that's intentional, not a missing feature:
+
+- **The prompt is the extraction schema.** A wrongly-edited prompt (a typo in the JSON shape, a dropped field, broken instructions) doesn't fail loudly — it silently degrades or breaks extraction for *every document that ministry ingests afterward*, often in ways that only show up as garbage/empty fields much later. That's not something a non-technical ministry admin should be able to trigger by editing a text box.
+- **Keeping it file- and CLI-based** means every schema change is a deliberate, reviewable, ops-executed action (edit a file, run a script) — the same trust boundary `create_admin.py` already established for user creation, just extended to tenants and their schemas.
+- Once a tenant exists, day-to-day use (uploading documents, reviewing, searching) is fully self-service for that ministry's own users — only *provisioning a tenant* and *changing its schema* require engineer-level access.
+
+### Onboarding a new ministry onto a shared instance
+
+```bash
+# 1. Write the ministry's extraction prompt to a file under documents/
+#    (already volume-mounted, survives image rebuilds — same mechanism as
+#    the deployment-wide VLM_PROMPT_FILE, see "Customizing the extraction
+#    schema" above). Base it on one of the tracked examples in
+#    apps/api/prompts/examples/ (admin_document.txt or lexicon.txt).
+mkdir -p documents/prompts
+cp apps/api/prompts/examples/admin_document.txt documents/prompts/land.txt
+# ... edit documents/prompts/land.txt for this ministry's actual fields ...
+
+# 2. Create the tenant, pointing it at that prompt file.
+docker compose exec api python create_tenant.py \
+  --slug land --name "Ministry of Land" \
+  --prompt-file /app/documents/prompts/land.txt
+
+# 3. Create that tenant's first user (repeat for additional users/reviewers).
+docker compose exec api python create_admin.py \
+  --email land-admin@example.com --password yourpassword --tenant land
+```
+
+The land ministry's admin can now log in, upload documents, and everything (schema inference, search, review queue) operates only within `land`'s own tenant-prefixed tables — a second ministry can be onboarded the same way with a different `--slug` and its own prompt file, and neither will ever see the other's data.
+
+### `create_tenant.py` reference
+
+| Flag | Required | Meaning |
+|---|---|---|
+| `--slug` | yes | Short lowercase identifier (`^[a-z][a-z0-9_]{0,23}$`, max 24 chars) — becomes the table-name prefix `t_<slug>_...`. `default` is reserved (auto-seeded on every install); the script refuses that slug. |
+| `--name` | yes | Display name, e.g. `"Ministry of Land"`. |
+| `--prompt-file` | no | Absolute path (inside the container, e.g. `/app/documents/prompts/land.txt`) to this tenant's extraction prompt. Omit to inherit the deployment-wide `VLM_PROMPT_FILE` / built-in default. |
+| `--list-fields` | no | Comma-separated field names unioned across pages for this tenant (same semantics as `VLM_LIST_FIELDS`). Omit to inherit the deployment-wide default. |
+| `--page-timeout-seconds` | no | Per-page VLM call timeout override for this tenant. Omit to inherit `VLM_PAGE_TIMEOUT_SECONDS`. |
+| `--split-page-columns` | no | Enable two-column page splitting for this tenant. Omit to inherit `SPLIT_PAGE_COLUMNS`. |
+
+The script **upserts by slug** — re-running it with the same `--slug` updates that tenant's name/config (e.g. to point at a corrected prompt file) rather than creating a duplicate.
+
+### Updating a ministry's schema later
+
+Edit the tenant's prompt file directly (or re-run `create_tenant.py` with a different `--prompt-file`/`--list-fields`) — no rebuild or `docker compose restart api` needed. Tenant config is cached in-process for 30 seconds, so a file edit takes effect for the next document that ministry uploads within half a minute at most. As with the deployment-wide prompt, test a schema change against a couple of real documents from that ministry before trusting it broadly — see "Customizing the extraction schema" above for prompt-writing guidance (multi-line merging, never-empty-field rule, etc.), which applies identically to a per-tenant prompt file.
+
+### Adding a user to an existing tenant
+
+```bash
+docker compose exec api python create_admin.py \
+  --email reviewer@example.com --password yourpassword \
+  --tenant land --role reviewer
+```
+
+`--role` defaults to `admin` if omitted. `create_admin.py` also upserts by email — re-running it for an existing user updates their password/role/tenant and re-activates the account.
+
+### Verifying isolation
+
+```bash
+# As an authenticated user of tenant A, /api/db/types must list only
+# tenant A's tables (all named t_<A's slug>_...) — never tenant B's.
+curl -sk -b <tenant-A-cookies> https://<host>/api/db/types
+
+# A cross-tenant lookup by a known table/id or batch id must 404, not
+# succeed — confirms the tenant check on the ingest endpoints.
+curl -sk -b <tenant-B-cookies> https://<host>/api/db/documents/<tenant-A-table>/<id>
+```
+
+### Known limitations
+
+- No in-app or CLI "deactivate/delete tenant" flow yet — `sdai_tenants.is_active` exists in the schema but nothing sets it to `false` today; retiring a tenant currently means a manual `UPDATE sdai_tenants SET is_active = false WHERE slug = '...'` (which immediately blocks login for that tenant's users) and, if you also want its tables gone, a manual `DROP TABLE` per `t_<slug>_*` table.
+- Full-text/structured search is still hardcoded to the default admin-document field names (`reference_number`, `organisation`, `destination_or_subject`, `signatory`) regardless of tenant — see the "Known limitation" note earlier in this doc. A tenant using a custom schema (e.g. a lexicon) can browse and filter its documents but not `?q=` full-text search them yet.
+
+---
+
 ## Running locally for development
 
 ### Prerequisites
@@ -408,7 +499,8 @@ python vlm_local_test.py
 │   │   ├── documents_router.py     ← GET  /api/db/*    — browser, schema, image
 │   │   ├── review_router.py        ← /api/review/*     — queue, approve, reject, flag
 │   │   ├── admin_router.py         ← GET  /api/admin/audit-log (admin only)
-│   │   ├── create_admin.py         ← Seed script: python create_admin.py --email … --password …
+│   │   ├── create_admin.py         ← Seed script: python create_admin.py --email … --password … --tenant …
+│   │   ├── create_tenant.py        ← Seed script: python create_tenant.py --slug … --name … (see "Multi-tenancy")
 │   │   ├── ocr_test.py             ← OCR benchmarking script
 │   │   ├── vlm_ollama_test.py      ← VLM extraction via Ollama
 │   │   ├── vlm_local_test.py       ← VLM extraction via HuggingFace

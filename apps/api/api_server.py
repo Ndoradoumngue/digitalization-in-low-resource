@@ -170,14 +170,21 @@ async def login(body: LoginRequest, request: Request, response: Response):
     async with _engine().connect() as conn:
         row = await conn.execute(
             text(
-                "SELECT id, email, full_name, role, hashed_password, is_active"
-                " FROM sdai_users WHERE email = :e"
+                "SELECT u.id, u.email, u.full_name, u.role, u.hashed_password, u.is_active,"
+                "       t.slug AS tenant_slug, t.name AS tenant_name, t.is_active AS tenant_is_active,"
+                "       u.can_manage_access"
+                " FROM sdai_users u"
+                " JOIN sdai_tenants t ON t.id = u.tenant_id"
+                " WHERE u.email = :e"
             ),
             {"e": body.email},
         )
         user = row.one_or_none()
 
-    if user is None or not user[5] or not _bcrypt.checkpw(body.password.encode(), user[4].encode()):
+    if (
+        user is None or not user[5] or not user[8]
+        or not _bcrypt.checkpw(body.password.encode(), user[4].encode())
+    ):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
 
     jti   = str(uuid.uuid4())
@@ -191,7 +198,10 @@ async def login(body: LoginRequest, request: Request, response: Response):
         ip_address=client_ip(request),
     )
 
-    return {"id": str(user[0]), "email": user[1], "full_name": user[2], "role": user[3]}
+    return {
+        "id": str(user[0]), "email": user[1], "full_name": user[2], "role": user[3],
+        "tenant_slug": user[6], "tenant_name": user[7], "can_manage_access": user[9],
+    }
 
 
 @app.post("/api/auth/logout", tags=["auth"], summary="Log out")
@@ -241,10 +251,13 @@ async def logout(
 async def me(current_user: CurrentUser = Depends(get_current_user)):
     """Return the profile of the currently authenticated user, or 401 if not logged in."""
     return {
-        "id":        current_user.id,
-        "email":     current_user.email,
-        "full_name": current_user.full_name,
-        "role":      current_user.role,
+        "id":          current_user.id,
+        "email":       current_user.email,
+        "full_name":   current_user.full_name,
+        "role":        current_user.role,
+        "tenant_slug": current_user.tenant_slug,
+        "tenant_name": current_user.tenant_name,
+        "can_manage_access": current_user.can_manage_access,
     }
 
 

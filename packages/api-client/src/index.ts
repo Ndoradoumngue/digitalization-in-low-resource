@@ -1,24 +1,36 @@
 import { z } from "zod";
 import {
+  AdminUsersResponseSchema,
   AllOcrResultsSchema,
   AllVlmResultsSchema,
   AuditLogPageSchema,
   BatchCreatedSchema,
   BatchStatusSchema,
   BatchSummarySchema,
+  CreateAccessGrantResponseSchema,
+  CreateGroupResponseSchema,
+  CreateLinkResponseSchema,
+  CreateSeriesResponseSchema,
   DbDocumentDetailSchema,
   DbDocumentListSchema,
   DbSchemaSchema,
   DbTypesSchema,
+  DocumentAccessResponseSchema,
+  DocumentLinksResponseSchema,
   DocumentListSchema,
+  GroupsResponseSchema,
+  IntegrityCheckResultSchema,
   LoginResponseSchema,
   OcrDocumentSchema,
   PageListSchema,
   RawVlmResultSchema,
   ReviewCountSchema,
   ReviewQueueSchema,
+  ReviewersSchema,
+  SeriesListResponseSchema,
   UserSchema,
   parseVlmResult,
+  type AdminUser,
   type AllOcrResults,
   type AuditLogPage,
   type BatchCreated,
@@ -28,13 +40,19 @@ import {
   type DbDocumentList,
   type DbSchema,
   type DbType,
+  type DocumentAccessResponse,
   type DocumentEntry,
+  type DocumentLinksResponse,
   type ExtractionResult,
+  type Group,
+  type IntegrityCheckResult,
   type ImageVariant,
   type OcrDocument,
   type PageList,
   type ReviewCount,
   type ReviewQueue,
+  type Reviewer,
+  type Series,
   type User,
 } from "@sdai/types";
 
@@ -248,6 +266,8 @@ export interface DbListParams {
   date_from?: string;
   date_to?: string;
   q?: string;
+  reviewed_by?: string;
+  series?: string;
 }
 
 export async function fetchDbDocuments(params: DbListParams = {}): Promise<DbDocumentList> {
@@ -272,8 +292,166 @@ export async function fetchDbTypes(): Promise<DbType[]> {
   return fetchJson("/api/db/types", DbTypesSchema);
 }
 
+export async function fetchDbReviewers(): Promise<Reviewer[]> {
+  return fetchJson("/api/db/reviewers", ReviewersSchema);
+}
+
 export async function fetchDbSchema(): Promise<DbSchema> {
   return fetchJson("/api/db/schema", DbSchemaSchema);
+}
+
+// ── Document links (chain-of-custody) ─────────────────────────────────────────
+
+export interface CreateLinkBody {
+  to_table: string;
+  to_id:    string;
+  relation: string;
+  note?:    string;
+}
+
+export async function fetchDocumentLinks(
+  tableName: string,
+  id: string,
+): Promise<DocumentLinksResponse> {
+  return fetchJson(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/links`,
+    DocumentLinksResponseSchema,
+  );
+}
+
+export async function createDocumentLink(
+  tableName: string,
+  id: string,
+  body: CreateLinkBody,
+): Promise<{ id: string }> {
+  const res = await fetch(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/links`,
+    {
+      method:      "POST",
+      credentials: "include",
+      headers:     { "Content-Type": "application/json" },
+      body:        JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return CreateLinkResponseSchema.parse(await res.json());
+}
+
+export async function deleteDocumentLink(linkId: string): Promise<void> {
+  const res = await fetch(`/api/db/links/${encodeURIComponent(linkId)}`, {
+    method:      "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+// ── Document access grants ────────────────────────────────────────────────────
+
+export async function fetchDocumentAccess(
+  tableName: string,
+  id: string,
+): Promise<DocumentAccessResponse> {
+  return fetchJson(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/access`,
+    DocumentAccessResponseSchema,
+  );
+}
+
+export interface CreateAccessGrantBody {
+  grantee_type: "group" | "user";
+  grantee_id:   string;
+}
+
+export async function createDocumentAccess(
+  tableName: string,
+  id: string,
+  body: CreateAccessGrantBody,
+): Promise<{ id: string }> {
+  const res = await fetch(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/access`,
+    {
+      method:      "POST",
+      credentials: "include",
+      headers:     { "Content-Type": "application/json" },
+      body:        JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return CreateAccessGrantResponseSchema.parse(await res.json());
+}
+
+export async function deleteDocumentAccess(grantId: string): Promise<void> {
+  const res = await fetch(`/api/db/access/${encodeURIComponent(grantId)}`, {
+    method:      "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+// ── Fonds/series hierarchy ─────────────────────────────────────────────────────
+
+export async function fetchSeries(): Promise<Series[]> {
+  return fetchJson("/api/db/series", SeriesListResponseSchema);
+}
+
+export async function createSeries(
+  name: string,
+  description?: string,
+): Promise<{ id: string; name: string }> {
+  const res = await fetch("/api/db/series", {
+    method:      "POST",
+    credentials: "include",
+    headers:     { "Content-Type": "application/json" },
+    body:        JSON.stringify({ name, description }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return CreateSeriesResponseSchema.parse(await res.json());
+}
+
+export async function deleteSeries(seriesId: string): Promise<void> {
+  const res = await fetch(`/api/db/series/${encodeURIComponent(seriesId)}`, {
+    method:      "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function assignDocumentSeries(
+  tableName: string,
+  id: string,
+  seriesId: string | null,
+): Promise<void> {
+  const res = await fetch(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/series`,
+    {
+      method:      "PATCH",
+      credentials: "include",
+      headers:     { "Content-Type": "application/json" },
+      body:        JSON.stringify({ series_id: seriesId }),
+    },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
 }
 
 // ── Review queue endpoints ────────────────────────────────────────────────────
@@ -374,4 +552,95 @@ export async function fetchAuditLog(params: AuditLogParams = {}): Promise<AuditL
     if (v !== undefined && v !== "" && v !== null) qs.set(k, String(v));
   }
   return fetchJson(`/api/admin/audit-log?${qs}`, AuditLogPageSchema);
+}
+
+// ── Admin: groups ─────────────────────────────────────────────────────────────
+
+export async function fetchGroups(): Promise<Group[]> {
+  return fetchJson("/api/admin/groups", GroupsResponseSchema);
+}
+
+export async function createGroup(name: string): Promise<{ id: string; name: string }> {
+  const res = await fetch("/api/admin/groups", {
+    method:      "POST",
+    credentials: "include",
+    headers:     { "Content-Type": "application/json" },
+    body:        JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return CreateGroupResponseSchema.parse(await res.json());
+}
+
+export async function deleteGroup(groupId: string): Promise<void> {
+  const res = await fetch(`/api/admin/groups/${encodeURIComponent(groupId)}`, {
+    method:      "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+// ── Admin: users ──────────────────────────────────────────────────────────────
+
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  return fetchJson("/api/admin/users", AdminUsersResponseSchema);
+}
+
+export async function updateUserAccessManager(
+  userId: string,
+  canManageAccess: boolean,
+): Promise<void> {
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method:      "PATCH",
+    credentials: "include",
+    headers:     { "Content-Type": "application/json" },
+    body:        JSON.stringify({ can_manage_access: canManageAccess }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function addUserToGroup(userId: string, groupId: string): Promise<void> {
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/groups`, {
+    method:      "POST",
+    credentials: "include",
+    headers:     { "Content-Type": "application/json" },
+    body:        JSON.stringify({ group_id: groupId }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function removeUserFromGroup(userId: string, groupId: string): Promise<void> {
+  const res = await fetch(
+    `/api/admin/users/${encodeURIComponent(userId)}/groups/${encodeURIComponent(groupId)}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
+// ── Admin: fixity / integrity check ──────────────────────────────────────────
+
+export async function runIntegrityCheck(): Promise<IntegrityCheckResult> {
+  const res = await fetch("/api/admin/integrity-check", {
+    method:      "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return IntegrityCheckResultSchema.parse(await res.json());
 }

@@ -28,28 +28,26 @@ from conftest import make_result
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
-# Column set present in every ingest-created table
+# Column set present in every ingest-created table — {col_name: data_type},
+# matching _get_tables_columns's return shape.
 _BENCH_COLS = {
-    "id", "source_image_path", "ingested_at", "confidence", "review_status",
+    "id": "uuid", "source_image_path": "text", "ingested_at": "timestamp with time zone",
+    "confidence": "text", "review_status": "text",
 }
 
 
 def _make_doc(i: int) -> dict:
     """Return one synthetic document row dict as the router would return it."""
     return {
-        "id":                     str(uuid.uuid4()),
-        "table_name":             "bench_table",
-        "document_type":          None,
-        "reference_number":       None,
-        "date":                   None,
-        "organisation":           None,
-        "destination_or_subject": None,
-        "signatory":              None,
-        "confidence":             "high",
-        "review_status":          "auto_approved",
-        "ingested_at":            "2024-01-01T00:00:00",
-        "source_image_path":      f"/data/images/doc_{i}.png",
-        "total_count":            1000,
+        "id":                str(uuid.uuid4()),
+        "table_name":        "bench_table",
+        "document_type":     None,
+        "confidence":        "high",
+        "review_status":     "auto_approved",
+        "ingested_at":       "2024-01-01T00:00:00",
+        "source_image_path": f"/data/images/doc_{i}.png",
+        "extra_fields":      {},
+        "total_count":       1000,
     }
 
 
@@ -123,7 +121,7 @@ def test_schema_endpoint_response_time(auth_client, mock_db, monkeypatch, benchm
 
     monkeypatch.setattr(
         documents_router, "_get_tables_columns",
-        AsyncMock(return_value={"bench_table": {"id", "source_image_path"}}),
+        AsyncMock(return_value={"bench_table": {"id": "uuid", "source_image_path": "text"}}),
     )
 
     # Cycling side_effect: col → FK → stat → col → FK → stat → …
@@ -185,7 +183,7 @@ def test_review_count_response_time(auth_client, mock_db, monkeypatch, benchmark
 
     monkeypatch.setattr(
         review_router, "_get_tables_columns",
-        AsyncMock(return_value={"bench_table": {"id", "review_status"}}),
+        AsyncMock(return_value={"bench_table": {"id": "uuid", "review_status": "text"}}),
     )
     # _pending_count calls execute once (UNION COUNT query); scalar=42 is
     # reused on every benchmark iteration.

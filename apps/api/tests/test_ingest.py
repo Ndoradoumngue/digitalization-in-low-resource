@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import ingest_router
-from conftest import make_result
+from conftest import make_result, REVIEWER, TENANT_ID, TENANT_SLUG
 
 
 # ── Auth guards ───────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ def test_upload_png_success(auth_client, tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["batch_id"] == "batch-abc"
-    ingest_router._create_batch.assert_awaited_once_with("upload")
+    ingest_router._create_batch.assert_awaited_once_with("upload", REVIEWER.tenant_id)
     ingest_router._register_and_enqueue.assert_awaited_once()
 
 
@@ -197,11 +197,28 @@ def test_compute_hash_differs_for_different_content(tmp_path):
     assert ingest_router._compute_hash(a) != ingest_router._compute_hash(b)
 
 
+# ── _next_record_id ───────────────────────────────────────────────────────────
+
+def test_next_record_id_format(mock_db):
+    import datetime as _dt
+    mock_db.execute.return_value = make_result(scalar=42)
+    result = asyncio.run(ingest_router._next_record_id(mock_db, "tenant-1", "land"))
+    year = _dt.datetime.now(_dt.timezone.utc).year
+    assert result == f"LAND-{year}-000042"
+
+
+def test_next_record_id_uppercases_slug_and_zero_pads(mock_db):
+    mock_db.execute.return_value = make_result(scalar=7)
+    result = asyncio.run(ingest_router._next_record_id(mock_db, "tenant-1", "kabalay_lexicon"))
+    assert result.startswith("KABALAY_LEXICON-")
+    assert result.endswith("-000007")
+
+
 # ── _find_duplicate ───────────────────────────────────────────────────────────
 
 def test_find_duplicate_no_tables_returns_none(mock_db):
     mock_db.execute.return_value = make_result(rows=[])
-    assert asyncio.run(ingest_router._find_duplicate("a" * 64)) is None
+    assert asyncio.run(ingest_router._find_duplicate("a" * 64, TENANT_SLUG)) is None
 
 
 def test_find_duplicate_no_match_returns_none(mock_db):
@@ -209,7 +226,7 @@ def test_find_duplicate_no_match_returns_none(mock_db):
         make_result(rows=[("some_table",)]),
         make_result(one_or_none=None),
     ]
-    assert asyncio.run(ingest_router._find_duplicate("b" * 64)) is None
+    assert asyncio.run(ingest_router._find_duplicate("b" * 64, TENANT_SLUG)) is None
 
 
 def test_find_duplicate_returns_matching_record(mock_db):
@@ -218,7 +235,7 @@ def test_find_duplicate_returns_matching_record(mock_db):
         make_result(rows=[("some_table",)]),
         make_result(one_or_none=(the_uuid,)),
     ]
-    result = asyncio.run(ingest_router._find_duplicate("c" * 64))
+    result = asyncio.run(ingest_router._find_duplicate("c" * 64, TENANT_SLUG))
     assert result == {"table_name": "some_table", "id": the_uuid}
 
 
@@ -229,9 +246,87 @@ def test_find_duplicate_stops_at_first_match(mock_db):
         make_result(one_or_none=None),          # table_a: no match
         make_result(one_or_none=(uuid_b,)),     # table_b: match
     ]
-    result = asyncio.run(ingest_router._find_duplicate("d" * 64))
+    result = asyncio.run(ingest_router._find_duplicate("d" * 64, TENANT_SLUG))
     assert result == {"table_name": "table_b", "id": uuid_b}
     assert mock_db.execute.await_count == 3
+
+
+# ── _run_integrity_check ──────────────────────────────────────────────────────
+
+def test_integrity_check_no_tables_returns_zero_counts(mock_db):
+    mock_db.execute.return_value = make_result(rows=[])
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 0, "ok": 0, "mismatched": 0, "missing": 0}
+
+
+def test_integrity_check_ok_when_files_present_and_hash_matches(mock_db, tmp_path):
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"pdf-bytes")
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"png-bytes")
+    the_hash = hashlib.sha256(b"pdf-bytes").hexdigest()
+
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),                    # table discovery
+        make_result(rows=[("doc-1", str(img), str(pdf), the_hash)]),  # per-table row select
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 1, "mismatched": 0, "missing": 0}
+
+
+def test_integrity_check_missing_image_file(mock_db, tmp_path):
+    missing_img = tmp_path / "gone.png"
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(missing_img), None, None)]),
+        make_result(),  # log_action's INSERT
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 0, "mismatched": 0, "missing": 1}
+
+
+def test_integrity_check_pdf_hash_mismatch(mock_db, tmp_path):
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"actual-bytes")
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"png-bytes")
+
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(img), str(pdf), "a-stale-hash-that-wont-match")]),
+        make_result(),  # log_action's INSERT
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 0, "mismatched": 1, "missing": 0}
+
+
+def test_integrity_check_image_sourced_document_not_hash_checked(mock_db, tmp_path):
+    """No source_pdf_path (image-sourced document) — only existence is
+    checked. content_hash was computed against the raw upload, which
+    _preprocess has since reoriented/cropped/re-encoded into
+    source_image_path, so it would never match even when nothing is
+    actually wrong — asserting only existence matters here."""
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"preprocessed-png-bytes")
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(img), None, "hash-of-a-totally-different-raw-upload")]),
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 1, "mismatched": 0, "missing": 0}
+
+
+def test_integrity_check_missing_pdf_file(mock_db, tmp_path):
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"png-bytes")
+    missing_pdf = tmp_path / "gone.pdf"
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(img), str(missing_pdf), "some-hash")]),
+        make_result(),  # log_action's INSERT
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 0, "mismatched": 0, "missing": 1}
 
 
 # ── _register_and_enqueue ─────────────────────────────────────────────────────
@@ -251,7 +346,7 @@ def test_register_and_enqueue_duplicate_skips_queue(monkeypatch, tmp_path):
 
     src = tmp_path / "dup.png"
     src.write_bytes(b"\x89PNG")
-    asyncio.run(ingest_router._register_and_enqueue("batch-dup", src, "dup.png"))
+    asyncio.run(ingest_router._register_and_enqueue("batch-dup", src, "dup.png", TENANT_ID, TENANT_SLUG))
 
     queue_mock.put.assert_not_awaited()
     first_sql = str(session.execute.call_args_list[0][0][0])
@@ -281,7 +376,7 @@ def test_register_and_enqueue_normal_path_enqueues_with_hash(monkeypatch, tmp_pa
 
     src = tmp_path / "new.png"
     src.write_bytes(b"\x89PNG")
-    asyncio.run(ingest_router._register_and_enqueue("batch-new", src, "new.png"))
+    asyncio.run(ingest_router._register_and_enqueue("batch-new", src, "new.png", TENANT_ID, TENANT_SLUG))
 
     queue_mock.put.assert_awaited_once()
     enqueued = queue_mock.put.call_args[0][0]
@@ -309,11 +404,16 @@ def test_status_includes_duplicates_skipped(auth_client, monkeypatch):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_fake_session(monkeypatch, *, fetchall):
-    """Patch ingest_router.SessionLocal to return rows on fetchall()."""
+    """Patch ingest_router.SessionLocal to return rows on fetchall().
+
+    Also satisfies get_batch_status's tenant-ownership check (its first
+    query, via .one_or_none()) by returning a row matching REVIEWER's
+    tenant — both queries share the same mocked session.execute result."""
     from unittest.mock import MagicMock
 
     result = MagicMock()
     result.fetchall.return_value = fetchall
+    result.one_or_none.return_value = (TENANT_ID,)
 
     session = MagicMock()
     session.execute = AsyncMock(return_value=result)

@@ -29,7 +29,7 @@ def test_key_uses_path_when_request_present():
     key = _path_key_builder(_dummy_func, "schema",
                              request=req, response=None,
                              args=(), kwargs={})
-    assert key == "schema:/api/db/schema"
+    assert key == "schema:-:/api/db/schema"
 
 
 def test_key_includes_query_string():
@@ -37,7 +37,7 @@ def test_key_includes_query_string():
     key = _path_key_builder(_dummy_func, "docs",
                              request=req, response=None,
                              args=(), kwargs={})
-    assert key == "docs:/api/db/documents?page=2&page_size=10"
+    assert key == "docs:-:/api/db/documents?page=2&page_size=10"
 
 
 def test_key_no_query_string_omits_questionmark():
@@ -46,14 +46,33 @@ def test_key_no_query_string_omits_questionmark():
                              request=req, response=None,
                              args=(), kwargs={})
     assert "?" not in key
-    assert key == "review:/api/review/count"
+    assert key == "review:-:/api/review/count"
 
 
 def test_key_fallback_when_no_request():
     key = _path_key_builder(_dummy_func, "ns",
                              request=None, response=None,
                              args=(), kwargs={})
-    assert key == "ns:my_module.my_func"
+    assert key == "ns:-:my_module.my_func"
+
+
+def test_key_scoped_by_tenant():
+    """Different tenants requesting the same path must get different cache
+    keys — the fix for the cross-tenant cache leak (two tenants sharing an
+    instance must never see each other's cached /api/db/types etc.)."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class _FakeUser:
+        tenant_slug: str
+
+    req = _fake_request("/api/db/schema")
+    k_land = _path_key_builder(_dummy_func, "schema", request=req, response=None,
+                                args=(), kwargs={"current_user": _FakeUser("land")})
+    k_oil = _path_key_builder(_dummy_func, "schema", request=req, response=None,
+                               args=(), kwargs={"current_user": _FakeUser("oil")})
+    assert k_land != k_oil
+    assert k_land == "schema:land:/api/db/schema"
 
 
 def test_different_paths_produce_different_keys():

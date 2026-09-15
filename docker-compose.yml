@@ -10,7 +10,7 @@
 # Quick start:
 #   cp .env.example .env                               # edit AUTH_SECRET_KEY at minimum
 #   docker compose up --build
-#   docker compose exec api python create_admin.py --email admin@example.com --password secret
+#   docker compose exec api python create_admin.py --email admin@example.com --password secret --tenant default
 #
 # HTTPS modes (set HTTPS_MODE in .env):
 #   self_signed  — default; self-signed cert baked in at build time; no config needed.

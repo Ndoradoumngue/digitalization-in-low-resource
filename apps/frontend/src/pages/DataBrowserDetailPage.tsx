@@ -1,20 +1,22 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
+import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
 import PanZoomImage from "../components/PanZoomImage";
-import { dbImageUrl } from "@sdai/api-client";
+import { dbImageUrl, retryDocument, deleteDocument } from "@sdai/api-client";
 import { labelFor } from "../utils/format";
 import { renderFieldValue } from "../utils/renderField";
 import LinksSection from "../components/LinksSection";
 import AccessSection from "../components/AccessSection";
 import SeriesSection from "../components/SeriesSection";
 
-// The document-management record view: presents a document the way a real
-// records system would — every extracted field as a labeled entry, no QA
-// pipeline internals (confidence tier, review status, retry/delete). For
-// the raw/technical view with that plumbing exposed, used by the ops data
-// browser, see DataBrowserDetailPage.tsx at /ops/data/:tableName/:id.
+// The Ops/QA detail view: every raw column, confidence/review-status
+// internals, and pipeline actions (retry a crashed extraction, hard
+// delete) — reached only from DataBrowserPage.tsx (/ops/data). For the
+// document-management record view regular users see (no QA internals),
+// see DocumentDetailPage.tsx at /documents/:tableName/:id.
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -24,20 +26,27 @@ interface LocationState {
   currentIndex?: number;
 }
 
-// Every system/pipeline column (mirrors documents_router._BASE_COLS, plus
-// document_type/record_id/series_id which get their own dedicated spot in
-// the header) — this page shows only the document's own extracted content,
-// none of the QA/ingestion bookkeeping the ops data browser exposes.
-const SKIP_FIELDS = new Set([
-  "id", "source_image_path", "source_pdf_path", "page_image_paths",
-  "batch_id", "batch_document_id", "ingested_at", "confidence",
-  "review_status", "content_hash", "reviewed_at", "reviewed_by",
-  "record_id", "series_id", "document_type",
-]);
+// ── Confidence / review helpers ───────────────────────────────────────────────
+
+function tierColor(tier: string) {
+  if (tier === "high")   return "bg-emerald-100 text-emerald-800";
+  if (tier === "medium") return "bg-amber-100 text-amber-800";
+  if (tier === "low")    return "bg-red-100 text-red-800";
+  return "bg-gray-100 text-gray-500";
+}
+
+function reviewColor(status: string) {
+  if (status === "auto_approved")   return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (status === "review_required") return "bg-amber-50 text-amber-700 border-amber-200";
+  if (status === "manual_entry")    return "bg-red-50 text-red-700 border-red-200";
+  return "bg-gray-50 text-gray-500 border-gray-200";
+}
+
+const SKIP_FIELDS = new Set(["id", "source_image_path", "source_pdf_path", "page_image_paths", "record_id", "series_id"]);
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function DocumentDetailPage() {
+export default function DataBrowserDetailPage() {
   const { tableName = "", id = "" } = useParams<{ tableName: string; id: string }>();
   const navigate  = useNavigate();
   const location  = useLocation();
@@ -45,7 +54,28 @@ export default function DocumentDetailPage() {
   const list      = state.list ?? [];
   const idx       = state.currentIndex ?? -1;
 
+  const { user }        = useAuth();
+  const queryClient     = useQueryClient();
   const { data, isLoading, error } = useDbDocumentDetail(tableName, id);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  function afterDestructiveAction() {
+    queryClient.invalidateQueries({ queryKey: ["db-documents"] });
+    queryClient.invalidateQueries({ queryKey: ["db-types"] });
+    navigate("/ops/data");
+  }
+
+  const retryMutation = useMutation({
+    mutationFn: () => retryDocument(tableName, id),
+    onSuccess:  afterDestructiveAction,
+    onError:    (e: Error) => setActionError(e.message),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteDocument(tableName, id),
+    onSuccess:  afterDestructiveAction,
+    onError:    (e: Error) => setActionError(e.message),
+  });
 
   const pageImagePaths = Array.isArray(data?.page_image_paths)
     ? (data.page_image_paths as unknown[]).map(String)
@@ -68,7 +98,7 @@ export default function DocumentDetailPage() {
   function goTo(newIdx: number) {
     const entry = list[newIdx];
     if (!entry) return;
-    navigate(`/documents/${entry.tableName}/${entry.id}`, {
+    navigate(`/ops/data/${entry.tableName}/${entry.id}`, {
       state: { list, currentIndex: newIdx },
     });
   }
@@ -78,6 +108,9 @@ export default function DocumentDetailPage() {
     : data?.source_image_path
     ? dbImageUrl(String(data.source_image_path))
     : null;
+
+  const confidence   = data?.confidence   ? String(data.confidence)   : null;
+  const reviewStatus = data?.review_status ? String(data.review_status) : null;
 
   // Build display rows — skip internal fields
   const fieldRows = data
@@ -91,9 +124,9 @@ export default function DocumentDetailPage() {
       {/* Top bar */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3 flex-shrink-0">
         <button
-          onClick={() => navigate("/documents")}
+          onClick={() => navigate("/ops/data")}
           className="text-gray-500 hover:text-gray-800 transition-colors"
-          aria-label="Back to documents"
+          aria-label="Back to data browser"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
@@ -101,15 +134,56 @@ export default function DocumentDetailPage() {
         </button>
 
         <span className="text-sm font-semibold text-gray-700 truncate max-w-xs">
-          {typeof data?.document_type === "string" && data.document_type
-            ? data.document_type
-            : tableName.replace(/_/g, " ")}
+          {tableName.replace(/_/g, " ")}
         </span>
 
         {typeof data?.record_id === "string" && data.record_id && (
           <span className="inline-flex items-center px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-mono">
             {data.record_id}
           </span>
+        )}
+
+        {confidence && (
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${tierColor(confidence)}`}>
+            {confidence}
+          </span>
+        )}
+
+        {reviewStatus && (
+          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${reviewColor(reviewStatus)}`}>
+            {reviewStatus.replace(/_/g, " ")}
+          </span>
+        )}
+
+        {(reviewStatus === "manual_entry" || user?.role === "admin") && (
+          <div className="flex items-center gap-2">
+            {reviewStatus === "manual_entry" && (
+              <button
+                onClick={() => retryMutation.mutate()}
+                disabled={retryMutation.isPending}
+                className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+              >
+                {retryMutation.isPending ? "Retrying…" : "Retry"}
+              </button>
+            )}
+            {user?.role === "admin" && (
+              <button
+                onClick={() => {
+                  if (window.confirm("Permanently delete this document? This cannot be undone.")) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+                className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50 transition-colors"
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {actionError && (
+          <span className="text-xs text-red-600 truncate max-w-xs">{actionError}</span>
         )}
 
         {/* Spacer */}
@@ -193,32 +267,23 @@ export default function DocumentDetailPage() {
             </div>
           </div>
 
-          {/* Right — the record itself (45%) */}
-          <div className="flex-1 overflow-y-auto px-6 py-5">
-            <h1 className="text-lg font-bold text-gray-900 mb-4">
-              {typeof data?.document_type === "string" && data.document_type
-                ? data.document_type
-                : tableName.replace(/_/g, " ")}
-            </h1>
-
+          {/* Right — extracted fields (45%) */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-1">
             {fieldRows.length === 0 ? (
               <p className="text-sm text-gray-400">No fields available.</p>
             ) : (
-              <dl className="space-y-1">
-                {fieldRows.map(([key, value]) => (
-                  <div key={key} className="py-2.5 border-b border-gray-100 last:border-0">
-                    <dt className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
-                      {labelFor(key)}
-                    </dt>
-                    <dd className="text-[15px] text-gray-900 break-words">
-                      {renderFieldValue(value)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+              fieldRows.map(([key, value]) => (
+                <div key={key} className="py-2 border-b border-gray-100 last:border-0">
+                  <dt className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
+                    {labelFor(key)}
+                  </dt>
+                  <dd className="text-sm text-gray-800 break-words">
+                    {renderFieldValue(value)}
+                  </dd>
+                </div>
+              ))
             )}
-
-            {tableName && id && <LinksSection tableName={tableName} id={id} />}
+            {tableName && id && <LinksSection tableName={tableName} id={id} basePath="/ops/data" />}
             {tableName && id && (
               <SeriesSection
                 tableName={tableName}

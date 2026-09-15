@@ -66,7 +66,8 @@ docker compose up --build
 docker compose exec api python create_admin.py \
   --email admin@example.com \
   --password yourpassword \
-  --full-name "Admin"
+  --full-name "Admin" \
+  --tenant default
 ```
 
 Open **https://localhost** (accept the browser security warning for the self-signed cert).
@@ -237,7 +238,8 @@ cd /opt/sdai_digitalization
 ```bash
 docker compose exec api python create_admin.py \
   --email admin@example.com \
-  --password yourpassword
+  --password yourpassword \
+  --tenant default
 ```
 
 ---

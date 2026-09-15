@@ -5,12 +5,12 @@ import pytest
 from unittest.mock import AsyncMock
 
 import api_server
-from conftest import REVIEWER, make_result
+from conftest import REVIEWER, TENANT_NAME, TENANT_SLUG, make_result
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 
-def _user_row(active: bool = True):
+def _user_row(active: bool = True, tenant_active: bool = True):
     return (
         str(uuid.uuid4()),  # id
         "admin@example.com",
@@ -18,6 +18,10 @@ def _user_row(active: bool = True):
         "admin",
         "$2b$12$hashed",    # hashed_password (never actually verified — monkeypatched)
         active,             # is_active
+        TENANT_SLUG,        # tenant_slug
+        TENANT_NAME,        # tenant_name
+        tenant_active,      # tenant_is_active
+        False,              # can_manage_access
     )
 
 

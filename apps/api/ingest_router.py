@@ -32,8 +32,10 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple, Optional
 
@@ -48,7 +50,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from audit import log_action
-from auth import get_current_user, require_admin
+from auth import CurrentUser, get_current_user, require_admin
 from cache import invalidate_cache
 from rate_limit import limiter
 
@@ -64,6 +66,11 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 
 BASE     = Path(__file__).parent
 DOCS_DIR = BASE / "documents" / "anonymized_docs"
+
+# How often the background fixity/integrity check re-scans every tenant's
+# documents (see _integrity_check_worker). Default weekly — this is a
+# slow, I/O-heavy full scan, not something to run often.
+INTEGRITY_CHECK_INTERVAL_HOURS = float(os.getenv("INTEGRITY_CHECK_INTERVAL_HOURS", "168"))
 
 ALLOWED_EXTS  = {".jpg", ".jpeg", ".png", ".pdf"}
 VLM_MAX_SIZE  = 1600
@@ -110,6 +117,27 @@ def _session():
     return SessionLocal  # type: ignore[return-value]
 
 _INIT_DDL = """
+-- A tenant is one ministry/administration. Every deployment has at least
+-- one ('default', auto-seeded below) — a standalone/autonomous deployment
+-- simply never creates a second one. Slug is capped at 24 chars so the
+-- "t_<slug>_" table-name prefix (see _tenant_table_name) still leaves
+-- comfortable room for the sanitized document_type under Postgres's
+-- 63-char identifier limit.
+CREATE TABLE IF NOT EXISTS sdai_tenants (
+    id                    UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug                  TEXT    UNIQUE NOT NULL CHECK (slug ~ '^[a-z][a-z0-9_]{0,23}$'),
+    name                  TEXT    NOT NULL,
+    prompt_file           TEXT,
+    list_fields           TEXT,
+    page_timeout_seconds  REAL,
+    split_page_columns    BOOLEAN,
+    is_active             BOOLEAN DEFAULT true,
+    created_at            TIMESTAMPTZ DEFAULT now()
+);
+
+INSERT INTO sdai_tenants (slug, name) VALUES ('default', 'Default')
+    ON CONFLICT (slug) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS sdai_users (
     id              UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
     email           TEXT    UNIQUE NOT NULL,
@@ -119,6 +147,18 @@ CREATE TABLE IF NOT EXISTS sdai_users (
     created_at      TIMESTAMPTZ DEFAULT now(),
     is_active       BOOLEAN DEFAULT true
 );
+
+-- Backfill for installations where sdai_users already existed before
+-- tenancy was added — every existing user belongs to the 'default' tenant.
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES sdai_tenants(id);
+UPDATE sdai_users SET tenant_id = (SELECT id FROM sdai_tenants WHERE slug = 'default')
+    WHERE tenant_id IS NULL;
+ALTER TABLE sdai_users ALTER COLUMN tenant_id SET NOT NULL;
+
+-- Delegated permission to tag documents with access grants (restrict/
+-- unrestrict) without being a full admin. Admins can always do this
+-- regardless of this flag.
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_manage_access BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS sdai_token_blocklist (
     jti        TEXT        PRIMARY KEY,
@@ -141,11 +181,116 @@ CREATE INDEX IF NOT EXISTS sdai_audit_log_created_at_idx ON sdai_audit_log (crea
 CREATE INDEX IF NOT EXISTS sdai_audit_log_action_idx     ON sdai_audit_log (action);
 CREATE INDEX IF NOT EXISTS sdai_audit_log_user_id_idx    ON sdai_audit_log (user_id);
 
+-- Chain-of-custody links between two ingested documents (e.g. a sale deed
+-- "concerns" the original title deed it transfers). Control-plane table,
+-- not per-tenant-table-prefixed — tenant_id is a real column here (like
+-- batches/sdai_users) since a real FK against a dynamically-named
+-- per-document-type table isn't possible. The app layer validates that
+-- from_table/to_table both belong to the caller's own tenant before insert.
+-- NOTE: no semicolon characters allowed in these comment lines — _init_db
+-- naively splits _INIT_DDL on that character, so one hiding in a comment
+-- chops the comment mid-sentence into an invalid SQL fragment (this bit
+-- us once already, fixing it here).
+CREATE TABLE IF NOT EXISTS sdai_document_links (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID NOT NULL REFERENCES sdai_tenants(id),
+    from_table  TEXT NOT NULL,
+    from_id     UUID NOT NULL,
+    to_table    TEXT NOT NULL,
+    to_id       UUID NOT NULL,
+    relation    TEXT NOT NULL,
+    note        TEXT,
+    created_by  UUID REFERENCES sdai_users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT sdai_document_links_no_self CHECK (NOT (from_table = to_table AND from_id = to_id))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sdai_document_links_from
+    ON sdai_document_links (tenant_id, from_table, from_id);
+CREATE INDEX IF NOT EXISTS idx_sdai_document_links_to
+    ON sdai_document_links (tenant_id, to_table, to_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_document_links_unique
+    ON sdai_document_links (tenant_id, from_table, from_id, to_table, to_id, relation);
+
+-- Named groups within a tenant (e.g. "HR", "Management") for document
+-- access grants. Membership and grants are always explicit tagging, never
+-- automatic/blanket — a group with no grants on a document has no special
+-- visibility into it.
+CREATE TABLE IF NOT EXISTS sdai_groups (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID NOT NULL REFERENCES sdai_tenants(id),
+    name       TEXT NOT NULL,
+    created_by UUID REFERENCES sdai_users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS sdai_user_groups (
+    user_id  UUID NOT NULL REFERENCES sdai_users(id) ON DELETE CASCADE,
+    group_id UUID NOT NULL REFERENCES sdai_groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, group_id)
+);
+
+-- A document with zero rows here is visible to everyone in its tenant
+-- (today's behavior, unchanged, and the default/common case). A document
+-- with any rows is restricted to admins plus whoever/whatever group is
+-- granted. Control-plane table, not per-tenant-table-prefixed — same
+-- reasoning as sdai_document_links: no real FK against a dynamically-
+-- named table is possible, so the app layer validates table_name belongs
+-- to the caller's own tenant before every read and write here.
+CREATE TABLE IF NOT EXISTS sdai_document_access (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    UUID NOT NULL REFERENCES sdai_tenants(id),
+    table_name   TEXT NOT NULL,
+    document_id  UUID NOT NULL,
+    grantee_type TEXT NOT NULL CHECK (grantee_type IN ('group', 'user')),
+    grantee_id   UUID NOT NULL,
+    granted_by   UUID REFERENCES sdai_users(id) ON DELETE SET NULL,
+    granted_at   TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (tenant_id, table_name, document_id, grantee_type, grantee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sdai_document_access_doc
+    ON sdai_document_access (tenant_id, table_name, document_id);
+
+-- Atomic per-tenant-per-year counter backing each document's persistent,
+-- citable record_id (e.g. "LAND-2026-000123") — see _next_record_id.
+CREATE TABLE IF NOT EXISTS sdai_record_id_counters (
+    tenant_id UUID    NOT NULL REFERENCES sdai_tenants(id),
+    year      INTEGER NOT NULL,
+    next_seq  INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (tenant_id, year)
+);
+
+-- Fonds/series hierarchy: a named grouping of related documents (the
+-- standard archival "one document belongs to at most one series" model —
+-- see each dynamic table's nullable series_id column, added below).
+-- Series creation is admin-only (structural, like sdai_groups) while
+-- assigning an existing series to a document is open to any tenant user.
+CREATE TABLE IF NOT EXISTS sdai_series (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID NOT NULL REFERENCES sdai_tenants(id),
+    name        TEXT NOT NULL,
+    description TEXT,
+    created_by  UUID REFERENCES sdai_users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (tenant_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS batches (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     created_at  TIMESTAMPTZ      DEFAULT now(),
     source_type TEXT             NOT NULL
 );
+
+-- batch_documents / batch_document_pages deliberately do NOT get their own
+-- tenant_id column — both are always reachable from batches via batch_id
+-- (1-2 hops), so one backfill here is enough and there's no risk of the
+-- three columns drifting out of sync.
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES sdai_tenants(id);
+UPDATE batches SET tenant_id = (SELECT id FROM sdai_tenants WHERE slug = 'default')
+    WHERE tenant_id IS NULL;
+ALTER TABLE batches ALTER COLUMN tenant_id SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS batch_documents (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -189,6 +334,36 @@ ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS source_path TEXT;
 ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS source_page_number INTEGER;
 """
 
+# Renames any dynamically-created per-document-type table (identified the
+# same way _get_tables_columns does — has a source_image_path column) that
+# predates tenancy to the new "t_default_<type>" naming scheme, so an
+# existing single-tenant deployment's data keeps working unchanged. Kept
+# as its own statement (not appended to _INIT_DDL) because a DO $$ ... $$
+# block contains internal semicolons that _init_db's naive
+# `_INIT_DDL.split(";")` would otherwise chop into invalid fragments.
+# Idempotent: the "NOT LIKE 't\\_default\\_%'" guard means already-migrated
+# tables are skipped on every subsequent startup. 'default' is a reserved
+# tenant slug as a result — see README.
+_TENANT_TABLE_RENAME_DDL = r"""
+DO $$
+DECLARE
+    r RECORD;
+    new_name TEXT;
+BEGIN
+    FOR r IN
+        SELECT c.table_name
+        FROM information_schema.columns c
+        WHERE c.table_schema = 'public'
+          AND c.column_name = 'source_image_path'
+          AND c.table_name NOT IN ('batches', 'batch_documents')
+          AND c.table_name NOT LIKE 't\_default\_%' ESCAPE '\'
+    LOOP
+        new_name := left('t_default_' || r.table_name, 63);
+        EXECUTE format('ALTER TABLE %I RENAME TO %I', r.table_name, new_name);
+    END LOOP;
+END $$;
+"""
+
 
 async def _init_db() -> None:
     async with _engine().begin() as conn:
@@ -198,12 +373,146 @@ async def _init_db() -> None:
             statement = statement.strip()
             if statement:
                 await conn.execute(text(statement))
+        # Must run after the tenants/backfill statements above (it depends
+        # on the 'default' tenant existing) and cannot be split on ";" like
+        # the loop above — see _TENANT_TABLE_RENAME_DDL's docstring.
+        await conn.execute(text(_TENANT_TABLE_RENAME_DDL))
+        # Rebuild every ingest table's FTS index under the generalized
+        # "any TEXT column" rule — see _backfill_fts_indexes's docstring.
+        await _backfill_fts_indexes(conn)
+        # Assign a persistent record_id to any row that predates this
+        # column — see _backfill_record_ids's docstring.
+        await _backfill_record_ids(conn)
+        # Ensure the series_id column exists on tables that predate the
+        # fonds/series feature — see _backfill_series_column's docstring.
+        await _backfill_series_column(conn)
         # Purge expired blocklist entries on each startup
         await conn.execute(
             text("DELETE FROM sdai_token_blocklist WHERE expired_at < NOW()")
         )
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+async def _backfill_fts_indexes(conn) -> None:
+    """One-time-per-startup migration: rebuild every ingest table's FTS GIN
+    index over its full current set of TEXT-typed columns.
+
+    Needed because _ensure_table only rebuilds a table's FTS index when a
+    *newly-added* column triggers it — a table whose schema hasn't changed
+    since before this generalized-search change would otherwise keep its
+    old (narrower, hardcoded-4-field) index forever, silently losing index
+    acceleration (not correctness — Postgres falls back to a seq scan) the
+    first time a query searches one of its other TEXT fields. Idempotent:
+    DROP IF EXISTS + CREATE IF NOT EXISTS are safe to run on every startup.
+    """
+    tables_result = await conn.execute(text("""
+        SELECT DISTINCT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name = 'source_image_path'
+    """))
+    for (table_name,) in tables_result:
+        col_rows = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_schema = 'public' AND table_name = :t AND data_type = 'text'"
+        ), {"t": table_name})
+        text_cols = sorted({row[0] for row in col_rows} - _BASE_COLS)
+        await conn.execute(text(f"DROP INDEX IF EXISTS idx_{table_name}_fts"))
+        if text_cols:
+            coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in text_cols)
+            await conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS idx_{table_name}_fts"
+                f' ON "{table_name}" USING gin'
+                f"(to_tsvector('french', {coalesces}))"
+            ))
+
+
+async def _next_record_id(conn, tenant_id: str, tenant_slug: str) -> str:
+    """Atomically claim the next persistent, citable record id for this
+    tenant/year, e.g. "LAND-2026-000123" — resets every year, matching the
+    "N°123/MIN/2026" reference-number convention already used in the real
+    documents this system ingests. `conn` is caller-managed (no implicit
+    transaction here) so this can be called from within _store_extraction's
+    own transaction or from a migration's."""
+    year = datetime.now(timezone.utc).year
+    result = await conn.execute(text("""
+        INSERT INTO sdai_record_id_counters (tenant_id, year, next_seq)
+        VALUES (CAST(:tid AS uuid), :year, 1)
+        ON CONFLICT (tenant_id, year)
+        DO UPDATE SET next_seq = sdai_record_id_counters.next_seq + 1
+        RETURNING next_seq
+    """), {"tid": tenant_id, "year": year})
+    seq = result.scalar()
+    return f"{tenant_slug.upper()}-{year}-{seq:06d}"
+
+
+async def _backfill_record_ids(conn) -> None:
+    """One-time-per-startup migration: ensure every ingest table has a
+    record_id column, and assign persistent record ids (via the same
+    atomic counter used for new ingests) to any existing rows that
+    predate this feature. Idempotent — only touches rows where
+    record_id IS NULL. Iterates tenants first and matches their table
+    prefix with starts_with(), the same forward-matching approach used
+    everywhere else in this codebase — deliberately not reverse-parsing
+    a tenant slug out of a table name, which would be ambiguous for any
+    slug that itself contains an underscore.
+    """
+    tenants_result = await conn.execute(text("SELECT id, slug FROM sdai_tenants"))
+    tenants = [(str(r[0]), r[1]) for r in tenants_result]
+
+    for tenant_id, tenant_slug in tenants:
+        tables_result = await conn.execute(
+            text("""
+                SELECT DISTINCT c.table_name
+                FROM information_schema.columns c
+                WHERE c.table_schema = 'public'
+                  AND starts_with(c.table_name, :prefix)
+                  AND EXISTS (
+                      SELECT 1 FROM information_schema.columns c2
+                      WHERE c2.table_schema = 'public'
+                        AND c2.table_name = c.table_name
+                        AND c2.column_name = 'source_image_path'
+                  )
+            """),
+            {"prefix": f"t_{tenant_slug}_"},
+        )
+        table_names = [row[0] for row in tables_result]
+
+        for table_name in table_names:
+            await conn.execute(text(
+                f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS record_id TEXT'
+            ))
+            rows = await conn.execute(text(
+                f'SELECT id FROM "{table_name}" WHERE record_id IS NULL ORDER BY ingested_at'
+            ))
+            for (row_id,) in rows:
+                record_id = await _next_record_id(conn, tenant_id, tenant_slug)
+                await conn.execute(
+                    text(f'UPDATE "{table_name}" SET record_id = :rid WHERE id = CAST(:id AS uuid)'),
+                    {"rid": record_id, "id": row_id},
+                )
+            await conn.execute(text(
+                f'CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_record_id'
+                f' ON "{table_name}" (record_id)'
+            ))
+
+
+async def _backfill_series_column(conn) -> None:
+    """One-time-per-startup migration: ensure every ingest table has the
+    nullable series_id column, for installations that predate the
+    fonds/series hierarchy feature. Unlike record_id, no per-row work is
+    needed — a document simply has no series until explicitly assigned."""
+    tables_result = await conn.execute(text("""
+        SELECT DISTINCT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name = 'source_image_path'
+    """))
+    for (table_name,) in tables_result:
+        await conn.execute(text(
+            f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS series_id UUID'
+        ))
+        await conn.execute(text(
+            f'CREATE INDEX IF NOT EXISTS idx_{table_name}_series_id'
+            f' ON "{table_name}" (series_id)'
+        ))
 
 
 # ── Pipeline queues, semaphores, and inter-stage types ───────────────────────
@@ -235,6 +544,8 @@ class _PreparedDoc(NamedTuple):
     filename:     str
     t0:           float
     content_hash: str
+    tenant_id:    str
+    tenant_slug:  str
 
 
 class _VlmResult(NamedTuple):
@@ -247,6 +558,8 @@ class _VlmResult(NamedTuple):
     fields:       dict         # reconciled fields across all pages, or {} on total failure
     error:        Optional[str]  # None on success; message when every page crashed/timed out
     content_hash: str
+    tenant_id:    str
+    tenant_slug:  str
 
 
 async def startup() -> None:
@@ -266,6 +579,7 @@ async def startup() -> None:
         asyncio.create_task(_stage1_worker()),
         asyncio.create_task(_stage2_worker()),
         asyncio.create_task(_stage3_worker()),
+        asyncio.create_task(_integrity_check_worker()),
     ]
 
 
@@ -320,31 +634,118 @@ Return ONLY a JSON object:
 }"""
 
 
-def _load_vlm_prompt() -> str:
-    prompt_file = os.getenv("VLM_PROMPT_FILE")
+def _load_vlm_prompt(prompt_file: Optional[str]) -> str:
     if not prompt_file:
         return _DEFAULT_VLM_PROMPT
     path = Path(prompt_file)
     if not path.is_file():
-        raise RuntimeError(f"VLM_PROMPT_FILE={prompt_file!r} does not exist")
+        raise RuntimeError(f"prompt file {prompt_file!r} does not exist")
     text = path.read_text(encoding="utf-8").strip()
     if not text:
-        raise RuntimeError(f"VLM_PROMPT_FILE={prompt_file!r} is empty")
+        raise RuntimeError(f"prompt file {prompt_file!r} is empty")
     return text
 
 
-_VLM_PROMPT = _load_vlm_prompt()
+def _parse_list_fields(raw: Optional[str]) -> frozenset[str]:
+    return frozenset(f.strip() for f in (raw or "").split(",") if f.strip())
 
-# Fields that accumulate across pages rather than being overwritten.
+
+# Deployment-wide fallbacks, used by any tenant that doesn't override a
+# given setting (this is what makes the auto-seeded 'default' tenant
+# byte-identical to today's pre-tenancy, single-config behavior). Read
+# once at import time — same as before tenancy — so a typo'd
+# VLM_PROMPT_FILE still fails fast at startup rather than at first upload.
 # Uses `or` rather than os.getenv's default param: docker-compose always
-# sets this var (to "" when unset in .env), and the default param only
+# sets these vars (to "" when unset in .env), and the default param only
 # kicks in when a var is truly absent, not merely empty.
-_VLM_LIST_FIELDS = {
-    f.strip()
-    for f in (os.getenv("VLM_LIST_FIELDS") or "person_names,quality_issues").split(",")
-    if f.strip()
-}
+_DEFAULT_PROMPT_FILE  = os.getenv("VLM_PROMPT_FILE")
+_VLM_PROMPT           = _load_vlm_prompt(_DEFAULT_PROMPT_FILE)
+_DEFAULT_LIST_FIELDS  = _parse_list_fields(os.getenv("VLM_LIST_FIELDS") or "person_names,quality_issues")
 _CONFIDENCE_RANK = {"high": 2, "medium": 1, "low": 0}
+
+
+class TenantConfig(NamedTuple):
+    prompt:             str
+    list_fields:        frozenset[str]
+    page_timeout:       float
+    split_page_columns: bool
+
+
+# Per-tenant config is DB-stored (see sdai_tenants) but changes rarely and
+# is read on the hot per-page VLM path, so it's cached briefly rather than
+# queried every time — short enough that an ops edit to a tenant's prompt
+# file takes effect without an `api` restart.
+_TENANT_CONFIG_TTL = 30.0
+_tenant_config_cache: dict[str, tuple[float, TenantConfig]] = {}
+
+
+async def _get_tenant_config(tenant_id: str) -> TenantConfig:
+    cached = _tenant_config_cache.get(tenant_id)
+    if cached and time.monotonic() - cached[0] < _TENANT_CONFIG_TTL:
+        return cached[1]
+
+    async with _engine().connect() as conn:
+        row = await conn.execute(
+            text(
+                "SELECT prompt_file, list_fields, page_timeout_seconds, split_page_columns"
+                " FROM sdai_tenants WHERE id = CAST(:id AS uuid)"
+            ),
+            {"id": tenant_id},
+        )
+        record = row.mappings().one()
+
+    prompt = _load_vlm_prompt(record["prompt_file"] or _DEFAULT_PROMPT_FILE)
+    list_fields = (
+        _parse_list_fields(record["list_fields"]) if record["list_fields"] else _DEFAULT_LIST_FIELDS
+    )
+    page_timeout = (
+        record["page_timeout_seconds"] if record["page_timeout_seconds"] is not None else VLM_PAGE_TIMEOUT
+    )
+    split_page_columns = (
+        record["split_page_columns"] if record["split_page_columns"] is not None else SPLIT_PAGE_COLUMNS
+    )
+
+    cfg = TenantConfig(prompt, list_fields, page_timeout, split_page_columns)
+    _tenant_config_cache[tenant_id] = (time.monotonic(), cfg)
+    return cfg
+
+
+async def _resolve_tenant_for_batch_document(batch_document_id: str) -> Optional[tuple[str, str]]:
+    """Returns (tenant_id, tenant_slug) for the tenant that owns this
+    document, or None if the document doesn't exist. Used by page/document
+    -scoped endpoints that only receive an id, not the tenant directly."""
+    async with _engine().connect() as conn:
+        row = await conn.execute(
+            text(
+                "SELECT t.id::text, t.slug"
+                " FROM batch_documents bd"
+                " JOIN batches b ON b.id = bd.batch_id"
+                " JOIN sdai_tenants t ON t.id = b.tenant_id"
+                " WHERE bd.id = CAST(:bd AS uuid)"
+            ),
+            {"bd": batch_document_id},
+        )
+        record = row.one_or_none()
+    return (record[0], record[1]) if record else None
+
+
+async def _resolve_tenant_for_page(page_id: str) -> Optional[tuple[str, str]]:
+    """Same as _resolve_tenant_for_batch_document, but starting from a
+    batch_document_pages row id."""
+    async with _engine().connect() as conn:
+        row = await conn.execute(
+            text(
+                "SELECT t.id::text, t.slug"
+                " FROM batch_document_pages p"
+                " JOIN batch_documents bd ON bd.id = p.batch_document_id"
+                " JOIN batches b ON b.id = bd.batch_id"
+                " JOIN sdai_tenants t ON t.id = b.tenant_id"
+                " WHERE p.id = CAST(:id AS uuid)"
+            ),
+            {"id": page_id},
+        )
+        record = row.one_or_none()
+    return (record[0], record[1]) if record else None
 
 # Fields that don't count as "this page contributed content" on their own —
 # document_type is typically a constant repeated on every page (including
@@ -353,7 +754,7 @@ _CONFIDENCE_RANK = {"high": 2, "medium": 1, "low": 0}
 _NON_CONTENT_FIELDS = {"document_type", "extraction_confidence"}
 
 
-def _reconcile_pages(page_fields: list[dict]) -> dict:
+def _reconcile_pages(page_fields: list[dict], list_fields: frozenset[str]) -> dict:
     """Merge one VLM extraction per page into a single document-level record.
 
     Singular fields (reference_number, date, organisation, ...) take the
@@ -378,7 +779,7 @@ def _reconcile_pages(page_fields: list[dict]) -> dict:
         for key, value in fields.items():
             if key == "extraction_confidence":
                 continue
-            if key in _VLM_LIST_FIELDS:
+            if key in list_fields:
                 items = value or []
                 if items:
                     contributed = True
@@ -518,12 +919,13 @@ def _detect_column_gutter(img: Image.Image) -> Optional[int]:
     return lo + best_start + best_len // 2
 
 
-def _preprocess(src: Path) -> list[Image.Image]:
+def _preprocess(src: Path, split_page_columns: bool) -> list[Image.Image]:
     """Full preprocessing pipeline — runs in a thread executor.
 
-    Returns two images (left/right column) when SPLIT_PAGE_COLUMNS is
-    enabled AND this specific page is detected to actually have a
-    two-column layout (a whitespace gutter near center) — for documents
+    Returns two images (left/right column) when split_page_columns (the
+    tenant's config, falling back to the deployment-wide SPLIT_PAGE_COLUMNS
+    env var) is enabled AND this specific page is detected to actually have
+    a two-column layout (a whitespace gutter near center) — for documents
     typeset in independent side-by-side columns (e.g. a dictionary, each
     entry self-contained within its column) rather than parallel-text
     translation that needs both columns visible together to pair
@@ -535,7 +937,7 @@ def _preprocess(src: Path) -> list[Image.Image]:
     img = _correct_orientation(img)
     img = _remove_flag_stripes(img)
 
-    if SPLIT_PAGE_COLUMNS:
+    if split_page_columns:
         split_x = _detect_column_gutter(img)
         if split_x is not None:
             w, h = img.size
@@ -567,17 +969,17 @@ def _has_visible_content(img_path: Path) -> bool:
 
 # ── VLM extraction (async, Ollama REST) ───────────────────────────────────────
 
-async def _run_vlm(img_path: Path) -> dict:
+async def _run_vlm(img_path: Path, prompt: str, page_timeout: float) -> dict:
     with open(img_path, "rb") as f:
         img_b64 = base64.b64encode(f.read()).decode()
 
-    async with httpx.AsyncClient(timeout=max(10.0, VLM_PAGE_TIMEOUT - 5.0)) as client:
+    async with httpx.AsyncClient(timeout=max(10.0, page_timeout - 5.0)) as client:
         resp = await client.post(
             f"{OLLAMA_HOST}/api/chat",
             json={
                 "model": "qwen2.5vl:7b",
                 "messages": [
-                    {"role": "user", "content": _VLM_PROMPT, "images": [img_b64]}
+                    {"role": "user", "content": prompt, "images": [img_b64]}
                 ],
                 "stream": False,
             },
@@ -612,14 +1014,20 @@ def _compute_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-async def _find_duplicate(content_hash: str) -> dict | None:
-    """Return {table_name, id} for the first doc with this hash, or None."""
+async def _find_duplicate(content_hash: str, tenant_slug: str) -> dict | None:
+    """Return {table_name, id} for the first doc with this hash *belonging
+    to this tenant*, or None. Scoped per-tenant rather than globally: two
+    ministries independently uploading a byte-identical shared form
+    template are not duplicates of each other."""
+    prefix = f"t_{tenant_slug}_"
     async with _engine().connect() as conn:
         tables_result = await conn.execute(
             text(
                 "SELECT table_name FROM information_schema.columns"
                 " WHERE column_name = 'content_hash' AND table_schema = 'public'"
-            )
+                "   AND starts_with(table_name, :prefix)"
+            ),
+            {"prefix": prefix},
         )
         tables = [row[0] for row in tables_result]
 
@@ -639,19 +1047,125 @@ async def _find_duplicate(content_hash: str) -> dict | None:
     return None
 
 
-async def _delete_document_by_batch_document_id(batch_document_id: str) -> bool:
+# ── Fixity / integrity verification ──────────────────────────────────────────
+# content_hash is computed once, at upload time, over the raw uploaded file
+# (_register_and_enqueue, before any preprocessing). For a PDF upload that
+# original file is kept on disk unmodified and referenced as
+# source_pdf_path, so re-hashing it later and comparing to content_hash is
+# a real corruption check. For an image upload there is no such retained
+# original — the only file kept is source_image_path, which _preprocess
+# has already reoriented/cropped/re-encoded, so it will never hash back to
+# content_hash even when nothing is wrong. Image-sourced documents
+# therefore only get an existence check, not a hash comparison — reporting
+# a "mismatch" there would be a false positive on every single one.
+
+async def _run_integrity_check(tenant_slug: str) -> dict:
+    """Walk every document table for one tenant, verify referenced file(s)
+    still exist on disk, and re-verify content_hash wherever an unmodified
+    original is available (see module docstring above). Logs one
+    integrity_check_failed audit entry per failing document. Returns
+    {"checked", "ok", "mismatched", "missing"}."""
+    counts = {"checked": 0, "ok": 0, "mismatched": 0, "missing": 0}
+    prefix = f"t_{tenant_slug}_"
+
+    async with _engine().connect() as conn:
+        tables_result = await conn.execute(
+            text("""
+                SELECT DISTINCT table_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND column_name = 'source_image_path'
+                  AND starts_with(table_name, :prefix)
+            """),
+            {"prefix": prefix},
+        )
+        table_names = [row[0] for row in tables_result]
+
+    for table_name in table_names:
+        async with _engine().connect() as conn:
+            rows = list(await conn.execute(text(
+                f'SELECT id, source_image_path, source_pdf_path, content_hash FROM "{table_name}"'
+            )))
+
+        for doc_id, source_image_path, source_pdf_path, content_hash in rows:
+            counts["checked"] += 1
+            reasons: list[str] = []
+
+            if source_image_path and not await asyncio.to_thread(os.path.isfile, source_image_path):
+                reasons.append("source_image_path missing")
+
+            if source_pdf_path:
+                if not await asyncio.to_thread(os.path.isfile, source_pdf_path):
+                    reasons.append("source_pdf_path missing")
+                elif content_hash:
+                    actual_hash = await asyncio.to_thread(_compute_hash, Path(source_pdf_path))
+                    if actual_hash != content_hash:
+                        reasons.append("content_hash mismatch")
+
+            if not reasons:
+                counts["ok"] += 1
+                continue
+
+            if any("missing" in r for r in reasons):
+                counts["missing"] += 1
+            if any("mismatch" in r for r in reasons):
+                counts["mismatched"] += 1
+
+            await log_action(
+                action="integrity_check_failed",
+                table_name=table_name,
+                document_id=str(doc_id),
+                details={"reasons": reasons},
+            )
+
+    return counts
+
+
+async def _integrity_check_worker() -> None:
+    """Background task: re-runs the fixity check for every tenant on a
+    long interval (INTEGRITY_CHECK_INTERVAL_HOURS). Runs once shortly
+    after startup, then repeats — same shape as the stage1/2/3 workers,
+    but time-driven instead of queue-driven."""
+    while True:
+        try:
+            async with _engine().connect() as conn:
+                tenants_result = await conn.execute(text("SELECT slug FROM sdai_tenants"))
+                tenant_slugs = [row[0] for row in tenants_result]
+            for tenant_slug in tenant_slugs:
+                await _run_integrity_check(tenant_slug)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[integrity-check] WARNING: scan failed: {e}", file=sys.stderr)
+        await asyncio.sleep(INTEGRITY_CHECK_INTERVAL_HOURS * 3600)
+
+
+async def _delete_document_by_batch_document_id(
+    batch_document_id: str, tenant_id: str, tenant_slug: str
+) -> bool:
     """Find and delete the extracted document row for one upload — found
     via its batch_document_id, regardless of which document_type table it
     landed in — so the same file can be re-uploaded without tripping the
     content-hash duplicate check. Returns True if a row was found and
     deleted. Does not touch batch/page history (batch_documents,
-    batch_document_pages), only the per-type table's stored extraction."""
+    batch_document_pages), only the per-type table's stored extraction.
+    Scoped to the caller's tenant as defense-in-depth (UUIDs won't collide
+    across tenants, but this avoids touching other tenants' tables at all).
+    Also removes any chain-of-custody links referencing the deleted
+    document, in the same transaction."""
+    # Lazy import: documents_router already imports from this module at
+    # module level, so importing it back at module level here would be
+    # circular — same pattern already used for auth.get_current_user's and
+    # audit.log_action's use of ingest_router._engine.
+    from documents_router import _delete_links_for_document  # noqa: PLC0415
+
+    prefix = f"t_{tenant_slug}_"
     async with _engine().connect() as conn:
         tables_result = await conn.execute(
             text(
                 "SELECT table_name FROM information_schema.columns"
                 " WHERE column_name = 'batch_document_id' AND table_schema = 'public'"
-            )
+                "   AND starts_with(table_name, :prefix)"
+            ),
+            {"prefix": prefix},
         )
         tables = [row[0] for row in tables_result]
 
@@ -664,7 +1178,9 @@ async def _delete_document_by_batch_document_id(batch_document_id: str) -> bool:
                 ),
                 {"bd": batch_document_id},
             )
-            if result.rowcount > 0:
+            deleted_id = result.scalar()
+            if deleted_id is not None:
+                await _delete_links_for_document(conn, tenant_id, table_name, str(deleted_id))
                 return True
     return False
 
@@ -679,6 +1195,17 @@ def _sanitize_identifier(name: str, max_len: int = 63) -> str:
     return (name or "document")[:max_len]
 
 
+def _tenant_table_name(tenant_slug: str, doc_type: str) -> str:
+    """Tenant-prefixed table name for a per-document-type table — physical
+    isolation between tenants (a missed WHERE clause returns nothing
+    instead of leaking another tenant's rows), rather than a shared table
+    filtered by a tenant_id column. Slugs are capped at 24 chars (DB CHECK
+    constraint on sdai_tenants) so the prefix is at most 27 chars, leaving
+    >=36 chars of budget for the sanitized document_type."""
+    prefix = f"t_{tenant_slug}_"
+    return prefix + _sanitize_identifier(doc_type, max_len=63 - len(prefix))
+
+
 def _pg_type(key: str, value) -> str:
     if isinstance(value, list):
         return "JSONB"
@@ -687,9 +1214,15 @@ def _pg_type(key: str, value) -> str:
     return "TEXT"
 
 
-# Ordered tuple used both for membership testing and for building the FTS expression.
-# Must match the column names produced by _sanitize_identifier on the VLM output keys.
-_FTS_COLS = ("reference_number", "organisation", "destination_or_subject", "signatory")
+# System/bookkeeping columns every ingest table has — never part of the
+# FTS expression, since they're not VLM-extracted content. Kept in sync
+# with documents_router._BASE_COLS (that module imports table/column
+# metadata from here, not the reverse, so this is the canonical copy).
+_BASE_COLS = frozenset({
+    "id", "source_image_path", "source_pdf_path", "page_image_paths",
+    "batch_id", "batch_document_id", "ingested_at", "confidence",
+    "review_status", "content_hash", "reviewed_at", "reviewed_by",
+})
 
 
 async def _ensure_table(conn, table_name: str, fields: dict) -> str:
@@ -719,6 +1252,8 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             "confidence       TEXT",
             "review_status    TEXT DEFAULT 'pending'",
             "content_hash     TEXT",
+            "record_id        TEXT",
+            "series_id        UUID",
         ]
         field_cols = [
             f"{_sanitize_identifier(k)} {_pg_type(k, v)}"
@@ -746,14 +1281,26 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_content_hash"
             f' ON "{table_name}" (content_hash)'
         ))
+        await conn.execute(text(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_record_id"
+            f' ON "{table_name}" (record_id)'
+        ))
+        await conn.execute(text(
+            f"CREATE INDEX IF NOT EXISTS idx_{table_name}_series_id"
+            f' ON "{table_name}" (series_id)'
+        ))
 
-        # GIN full-text index over whichever FTS columns were actually created.
-        # The VLM prompt always requests all four, but guard against missing keys.
-        created_cols = {_sanitize_identifier(k) for k, v in fields.items()
-                        if not k.startswith("_") and k != "extraction_confidence"}
-        fts_present = [c for c in _FTS_COLS if c in created_cols]
-        if fts_present:
-            coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in fts_present)
+        # GIN full-text index over every TEXT-typed field column — not a
+        # fixed list, so a tenant's own schema (whatever fields its own
+        # prompt extracts) is searchable, not just the default admin-
+        # document fields.
+        text_field_cols = sorted(
+            _sanitize_identifier(k) for k, v in fields.items()
+            if not k.startswith("_") and k != "extraction_confidence"
+               and _pg_type(k, v) == "TEXT"
+        )
+        if text_field_cols:
+            coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in text_field_cols)
             await conn.execute(text(
                 f"CREATE INDEX IF NOT EXISTS idx_{table_name}_fts"
                 f' ON "{table_name}" USING gin'
@@ -789,7 +1336,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 )
             )
             altered = True
-            if col in _FTS_COLS:
+            if _pg_type(k, v) == "TEXT":
                 fts_col_added = True
 
     for col, pg_type in (
@@ -797,6 +1344,8 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
         ("source_pdf_path",   "TEXT"),
         ("page_image_paths",  "JSONB"),
         ("batch_document_id", "UUID"),
+        ("record_id",         "TEXT"),
+        ("series_id",         "UUID"),
     ):
         if col not in existing:
             await conn.execute(text(
@@ -808,16 +1357,30 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
         f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_content_hash"
         f' ON "{table_name}" (content_hash)'
     ))
+    await conn.execute(text(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_record_id"
+        f' ON "{table_name}" (record_id)'
+    ))
+    await conn.execute(text(
+        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_series_id"
+        f' ON "{table_name}" (series_id)'
+    ))
 
     if fts_col_added:
-        # A column that contributes to the FTS expression was added.
-        # Drop and rebuild the GIN index so the new column is included.
+        # A newly-added column is TEXT-typed, so it must join the FTS
+        # expression. Rebuild over the table's full *current* TEXT-column
+        # set — can't derive this from `fields` alone, since older
+        # columns' original values aren't in this particular document's
+        # fields dict, only their (already-committed) Postgres type is
+        # known via information_schema.
         await conn.execute(text(f"DROP INDEX IF EXISTS idx_{table_name}_fts"))
-        all_cols = existing | {_sanitize_identifier(k) for k, v in fields.items()
-                               if not k.startswith("_") and k != "extraction_confidence"}
-        fts_present = [c for c in _FTS_COLS if c in all_cols]
-        if fts_present:
-            coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in fts_present)
+        text_col_rows = await conn.execute(text(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_schema = 'public' AND table_name = :t AND data_type = 'text'"
+        ), {"t": table_name})
+        all_text_cols = sorted({row[0] for row in text_col_rows} - _BASE_COLS)
+        if all_text_cols:
+            coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in all_text_cols)
             await conn.execute(text(
                 f"CREATE INDEX IF NOT EXISTS idx_{table_name}_fts"
                 f' ON "{table_name}" USING gin'
@@ -839,19 +1402,22 @@ async def _store_extraction(
     fields: dict,
     confidence: str,
     review_status: str,
+    tenant_id: str,
+    tenant_slug: str,
     content_hash: str | None = None,
     source_pdf_path: str | None = None,
     page_image_paths: list[str] | None = None,
     batch_document_id: str | None = None,
 ) -> None:
     doc_type   = fields.get("document_type") or "document"
-    table_name = _sanitize_identifier(doc_type)
+    table_name = _tenant_table_name(tenant_slug, doc_type)
 
     async with _engine().begin() as conn:
         schema_event = await _ensure_table(conn, table_name, fields)
+        record_id = await _next_record_id(conn, tenant_id, tenant_slug)
 
-        col_names = ["source_image_path", "batch_id", "confidence", "review_status"]
-        col_vals  = [image_path, batch_id, confidence, review_status]
+        col_names = ["source_image_path", "batch_id", "confidence", "review_status", "record_id"]
+        col_vals  = [image_path, batch_id, confidence, review_status, record_id]
 
         if content_hash is not None:
             col_names.append("content_hash")
@@ -1011,7 +1577,8 @@ async def _update_page_status(
 # ── Stage 1: Preprocessing pool ───────────────────────────────────────────────
 
 async def _stage1_process(
-    doc_id: str, batch_id: str, src_path: Path, filename: str, content_hash: str
+    doc_id: str, batch_id: str, src_path: Path, filename: str, content_hash: str,
+    tenant_id: str, tenant_slug: str,
 ) -> None:
     """Preprocess every page of one document under the semaphore; push to
     _preprocessed_queue. The original PDF (if any) is kept on disk and
@@ -1020,6 +1587,7 @@ async def _stage1_process(
         t0 = time.monotonic()
         await _update_doc_status(doc_id, "processing")
         try:
+            cfg = await _get_tenant_config(tenant_id)
             pdf_path = None
             if src_path.suffix.lower() == ".pdf":
                 pdf_path  = src_path
@@ -1037,7 +1605,7 @@ async def _stage1_process(
             source_page_numbers: list[int] = []
             for i, page_src in enumerate(page_srcs):
                 page_stem = f"{stem}_page{i+1:03d}" if multi_page else stem
-                processed = await asyncio.to_thread(_preprocess, page_src)
+                processed = await asyncio.to_thread(_preprocess, page_src, cfg.split_page_columns)
                 for j, img in enumerate(processed):
                     suffix = chr(ord("a") + j) if len(processed) > 1 else ""
                     dest_path = dest_dir / f"{page_stem}{suffix}.png"
@@ -1067,7 +1635,8 @@ async def _stage1_process(
 
             page_ids = await _create_page_rows(doc_id, kept_paths, kept_source_numbers)
             await _preprocessed_queue.put(
-                _PreparedDoc(doc_id, batch_id, kept_paths, page_ids, pdf_path, filename, t0, content_hash)
+                _PreparedDoc(doc_id, batch_id, kept_paths, page_ids, pdf_path, filename, t0,
+                             content_hash, tenant_id, tenant_slug)
             )
         except Exception as e:
             await _update_doc_status(
@@ -1102,6 +1671,7 @@ async def _stage2_worker() -> None:
     while True:
         prepared = await _preprocessed_queue.get()
         try:
+            cfg = await _get_tenant_config(prepared.tenant_id)
             page_fields: list[dict] = []
             page_errors: list[str]  = []
 
@@ -1109,7 +1679,9 @@ async def _stage2_worker() -> None:
                 page_t0 = time.monotonic()
                 await _update_page_status(page_id, "processing")
                 try:
-                    raw = await asyncio.wait_for(_run_vlm(page_path), timeout=VLM_PAGE_TIMEOUT)
+                    raw = await asyncio.wait_for(
+                        _run_vlm(page_path, cfg.prompt, cfg.page_timeout), timeout=cfg.page_timeout
+                    )
                     if raw.get("_parse_error") or raw.get("_error"):
                         err = raw.get("_raw", "VLM parse error")[:500]
                         page_errors.append(err)
@@ -1124,7 +1696,7 @@ async def _stage2_worker() -> None:
                             processing_time=round(time.monotonic() - page_t0, 2),
                         )
                 except asyncio.TimeoutError:
-                    err = f"VLM timeout ({VLM_PAGE_TIMEOUT:.0f} s)"
+                    err = f"VLM timeout ({cfg.page_timeout:.0f} s)"
                     page_errors.append(err)
                     await _update_page_status(
                         page_id, "failed", error_message=err,
@@ -1139,7 +1711,7 @@ async def _stage2_worker() -> None:
                     )
 
             if page_fields:
-                fields = _reconcile_pages(page_fields)
+                fields = _reconcile_pages(page_fields, cfg.list_fields)
                 error  = None
             else:
                 fields = {}
@@ -1156,6 +1728,8 @@ async def _stage2_worker() -> None:
                     fields       = fields,
                     error        = error,
                     content_hash = prepared.content_hash,
+                    tenant_id    = prepared.tenant_id,
+                    tenant_slug  = prepared.tenant_slug,
                 )
             )
         finally:
@@ -1180,6 +1754,7 @@ async def _stage3_process(result: _VlmResult) -> None:
             )
             await _store_extraction(
                 result.batch_id, primary_image, {}, "unknown", "manual_entry",
+                result.tenant_id, result.tenant_slug,
                 content_hash=result.content_hash,
                 source_pdf_path=source_pdf_path,
                 page_image_paths=page_image_paths,
@@ -1196,6 +1771,7 @@ async def _stage3_process(result: _VlmResult) -> None:
             await _store_extraction(
                 result.batch_id, primary_image,
                 result.fields, confidence, review_status,
+                result.tenant_id, result.tenant_slug,
                 content_hash=result.content_hash,
                 source_pdf_path=source_pdf_path,
                 page_image_paths=page_image_paths,
@@ -1229,11 +1805,11 @@ async def _stage3_worker() -> None:
 
 # ── Batch creation helpers ────────────────────────────────────────────────────
 
-async def _create_batch(source_type: str) -> str:
+async def _create_batch(source_type: str, tenant_id: str) -> str:
     async with _session()() as sess:
         result = await sess.execute(
-            text("INSERT INTO batches (source_type) VALUES (:s) RETURNING id"),
-            {"s": source_type},
+            text("INSERT INTO batches (source_type, tenant_id) VALUES (:s, CAST(:t AS uuid)) RETURNING id"),
+            {"s": source_type, "t": tenant_id},
         )
         batch_id = str(result.scalar())
         await sess.commit()
@@ -1241,10 +1817,10 @@ async def _create_batch(source_type: str) -> str:
 
 
 async def _register_and_enqueue(
-    batch_id: str, src_path: Path, filename: str
+    batch_id: str, src_path: Path, filename: str, tenant_id: str, tenant_slug: str
 ) -> None:
     content_hash = await asyncio.to_thread(_compute_hash, src_path)
-    duplicate    = await _find_duplicate(content_hash)
+    duplicate    = await _find_duplicate(content_hash, tenant_slug)
 
     if duplicate:
         async with _session()() as sess:
@@ -1268,10 +1844,10 @@ async def _register_and_enqueue(
         )
         doc_id = str(result.scalar())
         await sess.commit()
-    await _queue.put((doc_id, batch_id, src_path, filename, content_hash))
+    await _queue.put((doc_id, batch_id, src_path, filename, content_hash, tenant_id, tenant_slug))
 
 
-async def _retry_document(table_name: str, doc_id: str) -> str:
+async def _retry_document(table_name: str, doc_id: str, tenant_id: str, tenant_slug: str) -> str:
     """Re-run VLM extraction for a crashed (manual_entry) document, reusing
     its already-preprocessed page image(s) instead of re-uploading.
 
@@ -1323,7 +1899,7 @@ async def _retry_document(table_name: str, doc_id: str) -> str:
             {"id": doc_id},
         )
 
-    batch_id = await _create_batch("retry")
+    batch_id = await _create_batch("retry", tenant_id)
     filename = pdf_path.name if pdf_path else page_paths[0].name
     source_path = pdf_path if pdf_path else page_paths[0]
     async with _session()() as sess:
@@ -1342,7 +1918,7 @@ async def _retry_document(table_name: str, doc_id: str) -> str:
     page_ids = await _create_page_rows(new_doc_id, page_paths)
     await _preprocessed_queue.put(
         _PreparedDoc(new_doc_id, batch_id, page_paths, page_ids, pdf_path, filename,
-                     time.monotonic(), content_hash)
+                     time.monotonic(), content_hash, tenant_id, tenant_slug)
     )
     return batch_id
 
@@ -1373,9 +1949,15 @@ async def _merge_page_into_document(batch_document_id: str) -> None:
     if not page_fields:
         return
 
-    merged     = _reconcile_pages(page_fields)
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None:
+        return
+    tenant_id, tenant_slug = tenant
+    cfg = await _get_tenant_config(tenant_id)
+
+    merged     = _reconcile_pages(page_fields, cfg.list_fields)
     doc_type   = merged.get("document_type") or "document"
-    table_name = _sanitize_identifier(doc_type)
+    table_name = _tenant_table_name(tenant_slug, doc_type)
 
     async with _engine().begin() as conn:
         table_exists = await conn.execute(
@@ -1482,6 +2064,12 @@ async def _run_page_reload(page_id: str) -> None:
     batch_id             = str(record["batch_id"])
     filename              = record["filename"]
 
+    tenant = await _resolve_tenant_for_batch_document(str(batch_document_id))
+    if tenant is None:
+        return
+    tenant_id, _tenant_slug = tenant
+    cfg = await _get_tenant_config(tenant_id)
+
     try:
         if source_path.suffix.lower() == ".pdf":
             page_src = await asyncio.to_thread(
@@ -1490,7 +2078,7 @@ async def _run_page_reload(page_id: str) -> None:
         else:
             page_src = source_path
 
-        processed = await asyncio.to_thread(_preprocess, page_src)
+        processed = await asyncio.to_thread(_preprocess, page_src, cfg.split_page_columns)
     except Exception:
         # Leave the existing row(s) untouched if re-derivation itself
         # fails (e.g. a transient PDF-rendering error) — nothing to
@@ -1540,7 +2128,7 @@ async def _run_page_reload(page_id: str) -> None:
 
     for pid, path in zip(new_page_ids, new_paths):
         await _update_page_status(pid, "processing")
-        await _process_one_page(pid, path)
+        await _process_one_page(pid, path, cfg.prompt, cfg.page_timeout)
 
     await _merge_page_into_document(batch_document_id)
 
@@ -1579,18 +2167,18 @@ async def _retry_single_page(page_id: str) -> None:
     )
 
 
-async def _process_one_page(page_id: str, image_path: Path) -> bool:
+async def _process_one_page(page_id: str, image_path: Path, prompt: str, page_timeout: float) -> bool:
     """Run VLM extraction for one page and update its row. Returns True on
     success. Does not merge into the parent document — callers merge once
     after processing one or more pages, so a bulk resume doesn't re-run
     the (cheap but non-trivial) reconciliation after every single page."""
     t0 = time.monotonic()
     try:
-        raw = await asyncio.wait_for(_run_vlm(image_path), timeout=VLM_PAGE_TIMEOUT)
+        raw = await asyncio.wait_for(_run_vlm(image_path, prompt, page_timeout), timeout=page_timeout)
     except asyncio.TimeoutError:
         await _update_page_status(
             page_id, "failed",
-            error_message=f"VLM timeout ({VLM_PAGE_TIMEOUT:.0f} s)",
+            error_message=f"VLM timeout ({page_timeout:.0f} s)",
             processing_time=round(time.monotonic() - t0, 2),
         )
         return False
@@ -1620,7 +2208,12 @@ async def _run_page_retry(page_id: str, batch_document_id: str, image_path: Path
     """Background counterpart to _retry_single_page — runs the VLM call
     and merges the result, without blocking the HTTP request that
     triggered it."""
-    await _process_one_page(page_id, image_path)
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None:
+        return
+    tenant_id, _tenant_slug = tenant
+    cfg = await _get_tenant_config(tenant_id)
+    await _process_one_page(page_id, image_path, cfg.prompt, cfg.page_timeout)
     await _merge_page_into_document(batch_document_id)
 
 
@@ -1666,6 +2259,11 @@ async def _resume_document_pages(batch_document_id: str) -> int:
 async def _run_resume(batch_document_id: str, pages: list[tuple[str, Path]]) -> None:
     """Background: process pages one at a time (not concurrently) so a
     resume doesn't overwhelm Ollama the way N simultaneous retries would."""
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None:
+        return
+    tenant_id, _tenant_slug = tenant
+    cfg = await _get_tenant_config(tenant_id)
     for page_id, image_path in pages:
         await _update_page_status(page_id, "processing")
         if not image_path.exists():
@@ -1674,7 +2272,7 @@ async def _run_resume(batch_document_id: str, pages: list[tuple[str, Path]]) -> 
                 error_message=f"Stored page image no longer on disk: {image_path}",
             )
             continue
-        await _process_one_page(page_id, image_path)
+        await _process_one_page(page_id, image_path, cfg.prompt, cfg.page_timeout)
     await _merge_page_into_document(batch_document_id)
 
 
@@ -1784,7 +2382,7 @@ router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 async def upload_files(
     request: Request,
     files: list[UploadFile] = File(...),
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Accept one or more image/PDF files, return a batch_id immediately."""
     for f in files:
@@ -1796,7 +2394,7 @@ async def upload_files(
                        f" Allowed: {', '.join(sorted(ALLOWED_EXTS))}",
             )
 
-    batch_id  = await _create_batch("upload")
+    batch_id  = await _create_batch("upload", current_user.tenant_id)
     batch_dir = UPLOADS_DIR / batch_id
     batch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1811,7 +2409,7 @@ async def upload_files(
                        f"({MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
             )
         dest.write_bytes(content)
-        await _register_and_enqueue(batch_id, dest, filename)
+        await _register_and_enqueue(batch_id, dest, filename, current_user.tenant_id, current_user.tenant_slug)
 
     return {"batch_id": batch_id}
 
@@ -1826,7 +2424,7 @@ class PathRequest(BaseModel):
 async def ingest_from_path(
     request: Request,
     body: PathRequest,
-    current_user: str = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_admin),
 ):
     """Ingest from a server-side directory path or a Google Drive folder.
 
@@ -1840,7 +2438,8 @@ async def ingest_from_path(
         )
 
     batch_id = await _create_batch(
-        "google_drive" if body.google_drive_folder_id else "server_path"
+        "google_drive" if body.google_drive_folder_id else "server_path",
+        current_user.tenant_id,
     )
 
     if body.google_drive_folder_id:
@@ -1868,7 +2467,7 @@ async def ingest_from_path(
         raise HTTPException(status_code=422, detail="No supported files found.")
 
     for p in files:
-        await _register_and_enqueue(batch_id, p, p.name)
+        await _register_and_enqueue(batch_id, p, p.name, current_user.tenant_id, current_user.tenant_slug)
 
     return {"batch_id": batch_id}
 
@@ -1925,7 +2524,7 @@ def _download_google_drive_folder_sync(folder_id: str, dest_dir: Path) -> list[P
 @router.get("/batches")
 async def list_batches(
     limit:        int = 20,
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Return the most recent ingestion batches with aggregate progress, so
@@ -1950,11 +2549,12 @@ async def list_batches(
                     COUNT(*) FILTER (WHERE bd.status = 'duplicate')                 AS duplicates_skipped
                 FROM batches b
                 LEFT JOIN batch_documents bd ON bd.batch_id = b.id
+                WHERE b.tenant_id = CAST(:tenant_id AS uuid)
                 GROUP BY b.id, b.source_type, b.created_at
                 ORDER BY b.created_at DESC
                 LIMIT :limit
             """),
-            {"limit": limit},
+            {"limit": limit, "tenant_id": current_user.tenant_id},
         )
         rows = result.mappings().all()
 
@@ -1978,10 +2578,18 @@ async def list_batches(
 @router.get("/status/{batch_id}")
 async def get_batch_status(
     batch_id: str,
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Return overall batch progress and per-document status."""
     async with _session()() as sess:
+        batch_row = await sess.execute(
+            text("SELECT tenant_id FROM batches WHERE id = CAST(:b AS uuid)"),
+            {"b": batch_id},
+        )
+        batch = batch_row.one_or_none()
+        if batch is None or str(batch[0]) != current_user.tenant_id:
+            raise HTTPException(status_code=404, detail="Batch not found")
+
         docs_result = await sess.execute(
             text(
                 "SELECT id, filename, status, document_type, confidence,"
@@ -2028,10 +2636,14 @@ async def get_batch_status(
 @router.get("/pages/{batch_document_id}")
 async def list_pages(
     batch_document_id: str,
-    current_user:       str = Depends(get_current_user),
+    current_user:       CurrentUser = Depends(get_current_user),
 ):
     """Per-page status for one document — powers the page-level progress
     bar and failed-pages list for multi-page documents."""
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None or tenant[0] != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="No pages found for this document")
+
     async with _session()() as sess:
         result = await sess.execute(
             text(
@@ -2086,12 +2698,15 @@ class ManualPageEntry(BaseModel):
 async def retry_page(
     request:      Request,
     page_id:      str,
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Kick off a re-run of VLM extraction for one failed page in the
     background and return immediately; merges into the parent document
     (even if already finalized) once it completes. Poll
     GET /api/ingest/pages/{batch_document_id} for the result."""
+    tenant = await _resolve_tenant_for_page(page_id)
+    if tenant is None or tenant[0] != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Page not found")
     await _retry_single_page(page_id)
     return {"ok": True, "status": "processing"}
 
@@ -2101,7 +2716,7 @@ async def retry_page(
 async def reload_page(
     request:      Request,
     page_id:      str,
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Re-derive this page from its original source document from
     scratch — re-running PDF-page extraction and preprocessing (including
@@ -2111,6 +2726,9 @@ async def reload_page(
     GET /api/ingest/pages/{batch_document_id} for the result. Requires
     the document to have been ingested after source-tracking was added —
     older documents don't have a recorded source path."""
+    tenant = await _resolve_tenant_for_page(page_id)
+    if tenant is None or tenant[0] != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Page not found")
     await _reload_single_page(page_id)
     return {"ok": True, "status": "processing"}
 
@@ -2121,10 +2739,13 @@ async def manual_enter_page(
     request:      Request,
     page_id:      str,
     body:         ManualPageEntry,
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Store a human-entered result for one page (bypassing the VLM) and
     merge it into the parent document."""
+    tenant = await _resolve_tenant_for_page(page_id)
+    if tenant is None or tenant[0] != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Page not found")
     await _manual_enter_page(page_id, body.fields)
     return {"ok": True}
 
@@ -2134,10 +2755,13 @@ async def manual_enter_page(
 async def skip_page(
     request:      Request,
     page_id:      str,
-    current_user: str = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Mark a page as not relevant (cover sheet, blank, out-of-scope
     layout, ...) so it's excluded from the document's reconciled result."""
+    tenant = await _resolve_tenant_for_page(page_id)
+    if tenant is None or tenant[0] != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="Page not found")
     await _skip_page(page_id)
     return {"ok": True}
 
@@ -2147,12 +2771,15 @@ async def skip_page(
 async def resume_document(
     request:            Request,
     batch_document_id:  str,
-    current_user:       str = Depends(get_current_user),
+    current_user:       CurrentUser = Depends(get_current_user),
 ):
     """Resume every pending/failed page of a document in the background —
     e.g. after an interrupted run (API restart mid-processing). Pages are
     processed one at a time; poll GET /api/ingest/pages/{batch_document_id}
     for progress. Already-completed pages are left untouched."""
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None or tenant[0] != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="No pending or failed pages to resume")
     count = await _resume_document_pages(batch_document_id)
     if count == 0:
         raise HTTPException(status_code=404, detail="No pending or failed pages to resume")
@@ -2164,14 +2791,22 @@ async def resume_document(
 async def delete_ingested_document(
     request:            Request,
     batch_document_id:  str,
-    current_user:       str = Depends(require_admin),
+    current_user:       CurrentUser = Depends(require_admin),
 ):
     """Delete the extracted document for one upload — found via its
     batch_document_id, regardless of which per-type table it's in — so
     the same file can be re-uploaded without tripping the duplicate
     check. Admin only, since this is irreversible. Leaves the batch/page
     history in place; only removes the stored extraction."""
-    deleted = await _delete_document_by_batch_document_id(batch_document_id)
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None or tenant[0] != current_user.tenant_id:
+        raise HTTPException(
+            status_code=404,
+            detail="No extracted document found for this upload — it may not have "
+                   "finished processing yet, or was already deleted.",
+        )
+    tenant_id, tenant_slug = tenant
+    deleted = await _delete_document_by_batch_document_id(batch_document_id, tenant_id, tenant_slug)
     if not deleted:
         raise HTTPException(
             status_code=404,

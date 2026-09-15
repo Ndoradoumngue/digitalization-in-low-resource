@@ -8,6 +8,10 @@ propagate to the caller — a logging hiccup must not reject a document review.
 Actions logged:
   user_login         user_logout
   document_ingested  document_approved  document_rejected  document_flagged
+  document_linked    document_link_removed
+  document_access_granted  document_access_revoked
+  series_created     series_assigned
+  integrity_check_failed
   schema_created     schema_altered
 """
 

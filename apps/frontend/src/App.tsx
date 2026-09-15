@@ -6,11 +6,14 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import UploadPage from "./pages/UploadPage";
 import DocumentsPage from "./pages/DocumentsPage";
+import DataBrowserPage from "./pages/DataBrowserPage";
+import DataBrowserDetailPage from "./pages/DataBrowserDetailPage";
 import DocumentDetailPage from "./pages/DocumentDetailPage";
 import SchemaPage from "./pages/SchemaPage";
 import ReviewPage from "./pages/ReviewPage";
 import AuditPage from "./pages/AuditPage";
 import BenchmarksPage from "./pages/BenchmarksPage";
+import AccessAdminPage from "./pages/AccessAdminPage";
 
 export default function App() {
   return (
@@ -51,6 +54,33 @@ export default function App() {
             <ProtectedRoute>
               <DocumentDetailPage />
             </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/ops/data"
+          element={
+            <ProtectedRoute>
+              <DataBrowserPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/ops/data/:tableName/:id"
+          element={
+            <ProtectedRoute>
+              <DataBrowserDetailPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/ops/access"
+          element={
+            <AdminRoute>
+              <AccessAdminPage />
+            </AdminRoute>
           }
         />
 
