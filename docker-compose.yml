@@ -122,7 +122,7 @@ services:
       - CORS_ORIGINS=
       # JWT auth — run create_admin.py after first boot to seed the first user
       - AUTH_SECRET_KEY=${AUTH_SECRET_KEY}
-      - AUTH_SECURE_COOKIES=false
+      - AUTH_SECURE_COOKIES=${AUTH_SECURE_COOKIES:-false}
       # PostgreSQL (asyncpg driver)
       - DATABASE_URL=${DATABASE_URL}
       # Ollama — use the containerised service (override with host.docker.internal:11434

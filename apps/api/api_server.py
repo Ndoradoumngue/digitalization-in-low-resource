@@ -159,6 +159,7 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/api/auth/login", tags=["auth"], summary="Log in")
+@limiter.limit("10/minute")
 async def login(body: LoginRequest, request: Request, response: Response):
     """
     Authenticate with email and password.

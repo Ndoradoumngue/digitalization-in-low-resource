@@ -61,7 +61,7 @@ def test_upload_png_success(auth_client, tmp_path, monkeypatch):
 
     resp = auth_client.post(
         "/api/ingest/upload",
-        files=[("files", ("scan.png", b"\x89PNG\r\n", "image/png"))],
+        files=[("files", ("scan.png", b"\x89PNG\r\n\x1a\n" + b"rest of file", "image/png"))],
     )
 
     assert resp.status_code == 200
@@ -96,13 +96,49 @@ def test_upload_multiple_files(auth_client, tmp_path, monkeypatch):
     resp = auth_client.post(
         "/api/ingest/upload",
         files=[
-            ("files", ("a.png", b"data", "image/png")),
-            ("files", ("b.jpg", b"data", "image/jpeg")),
+            ("files", ("a.png", b"\x89PNG\r\n\x1a\n" + b"rest of file", "image/png")),
+            ("files", ("b.jpg", b"\xff\xd8\xff" + b"rest of file", "image/jpeg")),
         ],
     )
 
     assert resp.status_code == 200
     assert ingest_router._register_and_enqueue.await_count == 2
+
+
+# ── Upload: content-sniffing (extension must match actual file bytes) ─────────
+
+def test_upload_rejects_fake_pdf_content(auth_client, monkeypatch):
+    """A non-PDF file renamed to .pdf must be rejected at upload time, not
+    accepted and only fail later inside the processing pipeline."""
+    monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="b1"))
+    resp = auth_client.post(
+        "/api/ingest/upload",
+        files=[("files", ("fake.pdf", b"just plain text, not a real pdf", "application/pdf"))],
+    )
+    assert resp.status_code == 422
+    assert "fake.pdf" in resp.json()["detail"]
+
+
+def test_upload_rejects_fake_png_content(auth_client, monkeypatch):
+    monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="b1"))
+    resp = auth_client.post(
+        "/api/ingest/upload",
+        files=[("files", ("fake.png", b"not actually a png", "image/png"))],
+    )
+    assert resp.status_code == 422
+
+
+def test_sniff_matches_extension_accepts_real_signatures():
+    assert ingest_router._sniff_matches_extension(b"%PDF-1.4\n...", ".pdf")
+    assert ingest_router._sniff_matches_extension(b"\x89PNG\r\n\x1a\n...", ".png")
+    assert ingest_router._sniff_matches_extension(b"\xff\xd8\xff\xe0...", ".jpg")
+    assert ingest_router._sniff_matches_extension(b"\xff\xd8\xff\xe0...", ".jpeg")
+
+
+def test_sniff_matches_extension_rejects_mismatched_content():
+    assert not ingest_router._sniff_matches_extension(b"not a pdf at all", ".pdf")
+    assert not ingest_router._sniff_matches_extension(b"%PDF-1.4", ".png")  # PDF content, .png claim
+    assert not ingest_router._sniff_matches_extension(b"", ".jpg")
 
 
 # ── Path ingest ───────────────────────────────────────────────────────────────

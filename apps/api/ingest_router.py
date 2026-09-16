@@ -73,6 +73,24 @@ DOCS_DIR = BASE / "documents" / "anonymized_docs"
 INTEGRITY_CHECK_INTERVAL_HOURS = float(os.getenv("INTEGRITY_CHECK_INTERVAL_HOURS", "168"))
 
 ALLOWED_EXTS  = {".jpg", ".jpeg", ".png", ".pdf"}
+
+# Leading bytes each file type actually starts with — ALLOWED_EXTS alone
+# only checks the claimed filename extension, so an arbitrary file
+# renamed to one of these suffixes was previously accepted straight into
+# the pipeline and only failed later, deep inside preprocessing.
+_MAGIC_BYTES: dict[str, tuple[bytes, ...]] = {
+    ".pdf":  (b"%PDF-",),
+    ".png":  (b"\x89PNG\r\n\x1a\n",),
+    ".jpg":  (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+}
+
+
+def _sniff_matches_extension(content: bytes, ext: str) -> bool:
+    signatures = _MAGIC_BYTES.get(ext)
+    return bool(signatures) and any(content.startswith(sig) for sig in signatures)
+
+
 VLM_MAX_SIZE  = 1600
 THUMB_SIZE    = 400
 MIN_INK_FRACTION = 0.002  # >0.2% non-background pixels counts as "has content"
@@ -2492,6 +2510,13 @@ async def upload_files(
                 status_code=413,
                 detail=f"{filename} exceeds the maximum upload size "
                        f"({MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+            )
+        ext = Path(filename).suffix.lower()
+        if not _sniff_matches_extension(content, ext):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{filename} does not look like a valid {ext} file"
+                       " (content doesn't match its extension).",
             )
         dest.write_bytes(content)
         await _register_and_enqueue(batch_id, dest, filename, current_user.tenant_id, current_user.tenant_slug)
