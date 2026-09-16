@@ -3,8 +3,17 @@ import {
   createDocumentAccess,
   deleteDocumentAccess,
   fetchDocumentAccess,
+  fetchGrantees,
   type CreateAccessGrantBody,
 } from "@sdai/api-client";
+
+export function useGrantees() {
+  return useQuery({
+    queryKey: ["grantees"],
+    queryFn:  fetchGrantees,
+    staleTime: 30_000,
+  });
+}
 
 export function useDocumentAccess(tableName: string, id: string) {
   return useQuery({

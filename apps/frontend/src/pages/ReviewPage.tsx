@@ -9,6 +9,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { flagReview, patchReview, dbImageUrl } from "@sdai/api-client";
 import { useReviewQueue } from "../hooks/useReview";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
+import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
 import type { ReviewQueueItem } from "@sdai/types";
 
@@ -113,9 +114,10 @@ interface FormProps {
   initial:     Record<string, string>;
   arrayFields: Set<string>;
   onChange:    (key: string, val: string) => void;
+  canEdit:     boolean;
 }
 
-function ReviewForm({ detail, form, initial, arrayFields, onChange }: FormProps) {
+function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: FormProps) {
   const confidence   = detail.confidence   ? String(detail.confidence)   : null;
   const documentType = detail.document_type ? String(detail.document_type) : null;
 
@@ -139,6 +141,12 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange }: FormProps)
 
       {/* Editable fields */}
       <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
+        {!canEdit && (
+          <p className="text-xs text-gray-400 italic">
+            You can approve or reject this document, but correcting its fields needs the
+            extraction-editing permission.
+          </p>
+        )}
         {editableKeys.length === 0 && (
           <p className="text-sm text-gray-400">No editable fields.</p>
         )}
@@ -164,8 +172,9 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange }: FormProps)
                 type="text"
                 value={val}
                 onChange={(e) => onChange(key, e.target.value)}
+                disabled={!canEdit}
                 placeholder="Not found — fill if visible"
-                className="w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-gray-300"
+                className="w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-gray-300 disabled:bg-gray-50 disabled:text-gray-500"
               />
             </div>
           );
@@ -179,6 +188,8 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange }: FormProps)
 
 export default function ReviewPage() {
   const queryClient  = useQueryClient();
+  const { user }     = useAuth();
+  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
 
   // Load entire queue (up to 100) for navigation
   const { data: queueData, isLoading: queueLoading } = useReviewQueue({ page_size: 100 });
@@ -247,10 +258,16 @@ export default function ReviewPage() {
     queryClient.invalidateQueries({ queryKey: ["review-queue"] });
   }
 
-  // Build PATCH fields payload
+  // Build PATCH fields payload — only fields actually changed from what
+  // was loaded, not every field verbatim. Approving without changes must
+  // stay a plain status transition available to any reviewer; sending
+  // every field back unconditionally would make every approval look like
+  // an edit and require the extraction-editing permission even when
+  // nothing was touched (see documents_router._build_field_set_clause).
   function buildFields(): Record<string, string | string[] | null> {
     const out: Record<string, string | string[] | null> = {};
     for (const [k, v] of Object.entries(form)) {
+      if (v === (initial[k] ?? "")) continue;
       if (arrayFields.has(k)) {
         out[k] = v.trim()
           ? v.split(",").map((s) => s.trim()).filter(Boolean)
@@ -447,6 +464,7 @@ export default function ReviewPage() {
                   initial={initial}
                   arrayFields={arrayFields}
                   onChange={(k, v) => setForm((f) => ({ ...f, [k]: v }))}
+                  canEdit={canEditExtraction}
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">

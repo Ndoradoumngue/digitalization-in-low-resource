@@ -172,7 +172,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
             text(
                 "SELECT u.id, u.email, u.full_name, u.role, u.hashed_password, u.is_active,"
                 "       t.slug AS tenant_slug, t.name AS tenant_name, t.is_active AS tenant_is_active,"
-                "       u.can_manage_access"
+                "       u.can_manage_access, u.can_edit_extraction"
                 " FROM sdai_users u"
                 " JOIN sdai_tenants t ON t.id = u.tenant_id"
                 " WHERE u.email = :e"
@@ -201,6 +201,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
     return {
         "id": str(user[0]), "email": user[1], "full_name": user[2], "role": user[3],
         "tenant_slug": user[6], "tenant_name": user[7], "can_manage_access": user[9],
+        "can_edit_extraction": user[10],
     }
 
 
@@ -258,6 +259,7 @@ async def me(current_user: CurrentUser = Depends(get_current_user)):
         "tenant_slug": current_user.tenant_slug,
         "tenant_name": current_user.tenant_name,
         "can_manage_access": current_user.can_manage_access,
+        "can_edit_extraction": current_user.can_edit_extraction,
     }
 
 

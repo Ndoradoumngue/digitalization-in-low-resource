@@ -22,6 +22,7 @@ REVIEWER = CurrentUser(
     tenant_slug=TENANT_SLUG,
     tenant_name=TENANT_NAME,
     can_manage_access=False,
+    can_edit_extraction=False,
     group_ids=[],
 )
 
@@ -34,6 +35,7 @@ ADMIN = CurrentUser(
     tenant_slug=TENANT_SLUG,
     tenant_name=TENANT_NAME,
     can_manage_access=False,
+    can_edit_extraction=False,
     group_ids=[],
 )
 
@@ -48,6 +50,22 @@ ACCESS_MANAGER = CurrentUser(
     tenant_slug=TENANT_SLUG,
     tenant_name=TENANT_NAME,
     can_manage_access=True,
+    can_edit_extraction=False,
+    group_ids=[],
+)
+
+# A reviewer delegated the can_edit_extraction permission — for testing the
+# "admin OR can_edit_extraction" tier separately from plain reviewer/admin.
+EXTRACTION_EDITOR = CurrentUser(
+    id="00000000-0000-0000-0000-000000000004",
+    email="extraction-editor@example.com",
+    full_name="Test Extraction Editor",
+    role="reviewer",
+    tenant_id=TENANT_ID,
+    tenant_slug=TENANT_SLUG,
+    tenant_name=TENANT_NAME,
+    can_manage_access=False,
+    can_edit_extraction=True,
     group_ids=[],
 )
 
@@ -159,6 +177,17 @@ def access_manager_client(dirs):
     logic still runs and evaluates can_manage_document_access itself,
     the same way require_admin's real 403 check runs for auth_client."""
     api_server.app.dependency_overrides[get_current_user] = lambda: ACCESS_MANAGER
+    with TestClient(api_server.app, raise_server_exceptions=True) as c:
+        yield c
+    api_server.app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def extraction_editor_client(dirs):
+    """TestClient authenticated as a reviewer with can_edit_extraction=True.
+    Only get_current_user is overridden — require_extraction_editor's real
+    logic still runs and evaluates can_edit_extraction_data itself."""
+    api_server.app.dependency_overrides[get_current_user] = lambda: EXTRACTION_EDITOR
     with TestClient(api_server.app, raise_server_exceptions=True) as c:
         yield c
     api_server.app.dependency_overrides.clear()

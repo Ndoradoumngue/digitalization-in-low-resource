@@ -11,7 +11,6 @@ Endpoints:
   DELETE /api/review/{table}/{id}       — permanently remove a document (admin only)
 """
 
-import json
 import re
 from typing import Optional
 
@@ -27,21 +26,14 @@ from rate_limit import limiter
 from documents_router import (
     _access_params,
     _access_where_clause,
+    _build_field_set_clause,
     _delete_links_for_document,
     _document_visible,
     _extra_cols,
     _get_tables_columns,
     _sanitize,
 )
-from ingest_router import _engine, _retry_document
-
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-# Fields the reviewer is not allowed to overwrite
-_PROTECTED = frozenset({
-    "id", "ingested_at", "review_status", "source_image_path",
-    "table_name", "batch_id",
-})
+from ingest_router import _engine, _retry_document, _grant_uploader_access
 
 # ── Row serialisation helper ──────────────────────────────────────────────────
 
@@ -247,39 +239,17 @@ async def patch_review(
             await conn.commit()
 
         if body.action == "approve":
-            # cols is already {column_name: data_type} (from
-            # _get_tables_columns), so no second information_schema query
-            # is needed here to handle JSONB vs. scalar columns correctly.
-            col_types = cols
+            editable, set_parts, field_params = _build_field_set_clause(cols, body.fields)
+            params = {"doc_id": doc_id, **field_params}
 
-            # Build SET clause — only valid, non-protected columns
-            editable = {
-                k: v for k, v in body.fields.items()
-                if k in cols and k not in _PROTECTED
-            }
-
-            set_parts: list[str] = []
-            params: dict = {"doc_id": doc_id}
-
-            for col, val in editable.items():
-                pname    = f"v_{col}"
-                col_type = col_types.get(col, "text")
-                is_jsonb = col_type in ("json", "jsonb")
-
-                if val is None or val == "":
-                    set_parts.append(f'"{col}" = :{pname}')
-                    params[pname] = None
-                elif is_jsonb and isinstance(val, list):
-                    set_parts.append(f'"{col}" = CAST(:{pname} AS jsonb)')
-                    params[pname] = json.dumps(val)
-                elif is_jsonb and isinstance(val, str):
-                    # Comma-separated string → JSON array
-                    arr = [s.strip() for s in val.split(",") if s.strip()]
-                    set_parts.append(f'"{col}" = CAST(:{pname} AS jsonb)')
-                    params[pname] = json.dumps(arr)
-                else:
-                    set_parts.append(f'"{col}" = :{pname}')
-                    params[pname] = str(val)
+            # Approving with no actual field changes is just a status
+            # transition, open to any reviewer; submitting corrected
+            # values is editing extraction content, which needs the
+            # delegated permission (admin, or can_edit_extraction).
+            if editable and not current_user.can_edit_extraction_data:
+                raise HTTPException(
+                    status_code=403, detail="Extraction-editing permission required"
+                )
 
             set_parts += [
                 "review_status = 'approved'",
@@ -308,6 +278,14 @@ async def patch_review(
     row = result.mappings().one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # This document just left the shared review pipeline (approved or
+    # rejected) — it stops being open to every tenant user by default from
+    # here on. See _grant_uploader_access's docstring.
+    async with _engine().begin() as grant_conn:
+        await _grant_uploader_access(
+            grant_conn, current_user.tenant_id, safe, doc_id, row.get("uploaded_by") and str(row["uploaded_by"]),
+        )
 
     audit_action = "document_approved" if body.action == "approve" else "document_rejected"
     audit_details: dict = {"confidence": dict(row).get("confidence")}

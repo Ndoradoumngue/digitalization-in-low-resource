@@ -163,6 +163,8 @@ function FailedPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId:
   const [manualOpen, setManualOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
   const retryMutation = useRetryPage(batchDocumentId);
+  const { user } = useAuth();
+  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction;
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50/60 px-3 py-2">
@@ -198,12 +200,14 @@ function FailedPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId:
             {retryMutation.isPending ? "Retrying…" : "Retry"}
           </button>
           <ReloadButton pageId={page.id} batchDocumentId={batchDocumentId} />
-          <button
-            onClick={() => setManualOpen((o) => !o)}
-            className="px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            {manualOpen ? "Cancel" : "Enter manually"}
-          </button>
+          {canEditExtraction && (
+            <button
+              onClick={() => setManualOpen((o) => !o)}
+              className="px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              {manualOpen ? "Cancel" : "Enter manually"}
+            </button>
+          )}
           <SkipButton pageId={page.id} batchDocumentId={batchDocumentId} />
         </div>
       </div>

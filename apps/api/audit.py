@@ -12,6 +12,8 @@ Actions logged:
   document_access_granted  document_access_revoked
   series_created     series_assigned
   integrity_check_failed
+  document_fields_edited
+  archive_exported
   schema_created     schema_altered
 """
 

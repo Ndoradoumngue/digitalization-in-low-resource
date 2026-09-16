@@ -3,11 +3,13 @@ import {
   addUserToGroup,
   createGroup,
   deleteGroup,
+  exportArchive,
   fetchAdminUsers,
   fetchGroups,
   removeUserFromGroup,
   runIntegrityCheck,
   updateUserAccessManager,
+  updateUserExtractionEditor,
 } from "@sdai/api-client";
 
 export function useGroups() {
@@ -58,6 +60,17 @@ export function useUpdateUserAccessManager() {
   });
 }
 
+export function useUpdateUserExtractionEditor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, canEditExtraction }: { userId: string; canEditExtraction: boolean }) =>
+      updateUserExtractionEditor(userId, canEditExtraction),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
+  });
+}
+
 export function useAddUserToGroup() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -85,5 +98,27 @@ export function useRemoveUserFromGroup() {
 export function useRunIntegrityCheck() {
   return useMutation({
     mutationFn: runIntegrityCheck,
+  });
+}
+
+export function useExportArchive() {
+  return useMutation({
+    mutationFn: (format: "json" | "sql") => exportArchive(format),
+    onSuccess: ({ blob, filename }) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      // The anchor must be attached to the DOM for .click() to reliably
+      // trigger a download in every browser (Safari in particular ignores
+      // clicks on detached elements). Revoking the object URL must also
+      // be deferred — doing it synchronously right after click() can race
+      // with the browser actually starting the download and silently
+      // kill it before any bytes are read.
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
   });
 }

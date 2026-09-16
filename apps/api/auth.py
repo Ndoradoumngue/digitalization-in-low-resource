@@ -29,6 +29,7 @@ class CurrentUser:
     tenant_slug:       str
     tenant_name:       str
     can_manage_access: bool
+    can_edit_extraction: bool
     group_ids:         list[str]
 
     @property
@@ -36,6 +37,16 @@ class CurrentUser:
         """Admins can always tag documents with access grants; a reviewer
         needs the delegated can_manage_access flag."""
         return self.role == "admin" or self.can_manage_access
+
+    @property
+    def can_edit_extraction_data(self) -> bool:
+        """Admins can always edit extracted field data (manual entry for a
+        crashed page, field corrections on approve, or correcting an
+        already-filed document); a reviewer needs the delegated
+        can_edit_extraction flag. Distinct from can_manage_access — one
+        governs who can see a document, the other who can change its
+        content."""
+        return self.role == "admin" or self.can_edit_extraction
 
 
 async def get_current_user(
@@ -73,7 +84,8 @@ async def get_current_user(
             text(
                 "SELECT u.id, u.email, u.full_name, u.role, u.is_active,"
                 "       t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,"
-                "       t.is_active AS tenant_is_active, u.can_manage_access"
+                "       t.is_active AS tenant_is_active, u.can_manage_access,"
+                "       u.can_edit_extraction"
                 " FROM sdai_users u"
                 " JOIN sdai_tenants t ON t.id = u.tenant_id"
                 " WHERE u.id = CAST(:id AS uuid)"
@@ -100,6 +112,7 @@ async def get_current_user(
         tenant_slug=user[6],
         tenant_name=user[7],
         can_manage_access=user[9],
+        can_edit_extraction=user[10],
         group_ids=group_ids,
     )
 
@@ -121,4 +134,17 @@ async def require_access_manager(
     Creating/managing groups themselves stays admin-only (require_admin)."""
     if not current_user.can_manage_document_access:
         raise HTTPException(status_code=403, detail="Access-management permission required")
+    return current_user
+
+
+async def require_extraction_editor(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """FastAPI dependency — raises 403 unless the user can edit extracted
+    field data (admin, or a reviewer delegated can_edit_extraction).
+    Covers manual entry for a crashed page, field corrections made while
+    approving a review_required document, and editing an already-filed
+    document's fields — everywhere extraction content can be changed."""
+    if not current_user.can_edit_extraction_data:
+        raise HTTPException(status_code=403, detail="Extraction-editing permission required")
     return current_user

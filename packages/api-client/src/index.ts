@@ -18,6 +18,7 @@ import {
   DocumentAccessResponseSchema,
   DocumentLinksResponseSchema,
   DocumentListSchema,
+  GranteesResponseSchema,
   GroupsResponseSchema,
   IntegrityCheckResultSchema,
   LoginResponseSchema,
@@ -44,6 +45,7 @@ import {
   type DocumentEntry,
   type DocumentLinksResponse,
   type ExtractionResult,
+  type GranteesResponse,
   type Group,
   type IntegrityCheckResult,
   type ImageVariant,
@@ -93,7 +95,16 @@ export async function getMe(): Promise<User | null> {
   const res = await fetch("/api/auth/me", { credentials: "include" });
   if (res.status === 401) return null;
   if (!res.ok) return null;
-  return UserSchema.parse(await res.json());
+  try {
+    return UserSchema.parse(await res.json());
+  } catch (e) {
+    // A stale tab open across a deploy that changed this shape would
+    // otherwise throw here uncaught — AuthContext's getMe().then(setUser)
+    // would never fire, silently stranding the app in its initial
+    // logged-out state instead of falling back cleanly like the 401 case.
+    console.error("getMe(): /api/auth/me response failed schema validation", e);
+    return null;
+  }
 }
 
 // ── OCR endpoints ─────────────────────────────────────────────────────────────
@@ -288,6 +299,27 @@ export async function fetchDbDocumentDetail(
   );
 }
 
+export async function updateDocumentFields(
+  tableName: string,
+  id: string,
+  fields: Record<string, unknown>,
+): Promise<DbDocumentDetail> {
+  const res = await fetch(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/fields`,
+    {
+      method:      "PATCH",
+      credentials: "include",
+      headers:     { "Content-Type": "application/json" },
+      body:        JSON.stringify({ fields }),
+    },
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return DbDocumentDetailSchema.parse(await res.json());
+}
+
 export async function fetchDbTypes(): Promise<DbType[]> {
   return fetchJson("/api/db/types", DbTypesSchema);
 }
@@ -352,6 +384,10 @@ export async function deleteDocumentLink(linkId: string): Promise<void> {
 }
 
 // ── Document access grants ────────────────────────────────────────────────────
+
+export async function fetchGrantees(): Promise<GranteesResponse> {
+  return fetchJson("/api/db/grantees", GranteesResponseSchema);
+}
 
 export async function fetchDocumentAccess(
   tableName: string,
@@ -607,6 +643,22 @@ export async function updateUserAccessManager(
   }
 }
 
+export async function updateUserExtractionEditor(
+  userId: string,
+  canEditExtraction: boolean,
+): Promise<void> {
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method:      "PATCH",
+    credentials: "include",
+    headers:     { "Content-Type": "application/json" },
+    body:        JSON.stringify({ can_edit_extraction: canEditExtraction }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function addUserToGroup(userId: string, groupId: string): Promise<void> {
   const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/groups`, {
     method:      "POST",
@@ -643,4 +695,26 @@ export async function runIntegrityCheck(): Promise<IntegrityCheckResult> {
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   return IntegrityCheckResultSchema.parse(await res.json());
+}
+
+// ── Admin: archive export ────────────────────────────────────────────────────
+
+export interface ArchiveExportResult {
+  blob:     Blob;
+  filename: string;
+}
+
+export async function exportArchive(format: "json" | "sql"): Promise<ArchiveExportResult> {
+  const res = await fetch(`/api/admin/export?format=${format}`, {
+    method:      "GET",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match        = disposition.match(/filename="?([^"]+)"?/);
+  const filename      = match?.[1] ?? `archive_export_${format}.zip`;
+  return { blob: await res.blob(), filename };
 }

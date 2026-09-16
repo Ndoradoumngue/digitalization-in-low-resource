@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { AccessGrant } from "@sdai/types";
-import { useDocumentAccess, useCreateDocumentAccess, useDeleteDocumentAccess } from "../hooks/useAccess";
-import { useGroups, useAdminUsers } from "../hooks/useAdmin";
+import { useDocumentAccess, useCreateDocumentAccess, useDeleteDocumentAccess, useGrantees } from "../hooks/useAccess";
 
 function GrantRow({
   grant,
@@ -48,8 +47,7 @@ function AccessGrantPicker({
 }) {
   const [granteeType, setGranteeType] = useState<"group" | "user">("group");
   const [granteeId, setGranteeId]     = useState("");
-  const { data: groups }   = useGroups();
-  const { data: users }    = useAdminUsers();
+  const { data: grantees } = useGrantees();
   const createMutation = useCreateDocumentAccess(tableName, id);
 
   function submit() {
@@ -60,7 +58,7 @@ function AccessGrantPicker({
     );
   }
 
-  const options = granteeType === "group" ? (groups ?? []) : (users ?? []);
+  const options = granteeType === "group" ? (grantees?.groups ?? []) : (grantees?.users ?? []);
 
   return (
     <div className="mb-3 p-3 rounded-md border border-gray-200 bg-gray-50 space-y-2">

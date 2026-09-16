@@ -22,6 +22,7 @@ def _user_row(active: bool = True, tenant_active: bool = True):
         TENANT_NAME,        # tenant_name
         tenant_active,      # tenant_is_active
         False,              # can_manage_access
+        False,              # can_edit_extraction
     )
 
 

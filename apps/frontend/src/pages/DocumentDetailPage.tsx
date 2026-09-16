@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
+import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
 import PanZoomImage from "../components/PanZoomImage";
 import { dbImageUrl } from "@sdai/api-client";
-import { labelFor } from "../utils/format";
-import { renderFieldValue } from "../utils/renderField";
+import FieldsPanel from "../components/FieldsPanel";
 import LinksSection from "../components/LinksSection";
 import AccessSection from "../components/AccessSection";
 import SeriesSection from "../components/SeriesSection";
@@ -32,7 +32,7 @@ const SKIP_FIELDS = new Set([
   "id", "source_image_path", "source_pdf_path", "page_image_paths",
   "batch_id", "batch_document_id", "ingested_at", "confidence",
   "review_status", "content_hash", "reviewed_at", "reviewed_by",
-  "record_id", "series_id", "document_type",
+  "record_id", "series_id", "document_type", "uploaded_by",
 ]);
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -45,6 +45,8 @@ export default function DocumentDetailPage() {
   const list      = state.list ?? [];
   const idx       = state.currentIndex ?? -1;
 
+  const { user }        = useAuth();
+  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
   const { data, isLoading, error } = useDbDocumentDetail(tableName, id);
 
   const pageImagePaths = Array.isArray(data?.page_image_paths)
@@ -201,21 +203,13 @@ export default function DocumentDetailPage() {
                 : tableName.replace(/_/g, " ")}
             </h1>
 
-            {fieldRows.length === 0 ? (
-              <p className="text-sm text-gray-400">No fields available.</p>
-            ) : (
-              <dl className="space-y-1">
-                {fieldRows.map(([key, value]) => (
-                  <div key={key} className="py-2.5 border-b border-gray-100 last:border-0">
-                    <dt className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
-                      {labelFor(key)}
-                    </dt>
-                    <dd className="text-[15px] text-gray-900 break-words">
-                      {renderFieldValue(value)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+            {tableName && id && (
+              <FieldsPanel
+                tableName={tableName}
+                id={id}
+                fieldRows={fieldRows}
+                canEdit={canEditExtraction}
+              />
             )}
 
             {tableName && id && <LinksSection tableName={tableName} id={id} />}

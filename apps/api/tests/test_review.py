@@ -137,7 +137,10 @@ def test_patch_review_doc_not_found(auth_client, mock_db, monkeypatch):
     assert resp.status_code == 404
 
 
-def test_patch_review_approve(auth_client, mock_db, monkeypatch):
+def test_patch_review_approve(extraction_editor_client, mock_db, monkeypatch):
+    """Approving WITH field corrections needs the extraction-editing
+    permission — see test_patch_review_approve_field_edit_requires_permission
+    for the 403 case."""
     monkeypatch.setattr(review_router, "_get_tables_columns",
                         AsyncMock(return_value=_fake_tables()))
 
@@ -154,13 +157,60 @@ def test_patch_review_approve(auth_client, mock_db, monkeypatch):
         make_result(),                          # log_action
     ]
 
-    resp = auth_client.patch(
+    resp = extraction_editor_client.patch(
         "/api/review/my_table/doc-1",
         json={"action": "approve", "fields": {"reference_number": "REF-001"}},
     )
 
     assert resp.status_code == 200
     assert resp.json()["review_status"] == "approved"
+
+
+def test_patch_review_approve_field_edit_requires_permission(auth_client, mock_db, monkeypatch):
+    """A plain reviewer (no can_edit_extraction) can still approve a
+    document, but not with field corrections attached."""
+    monkeypatch.setattr(review_router, "_get_tables_columns",
+                        AsyncMock(return_value=_fake_tables()))
+    mock_db.execute.return_value = make_result(one_or_none=(1,))  # _document_visible check
+
+    resp = auth_client.patch(
+        "/api/review/my_table/doc-1",
+        json={"action": "approve", "fields": {"reference_number": "REF-001"}},
+    )
+    assert resp.status_code == 403
+
+
+def test_patch_review_approve_grants_uploader_access(auth_client, mock_db, monkeypatch):
+    """Approving a document is exactly the moment it leaves the shared
+    review pipeline — if it has a known uploader, that should create an
+    access grant so privacy applies from here on (see
+    ingest_router._grant_uploader_access)."""
+    monkeypatch.setattr(review_router, "_get_tables_columns",
+                        AsyncMock(return_value=_fake_tables()))
+
+    updated_row = {
+        "id": "doc-1",
+        "review_status": "approved",
+        "confidence": "medium",
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "uploaded_by": "uploader-uuid-1",
+    }
+    mock_db.execute.side_effect = [
+        make_result(one_or_none=(1,)),          # _document_visible check
+        make_result(one_or_none=updated_row),   # UPDATE RETURNING *
+        make_result(),                          # INSERT sdai_document_access (grant)
+        make_result(),                          # log_action
+    ]
+
+    resp = auth_client.patch(
+        "/api/review/my_table/doc-1",
+        json={"action": "approve", "fields": {}},
+    )
+
+    assert resp.status_code == 200
+    grant_sql = str(mock_db.execute.call_args_list[2][0][0])
+    assert "INSERT INTO sdai_document_access" in grant_sql
 
 
 def test_patch_review_reject(auth_client, mock_db, monkeypatch):

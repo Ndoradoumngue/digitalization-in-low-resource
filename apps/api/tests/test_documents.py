@@ -329,6 +329,85 @@ def test_get_document_detail_success(auth_client, mock_db, monkeypatch):
     assert resp.json()["reference_number"] == "REF-001"
 
 
+# ── update_document_fields ────────────────────────────────────────────────────
+
+def test_update_document_fields_requires_extraction_editor(auth_client):
+    """A plain reviewer (no can_edit_extraction) can't edit a document's
+    fields at all — not even one already visible to them, and not even
+    at the auth-check stage before table/visibility lookups run."""
+    resp = auth_client.patch(
+        "/api/db/documents/my_table/doc-1/fields",
+        json={"fields": {"reference_number": "REF-002"}},
+    )
+    assert resp.status_code == 403
+
+
+def test_update_document_fields_table_not_found(extraction_editor_client, mock_db, monkeypatch):
+    monkeypatch.setattr(documents_router, "_get_tables_columns",
+                        AsyncMock(return_value={}))
+    resp = extraction_editor_client.patch(
+        "/api/db/documents/missing_table/doc-1/fields",
+        json={"fields": {"reference_number": "REF-002"}},
+    )
+    assert resp.status_code == 404
+
+
+def test_update_document_fields_requires_visibility(extraction_editor_client, mock_db, monkeypatch):
+    monkeypatch.setattr(documents_router, "_get_tables_columns",
+                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    mock_db.execute.return_value = make_result(one_or_none=None)  # not visible
+    resp = extraction_editor_client.patch(
+        "/api/db/documents/my_table/doc-1/fields",
+        json={"fields": {"reference_number": "REF-002"}},
+    )
+    assert resp.status_code == 404
+
+
+def test_update_document_fields_no_editable_fields_returns_422(extraction_editor_client, mock_db, monkeypatch):
+    monkeypatch.setattr(documents_router, "_get_tables_columns",
+                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    mock_db.execute.return_value = make_result(one_or_none=(1,))  # _document_visible
+    resp = extraction_editor_client.patch(
+        "/api/db/documents/my_table/doc-1/fields",
+        json={"fields": {"not_a_real_column": "x"}},
+    )
+    assert resp.status_code == 422
+
+
+def test_update_document_fields_success(extraction_editor_client, mock_db, monkeypatch):
+    monkeypatch.setattr(documents_router, "_get_tables_columns",
+                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    updated_row = {"id": "doc-1", "reference_number": "REF-002"}
+    mock_db.execute.side_effect = [
+        make_result(one_or_none=(1,)),           # _document_visible
+        make_result(one_or_none=updated_row),    # UPDATE ... RETURNING *
+        make_result(),                           # log_action
+    ]
+    resp = extraction_editor_client.patch(
+        "/api/db/documents/my_table/doc-1/fields",
+        json={"fields": {"reference_number": "REF-002"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["reference_number"] == "REF-002"
+
+
+def test_update_document_fields_success_as_admin(admin_client, mock_db, monkeypatch):
+    """Admins can always edit extraction data, no delegated flag needed."""
+    monkeypatch.setattr(documents_router, "_get_tables_columns",
+                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    updated_row = {"id": "doc-1", "reference_number": "REF-003"}
+    mock_db.execute.side_effect = [
+        make_result(one_or_none=(1,)),
+        make_result(one_or_none=updated_row),
+        make_result(),
+    ]
+    resp = admin_client.patch(
+        "/api/db/documents/my_table/doc-1/fields",
+        json={"fields": {"reference_number": "REF-003"}},
+    )
+    assert resp.status_code == 200
+
+
 # ── document links ────────────────────────────────────────────────────────────
 
 def test_get_document_links_table_not_found(auth_client, mock_db, monkeypatch):
@@ -453,6 +532,39 @@ def test_delete_document_link_success(auth_client, mock_db, monkeypatch):
     resp = auth_client.delete("/api/db/links/link-1")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+# ── grantees (groups/users available to tag a document with) ─────────────────
+
+def test_list_grantees_requires_access_manager(auth_client):
+    """A plain reviewer (not admin, not can_manage_access) can't tag
+    documents at all, so has no need for the grantee picker's data."""
+    assert auth_client.get("/api/db/grantees").status_code == 403
+
+
+def test_list_grantees_returns_groups_and_users_for_access_manager(access_manager_client, mock_db):
+    """The whole point of this endpoint: a delegated access manager (not
+    a full admin) can list groups/users to tag a document with, even
+    though GET /api/admin/groups and /api/admin/users stay admin-only."""
+    mock_db.execute.side_effect = [
+        make_result(rows=[("group-1", "HR")]),
+        make_result(rows=[("user-1", "a@example.com", "Alice")]),
+    ]
+    resp = access_manager_client.get("/api/db/grantees")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["groups"] == [{"id": "group-1", "name": "HR"}]
+    assert body["users"] == [{"id": "user-1", "email": "a@example.com", "full_name": "Alice"}]
+
+
+def test_list_grantees_returns_groups_and_users_for_admin(admin_client, mock_db):
+    mock_db.execute.side_effect = [
+        make_result(rows=[]),
+        make_result(rows=[]),
+    ]
+    resp = admin_client.get("/api/db/grantees")
+    assert resp.status_code == 200
+    assert resp.json() == {"groups": [], "users": []}
 
 
 # ── document access grants ────────────────────────────────────────────────────

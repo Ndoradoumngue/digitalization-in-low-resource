@@ -6,12 +6,57 @@ import {
   useDeleteGroup,
   useAdminUsers,
   useUpdateUserAccessManager,
+  useUpdateUserExtractionEditor,
   useAddUserToGroup,
   useRemoveUserFromGroup,
   useRunIntegrityCheck,
+  useExportArchive,
 } from "../hooks/useAdmin";
 import { useSeries, useCreateSeries, useDeleteSeries } from "../hooks/useSeries";
 import type { AdminUser, Group, Series } from "@sdai/types";
+
+// ── Archive export panel ─────────────────────────────────────────────────────
+
+function ExportArchivePanel() {
+  const [format, setFormat] = useState<"json" | "sql">("json");
+  const exportMutation = useExportArchive();
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-5">
+      <h2 className="text-sm font-bold text-gray-900 mb-1">Export archive</h2>
+      <p className="text-xs text-gray-500 mb-3">
+        Downloads every document in this tenant — all extracted fields plus a{" "}
+        <code className="font-mono">documents/</code> folder with every source image and PDF —
+        bundled into one zip file.
+      </p>
+
+      <div className="flex items-center gap-2">
+        <select
+          value={format}
+          onChange={(e) => setFormat(e.target.value as "json" | "sql")}
+          className="h-9 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        >
+          <option value="json">JSON</option>
+          <option value="sql">SQL</option>
+        </select>
+        <button
+          onClick={() => exportMutation.mutate(format)}
+          disabled={exportMutation.isPending}
+          className="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+        >
+          {exportMutation.isPending ? "Preparing export…" : "Download export"}
+        </button>
+      </div>
+
+      {exportMutation.isError && (
+        <p className="text-xs text-red-600 mt-3">{(exportMutation.error as Error).message}</p>
+      )}
+      {exportMutation.isSuccess && !exportMutation.isPending && (
+        <p className="text-xs text-emerald-600 mt-3">Download started.</p>
+      )}
+    </div>
+  );
+}
 
 // ── Fixity / integrity check panel ──────────────────────────────────────────
 
@@ -228,7 +273,8 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
 // ── Users panel ───────────────────────────────────────────────────────────────
 
 function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
-  const updateAccessManager = useUpdateUserAccessManager();
+  const updateAccessManager    = useUpdateUserAccessManager();
+  const updateExtractionEditor = useUpdateUserExtractionEditor();
   const addToGroup      = useAddUserToGroup();
   const removeFromGroup = useRemoveUserFromGroup();
   const [addingGroupId, setAddingGroupId] = useState("");
@@ -251,17 +297,30 @@ function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
           </span>
         </div>
         {user.role !== "admin" && (
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 flex-shrink-0">
-            <input
-              type="checkbox"
-              checked={user.can_manage_access}
-              onChange={(e) =>
-                updateAccessManager.mutate({ userId: user.id, canManageAccess: e.target.checked })
-              }
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
-            />
-            Can manage document access
-          </label>
+          <div className="flex flex-col items-start gap-1 flex-shrink-0">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={user.can_manage_access}
+                onChange={(e) =>
+                  updateAccessManager.mutate({ userId: user.id, canManageAccess: e.target.checked })
+                }
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
+              />
+              Can manage document access
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={user.can_edit_extraction}
+                onChange={(e) =>
+                  updateExtractionEditor.mutate({ userId: user.id, canEditExtraction: e.target.checked })
+                }
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
+              />
+              Can edit extraction data
+            </label>
+          </div>
         )}
       </div>
 
@@ -346,6 +405,7 @@ export default function AccessAdminPage() {
           <UsersPanel users={users ?? []} groups={groups ?? []} isLoading={usersLoading} />
           <SeriesPanel series={series ?? []} isLoading={seriesLoading} />
           <IntegrityCheckPanel />
+          <ExportArchivePanel />
         </div>
       </div>
     </div>

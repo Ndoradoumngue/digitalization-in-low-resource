@@ -17,12 +17,13 @@ export const CreateGroupResponseSchema = z.object({ id: z.string(), name: z.stri
 // ── Users (admin view) ───────────────────────────────────────────────────────
 
 export const AdminUserSchema = z.object({
-  id:                 z.string(),
-  email:              z.string(),
-  full_name:          z.string().nullable(),
-  role:               z.enum(["admin", "reviewer"]),
-  can_manage_access:  z.boolean(),
-  group_ids:          z.array(z.string()),
+  id:                   z.string(),
+  email:                z.string(),
+  full_name:            z.string().nullable(),
+  role:                 z.enum(["admin", "reviewer"]),
+  can_manage_access:    z.boolean(),
+  can_edit_extraction:  z.boolean(),
+  group_ids:            z.array(z.string()),
 });
 export type AdminUser = z.infer<typeof AdminUserSchema>;
 
@@ -47,6 +48,28 @@ export const DocumentAccessResponseSchema = z.object({
 export type DocumentAccessResponse = z.infer<typeof DocumentAccessResponseSchema>;
 
 export const CreateAccessGrantResponseSchema = z.object({ id: z.string() });
+
+// ── Grantees (minimal groups/users listing for the tagging picker) ──────────
+// Deliberately a smaller shape than GroupSchema/AdminUserSchema — no
+// role, can_manage_access, or member_count, since GET /api/db/grantees is
+// available to any access manager, not just admins (see admin_router.py's
+// GET /api/admin/groups and /api/admin/users, which stay admin-only).
+
+export const GranteeGroupSchema = z.object({ id: z.string(), name: z.string() });
+export type GranteeGroup = z.infer<typeof GranteeGroupSchema>;
+
+export const GranteeUserSchema = z.object({
+  id:        z.string(),
+  email:     z.string(),
+  full_name: z.string().nullable(),
+});
+export type GranteeUser = z.infer<typeof GranteeUserSchema>;
+
+export const GranteesResponseSchema = z.object({
+  groups: z.array(GranteeGroupSchema),
+  users:  z.array(GranteeUserSchema),
+});
+export type GranteesResponse = z.infer<typeof GranteesResponseSchema>;
 
 // ── Fixity / integrity check ─────────────────────────────────────────────────
 

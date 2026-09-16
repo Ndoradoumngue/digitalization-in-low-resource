@@ -21,6 +21,8 @@ const ACTION_STYLES: Record<string, string> = {
   series_created:           "bg-teal-100   text-teal-800",
   series_assigned:          "bg-teal-100   text-teal-800",
   integrity_check_failed:   "bg-red-100    text-red-800",
+  document_fields_edited:   "bg-violet-100 text-violet-800",
+  archive_exported:         "bg-indigo-100 text-indigo-800",
 };
 
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);
@@ -60,8 +62,14 @@ function exportCsv(entries: AuditLogEntry[]) {
   const a    = document.createElement("a");
   a.href     = url;
   a.download = `audit_log_${new Date().toISOString().slice(0, 10)}.csv`;
+  // See useExportArchive's comment — the anchor must be attached to the
+  // DOM for click() to work reliably everywhere, and revoking the object
+  // URL must be deferred so it can't race the browser starting the
+  // download.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // ── Detail cell ───────────────────────────────────────────────────────────────

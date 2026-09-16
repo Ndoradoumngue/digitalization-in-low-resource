@@ -6,12 +6,14 @@ information_schema; they are never hardcoded or taken raw from user input.
 Endpoints:
   GET    /api/db/documents                    — paginated list with filters & full-text search
   GET    /api/db/documents/{tbl}/{id}         — full field detail for one document
+  PATCH  /api/db/documents/{tbl}/{id}/fields  — edit extraction field data (permission-gated)
   GET    /api/db/documents/{tbl}/{id}/links   — chain-of-custody links for one document
   POST   /api/db/documents/{tbl}/{id}/links   — link this document to another
   DELETE /api/db/links/{link_id}              — remove a link
   GET    /api/db/documents/{tbl}/{id}/access  — access grants on one document
   POST   /api/db/documents/{tbl}/{id}/access  — grant a group/user access (restricts it)
   DELETE /api/db/access/{grant_id}            — remove an access grant
+  GET    /api/db/grantees                     — groups/users available to tag a document with
   GET    /api/db/series                       — list this tenant's series
   POST   /api/db/series                       — create a series (admin-only)
   DELETE /api/db/series/{id}                  — delete a series (admin-only)
@@ -22,6 +24,7 @@ Endpoints:
                                                  or path/Drive-ingested source file
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -33,7 +36,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from audit import client_ip, log_action
-from auth import CurrentUser, get_current_user, require_access_manager, require_admin
+from auth import CurrentUser, get_current_user, require_access_manager, require_admin, require_extraction_editor
 from cache import _path_key_builder, invalidate_cache
 from fastapi_cache.decorator import cache
 from ingest_router import DOCS_DIR as _INGEST_DOCS_DIR
@@ -115,8 +118,51 @@ _BASE_COLS = frozenset({
     "id", "source_image_path", "source_pdf_path", "page_image_paths",
     "batch_id", "batch_document_id", "ingested_at", "confidence",
     "review_status", "content_hash", "reviewed_at", "reviewed_by",
-    "series_id",
+    "series_id", "uploaded_by",
 })
+
+# Columns an extraction-editor is never allowed to overwrite directly —
+# shared between review_router.patch_review's approve action and
+# update_document_fields below, so the two field-editing entry points
+# can't drift apart on what's off-limits.
+_PROTECTED_FIELDS = frozenset({
+    "id", "ingested_at", "review_status", "source_image_path",
+    "table_name", "batch_id",
+})
+
+
+def _build_field_set_clause(
+    cols: dict[str, str], fields: dict, protected: frozenset[str] = _PROTECTED_FIELDS,
+) -> tuple[dict, list[str], dict]:
+    """Column-type-aware SET-clause builder for editing extraction field
+    values. Returns (editable, set_parts, params): `editable` is the
+    submitted fields filtered down to real, non-protected columns (empty
+    means nothing there was actually an edit — useful for permission
+    checks that only apply when real changes are being made); `set_parts`
+    /`params` are ready to merge into an UPDATE's SET clause and bind
+    params (params keyed v_<col>, no collision with a caller's own keys)."""
+    editable = {k: v for k, v in fields.items() if k in cols and k not in protected}
+    set_parts: list[str] = []
+    params: dict = {}
+    for col, val in editable.items():
+        pname    = f"v_{col}"
+        col_type = cols.get(col, "text")
+        is_jsonb = col_type in ("json", "jsonb")
+        if val is None or val == "":
+            set_parts.append(f'"{col}" = :{pname}')
+            params[pname] = None
+        elif is_jsonb and isinstance(val, list):
+            set_parts.append(f'"{col}" = CAST(:{pname} AS jsonb)')
+            params[pname] = json.dumps(val)
+        elif is_jsonb and isinstance(val, str):
+            # Comma-separated string → JSON array
+            arr = [s.strip() for s in val.split(",") if s.strip()]
+            set_parts.append(f'"{col}" = CAST(:{pname} AS jsonb)')
+            params[pname] = json.dumps(arr)
+        else:
+            set_parts.append(f'"{col}" = :{pname}')
+            params[pname] = str(val)
+    return editable, set_parts, params
 
 
 def _searchable_cols(cols: dict[str, str]) -> list[str]:
@@ -511,6 +557,26 @@ async def list_documents(
     return {"total": total, "page": page, "page_size": page_size, "results": results}
 
 
+def _serialize_row(row) -> dict:
+    """JSON-safe dict from a full-row Mapping — dates as ISO strings,
+    JSONB columns left as-is (FastAPI serializes them natively), everything
+    else via str(). Shared by get_document_detail and
+    update_document_fields, which both return a full row this way."""
+    data: dict = {}
+    for k, v in dict(row).items():
+        if v is None:
+            data[k] = None
+        elif hasattr(v, "isoformat"):
+            data[k] = v.isoformat()
+        elif isinstance(v, (int, float, bool)):
+            data[k] = v
+        elif isinstance(v, (list, dict)):
+            data[k] = v  # JSONB — let FastAPI serialize as proper JSON
+        else:
+            data[k] = str(v)
+    return data
+
+
 @router.get("/documents/{table_name}/{doc_id}", summary="Document detail")
 async def get_document_detail(
     table_name:   str,
@@ -543,19 +609,62 @@ async def get_document_detail(
     if row is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    data: dict = {}
-    for k, v in dict(row).items():
-        if v is None:
-            data[k] = None
-        elif hasattr(v, "isoformat"):
-            data[k] = v.isoformat()
-        elif isinstance(v, (int, float, bool)):
-            data[k] = v
-        elif isinstance(v, (list, dict)):
-            data[k] = v  # JSONB — let FastAPI serialize as proper JSON
-        else:
-            data[k] = str(v)
-    return data
+    return _serialize_row(row)
+
+
+class UpdateDocumentFieldsBody(BaseModel):
+    fields: dict
+
+
+@router.patch("/documents/{table_name}/{doc_id}/fields", summary="Edit extraction field data")
+async def update_document_fields(
+    table_name:   str,
+    doc_id:       str,
+    body:         UpdateDocumentFieldsBody,
+    current_user: CurrentUser = Depends(require_extraction_editor),
+):
+    """Correct extracted field values on a document regardless of its
+    review status — including one that's already been approved and filed.
+    Requires the extraction-editing permission (admin, or a reviewer
+    delegated can_edit_extraction). Distinct from patch_review's approve
+    action: this never touches review_status/confidence/reviewed_by —
+    it's a pure content correction, not a review-workflow transition, and
+    it's not available anywhere in the read-only document browser/detail
+    pages for anyone without that permission."""
+    safe = _sanitize(table_name)
+
+    async with _engine().begin() as conn:
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+        if safe not in tables_cols:
+            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+        if not await _document_visible(conn, safe, doc_id, current_user):
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        cols = tables_cols[safe]
+        editable, set_parts, params = _build_field_set_clause(cols, body.fields)
+        if not editable:
+            raise HTTPException(status_code=422, detail="No editable fields in request")
+
+        params["id"] = doc_id
+        result = await conn.execute(
+            text(f'UPDATE "{safe}" SET {", ".join(set_parts)} WHERE id = CAST(:id AS uuid) RETURNING *'),
+            params,
+        )
+        row = result.mappings().one_or_none()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    await log_action(
+        action="document_fields_edited",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        table_name=safe,
+        document_id=doc_id,
+        details={"fields_changed": list(editable.keys())},
+    )
+
+    return _serialize_row(row)
 
 
 # ── Document links (chain-of-custody) ─────────────────────────────────────────
@@ -817,6 +926,33 @@ async def delete_document_link(
 
 
 # ── Document access grants ─────────────────────────────────────────────────────
+
+@router.get("/grantees", summary="Groups and users available to tag a document with")
+async def list_grantees(current_user: CurrentUser = Depends(require_access_manager)):
+    """Minimal {id, name}/{id, email, full_name} listing for the access-grant
+    picker — deliberately not the same data as GET /api/admin/groups or
+    GET /api/admin/users (roles, can_manage_access flags, member counts),
+    which stay admin-only. A can_manage_access reviewer can tag a document
+    without needing that broader admin view, so this is scoped to exactly
+    what the picker needs and gated by require_access_manager instead."""
+    async with _engine().connect() as conn:
+        group_rows = await conn.execute(
+            text("SELECT id, name FROM sdai_groups WHERE tenant_id = CAST(:tid AS uuid) ORDER BY name"),
+            {"tid": current_user.tenant_id},
+        )
+        user_rows = await conn.execute(
+            text("""
+                SELECT id, email, full_name FROM sdai_users
+                WHERE tenant_id = CAST(:tid AS uuid)
+                ORDER BY COALESCE(full_name, email)
+            """),
+            {"tid": current_user.tenant_id},
+        )
+        return {
+            "groups": [{"id": str(r[0]), "name": r[1]} for r in group_rows],
+            "users": [{"id": str(r[0]), "email": r[1], "full_name": r[2]} for r in user_rows],
+        }
+
 
 class CreateAccessGrantBody(BaseModel):
     grantee_type: str = Field(..., pattern="^(group|user)$")

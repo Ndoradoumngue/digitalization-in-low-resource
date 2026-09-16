@@ -66,7 +66,9 @@ def test_upload_png_success(auth_client, tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["batch_id"] == "batch-abc"
-    ingest_router._create_batch.assert_awaited_once_with("upload", REVIEWER.tenant_id)
+    ingest_router._create_batch.assert_awaited_once_with(
+        "upload", REVIEWER.tenant_id, created_by=REVIEWER.id
+    )
     ingest_router._register_and_enqueue.assert_awaited_once()
 
 
@@ -251,6 +253,84 @@ def test_find_duplicate_stops_at_first_match(mock_db):
     assert mock_db.execute.await_count == 3
 
 
+# ── private-by-default after review: uploaded_by / _grant_uploader_access ────
+
+def test_grant_uploader_access_noop_when_uploaded_by_none(mock_db):
+    """No known uploader (in practice: a document that predates this
+    feature) — must not touch the DB at all, and must leave the document
+    open (no grant means visible to everyone, today's behavior)."""
+    asyncio.run(ingest_router._grant_uploader_access(mock_db, TENANT_ID, "my_table", "doc-1", None))
+    mock_db.execute.assert_not_awaited()
+
+
+def test_grant_uploader_access_inserts_grant(mock_db):
+    mock_db.execute.return_value = make_result()
+    asyncio.run(ingest_router._grant_uploader_access(mock_db, TENANT_ID, "my_table", "doc-1", "user-1"))
+    mock_db.execute.assert_awaited_once()
+    sql = str(mock_db.execute.call_args[0][0])
+    assert "INSERT INTO sdai_document_access" in sql
+    assert "'user'" in sql
+
+
+def test_store_extraction_grants_uploader_when_auto_approved(mock_db, monkeypatch):
+    """High-confidence documents skip review_required and land as
+    auto_approved directly at ingest — privacy must apply immediately,
+    not wait for a separate review action."""
+    monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
+    monkeypatch.setattr(ingest_router, "_next_record_id", AsyncMock(return_value="DEFAULT-2026-000001"))
+    mock_db.execute.side_effect = [
+        make_result(scalar="uploader-uuid-1"),  # SELECT created_by FROM batches
+        make_result(scalar="doc-uuid-1"),       # INSERT ... RETURNING id
+        make_result(),                          # INSERT sdai_document_access (grant)
+        make_result(),                          # log_action's audit INSERT
+    ]
+    asyncio.run(ingest_router._store_extraction(
+        "batch-1", "/img.png", {"document_type": "arrete"}, "high", "auto_approved",
+        TENANT_ID, TENANT_SLUG,
+    ))
+    assert mock_db.execute.await_count == 4
+    grant_sql = str(mock_db.execute.call_args_list[2][0][0])
+    assert "INSERT INTO sdai_document_access" in grant_sql
+
+
+def test_store_extraction_no_grant_when_review_required(mock_db, monkeypatch):
+    """A document still in the shared review pipeline stays open to every
+    reviewer — no grant should be created."""
+    monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
+    monkeypatch.setattr(ingest_router, "_next_record_id", AsyncMock(return_value="DEFAULT-2026-000001"))
+    mock_db.execute.side_effect = [
+        make_result(scalar="uploader-uuid-1"),  # SELECT created_by FROM batches
+        make_result(scalar="doc-uuid-1"),       # INSERT ... RETURNING id
+        make_result(),                          # log_action's audit INSERT
+    ]
+    asyncio.run(ingest_router._store_extraction(
+        "batch-1", "/img.png", {"document_type": "arrete"}, "medium", "review_required",
+        TENANT_ID, TENANT_SLUG,
+    ))
+    assert mock_db.execute.await_count == 3
+    for call in mock_db.execute.call_args_list:
+        assert "sdai_document_access" not in str(call[0][0])
+
+
+def test_store_extraction_no_grant_when_no_uploader(mock_db, monkeypatch):
+    """auto_approved but no created_by on the batch (predates this
+    feature) — stays open, no grant, no crash."""
+    monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
+    monkeypatch.setattr(ingest_router, "_next_record_id", AsyncMock(return_value="DEFAULT-2026-000001"))
+    mock_db.execute.side_effect = [
+        make_result(scalar=None),               # SELECT created_by FROM batches — none
+        make_result(scalar="doc-uuid-1"),       # INSERT ... RETURNING id
+        make_result(),                          # log_action's audit INSERT
+    ]
+    asyncio.run(ingest_router._store_extraction(
+        "batch-1", "/img.png", {"document_type": "arrete"}, "high", "auto_approved",
+        TENANT_ID, TENANT_SLUG,
+    ))
+    assert mock_db.execute.await_count == 3
+    for call in mock_db.execute.call_args_list:
+        assert "sdai_document_access" not in str(call[0][0])
+
+
 # ── _run_integrity_check ──────────────────────────────────────────────────────
 
 def test_integrity_check_no_tables_returns_zero_counts(mock_db):
@@ -399,6 +479,24 @@ def test_status_includes_duplicates_skipped(auth_client, monkeypatch):
     assert body["duplicates_skipped"] == 2
     assert body["total"] == 3
     assert body["completed"] == 1
+
+
+# ── manual_enter_page: extraction-editing permission ──────────────────────────
+
+def test_manual_enter_page_requires_extraction_editor(auth_client, monkeypatch):
+    monkeypatch.setattr(ingest_router, "_resolve_tenant_for_page",
+                        AsyncMock(return_value=(TENANT_ID, TENANT_SLUG)))
+    resp = auth_client.post("/api/ingest/pages/page-1/manual", json={"fields": {"a": "b"}})
+    assert resp.status_code == 403
+
+
+def test_manual_enter_page_success_as_extraction_editor(extraction_editor_client, monkeypatch):
+    monkeypatch.setattr(ingest_router, "_resolve_tenant_for_page",
+                        AsyncMock(return_value=(TENANT_ID, TENANT_SLUG)))
+    monkeypatch.setattr(ingest_router, "_manual_enter_page", AsyncMock())
+    resp = extraction_editor_client.post("/api/ingest/pages/page-1/manual", json={"fields": {"a": "b"}})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -50,7 +50,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from audit import log_action
-from auth import CurrentUser, get_current_user, require_admin
+from auth import CurrentUser, get_current_user, require_admin, require_extraction_editor
 from cache import invalidate_cache
 from rate_limit import limiter
 
@@ -159,6 +159,13 @@ ALTER TABLE sdai_users ALTER COLUMN tenant_id SET NOT NULL;
 -- unrestrict) without being a full admin. Admins can always do this
 -- regardless of this flag.
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_manage_access BOOLEAN NOT NULL DEFAULT false;
+
+-- Delegated permission to edit extracted field data (crashed-page manual
+-- entry, field corrections on review approve, or correcting an
+-- already-filed document) without being a full admin. Never applies to
+-- browsing/searching the archive itself — that stays read-only for
+-- everyone. Admins can always edit extraction data regardless of this flag.
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_edit_extraction BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS sdai_token_blocklist (
     jti        TEXT        PRIMARY KEY,
@@ -292,6 +299,13 @@ UPDATE batches SET tenant_id = (SELECT id FROM sdai_tenants WHERE slug = 'defaul
     WHERE tenant_id IS NULL;
 ALTER TABLE batches ALTER COLUMN tenant_id SET NOT NULL;
 
+-- Who initiated this batch (the interactive uploader, or the admin who
+-- triggered a path/Drive ingest) — every ingestion endpoint is
+-- authenticated, so this is set for every batch created from here on.
+-- NULL for batches that predate this column, which is deliberate: see
+-- _grant_uploader_access's docstring for what that means downstream.
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES sdai_users(id) ON DELETE SET NULL;
+
 CREATE TABLE IF NOT EXISTS batch_documents (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     batch_id        UUID        REFERENCES batches(id),
@@ -383,9 +397,9 @@ async def _init_db() -> None:
         # Assign a persistent record_id to any row that predates this
         # column — see _backfill_record_ids's docstring.
         await _backfill_record_ids(conn)
-        # Ensure the series_id column exists on tables that predate the
-        # fonds/series feature — see _backfill_series_column's docstring.
-        await _backfill_series_column(conn)
+        # Ensure the series_id/uploaded_by columns exist on tables that
+        # predate those features — see _backfill_new_base_columns's docstring.
+        await _backfill_new_base_columns(conn)
         # Purge expired blocklist entries on each startup
         await conn.execute(
             text("DELETE FROM sdai_token_blocklist WHERE expired_at < NOW()")
@@ -496,23 +510,27 @@ async def _backfill_record_ids(conn) -> None:
             ))
 
 
-async def _backfill_series_column(conn) -> None:
+async def _backfill_new_base_columns(conn) -> None:
     """One-time-per-startup migration: ensure every ingest table has the
-    nullable series_id column, for installations that predate the
-    fonds/series hierarchy feature. Unlike record_id, no per-row work is
-    needed — a document simply has no series until explicitly assigned."""
+    nullable series_id and uploaded_by columns, for installations that
+    predate the fonds/series and private-by-default-after-review features.
+    Unlike record_id, no per-row work is needed — a document simply has no
+    series until explicitly assigned, and NULL uploaded_by on a
+    pre-existing row is exactly what keeps it open-by-default rather than
+    retroactively restricting it (see _grant_uploader_access)."""
     tables_result = await conn.execute(text("""
         SELECT DISTINCT table_name FROM information_schema.columns
         WHERE table_schema = 'public' AND column_name = 'source_image_path'
     """))
     for (table_name,) in tables_result:
-        await conn.execute(text(
-            f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS series_id UUID'
-        ))
-        await conn.execute(text(
-            f'CREATE INDEX IF NOT EXISTS idx_{table_name}_series_id'
-            f' ON "{table_name}" (series_id)'
-        ))
+        for col, pg_type in (("series_id", "UUID"), ("uploaded_by", "UUID")):
+            await conn.execute(text(
+                f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS {col} {pg_type}'
+            ))
+            await conn.execute(text(
+                f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{col}'
+                f' ON "{table_name}" ({col})'
+            ))
 
 
 # ── Pipeline queues, semaphores, and inter-stage types ───────────────────────
@@ -1254,6 +1272,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             "content_hash     TEXT",
             "record_id        TEXT",
             "series_id        UUID",
+            "uploaded_by      UUID",
         ]
         field_cols = [
             f"{_sanitize_identifier(k)} {_pg_type(k, v)}"
@@ -1288,6 +1307,10 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
         await conn.execute(text(
             f"CREATE INDEX IF NOT EXISTS idx_{table_name}_series_id"
             f' ON "{table_name}" (series_id)'
+        ))
+        await conn.execute(text(
+            f"CREATE INDEX IF NOT EXISTS idx_{table_name}_uploaded_by"
+            f' ON "{table_name}" (uploaded_by)'
         ))
 
         # GIN full-text index over every TEXT-typed field column — not a
@@ -1346,6 +1369,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
         ("batch_document_id", "UUID"),
         ("record_id",         "TEXT"),
         ("series_id",         "UUID"),
+        ("uploaded_by",       "UUID"),
     ):
         if col not in existing:
             await conn.execute(text(
@@ -1364,6 +1388,10 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
     await conn.execute(text(
         f"CREATE INDEX IF NOT EXISTS idx_{table_name}_series_id"
         f' ON "{table_name}" (series_id)'
+    ))
+    await conn.execute(text(
+        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_uploaded_by"
+        f' ON "{table_name}" (uploaded_by)'
     ))
 
     if fts_col_added:
@@ -1396,6 +1424,39 @@ def _serialize(value) -> str:
     return str(value) if value is not None else None
 
 
+# ── Private-by-default after review ──────────────────────────────────────────
+# A document is open to every tenant user while it's still in the shared
+# review pipeline (review_required / manual_entry — anyone should be able
+# to pick it up). The moment it leaves that pipeline — auto_approved at
+# ingest time below, or explicitly approved/rejected via patch_review — it
+# stops being open by default; from then on only admins and its uploader
+# (via an automatic access grant) can see it, same as any other tagged
+# document. This function is the single place that grant gets created, so
+# both call sites (ingest and patch_review) stay in sync.
+
+async def _grant_uploader_access(
+    conn, tenant_id: str, table_name: str, doc_id: str, uploaded_by: str | None,
+) -> None:
+    """No-op if uploaded_by is unknown — in practice that only happens for
+    a document that predates this feature (uploaded_by backfills to NULL,
+    never retroactively assigned), which is deliberate: it keeps today's
+    open-to-everyone behavior instead of becoming invisible to everyone
+    with no grantee to recover it through. `conn` is caller-managed, so
+    this can run inside an existing transaction (ingest) or its own
+    (patch_review)."""
+    if uploaded_by is None:
+        return
+    await conn.execute(
+        text("""
+            INSERT INTO sdai_document_access
+                (tenant_id, table_name, document_id, grantee_type, grantee_id)
+            VALUES (CAST(:tid AS uuid), :t, CAST(:id AS uuid), 'user', CAST(:uid AS uuid))
+            ON CONFLICT (tenant_id, table_name, document_id, grantee_type, grantee_id) DO NOTHING
+        """),
+        {"tid": tenant_id, "t": table_name, "id": doc_id, "uid": uploaded_by},
+    )
+
+
 async def _store_extraction(
     batch_id: str,
     image_path: str,
@@ -1416,8 +1477,19 @@ async def _store_extraction(
         schema_event = await _ensure_table(conn, table_name, fields)
         record_id = await _next_record_id(conn, tenant_id, tenant_slug)
 
+        uploaded_by_row = await conn.execute(
+            text("SELECT created_by FROM batches WHERE id = CAST(:bid AS uuid)"),
+            {"bid": batch_id},
+        )
+        uploaded_by = uploaded_by_row.scalar()
+        uploaded_by = str(uploaded_by) if uploaded_by is not None else None
+
         col_names = ["source_image_path", "batch_id", "confidence", "review_status", "record_id"]
         col_vals  = [image_path, batch_id, confidence, review_status, record_id]
+
+        if uploaded_by is not None:
+            col_names.append("uploaded_by")
+            col_vals.append(uploaded_by)
 
         if content_hash is not None:
             col_names.append("content_hash")
@@ -1453,6 +1525,12 @@ async def _store_extraction(
             params,
         )
         doc_id = str(result.scalar())
+
+        # High-confidence documents skip review_required and land here
+        # already auto_approved — see the module note above
+        # _grant_uploader_access for why that's the point privacy applies.
+        if review_status == "auto_approved":
+            await _grant_uploader_access(conn, tenant_id, table_name, doc_id, uploaded_by)
 
     # ── Audit logging (outside the main transaction; never raises) ────────────
     if schema_event == "created":
@@ -1805,11 +1883,14 @@ async def _stage3_worker() -> None:
 
 # ── Batch creation helpers ────────────────────────────────────────────────────
 
-async def _create_batch(source_type: str, tenant_id: str) -> str:
+async def _create_batch(source_type: str, tenant_id: str, created_by: str | None = None) -> str:
     async with _session()() as sess:
         result = await sess.execute(
-            text("INSERT INTO batches (source_type, tenant_id) VALUES (:s, CAST(:t AS uuid)) RETURNING id"),
-            {"s": source_type, "t": tenant_id},
+            text(
+                "INSERT INTO batches (source_type, tenant_id, created_by)"
+                " VALUES (:s, CAST(:t AS uuid), CAST(:cb AS uuid)) RETURNING id"
+            ),
+            {"s": source_type, "t": tenant_id, "cb": created_by},
         )
         batch_id = str(result.scalar())
         await sess.commit()
@@ -1858,7 +1939,7 @@ async def _retry_document(table_name: str, doc_id: str, tenant_id: str, tenant_s
         row = await conn.execute(
             text(
                 f'SELECT source_pdf_path, page_image_paths, source_image_path,'
-                f' content_hash, review_status FROM "{table_name}"'
+                f' content_hash, review_status, uploaded_by FROM "{table_name}"'
                 f' WHERE id = CAST(:id AS uuid)'
             ),
             {"id": doc_id},
@@ -1899,7 +1980,11 @@ async def _retry_document(table_name: str, doc_id: str, tenant_id: str, tenant_s
             {"id": doc_id},
         )
 
-    batch_id = await _create_batch("retry", tenant_id)
+    # Preserve the original uploader's provenance across a retry, rather
+    # than attributing the new batch to whoever happened to click Retry —
+    # see _grant_uploader_access.
+    original_uploaded_by = str(record["uploaded_by"]) if record["uploaded_by"] else None
+    batch_id = await _create_batch("retry", tenant_id, created_by=original_uploaded_by)
     filename = pdf_path.name if pdf_path else page_paths[0].name
     source_path = pdf_path if pdf_path else page_paths[0]
     async with _session()() as sess:
@@ -2394,7 +2479,7 @@ async def upload_files(
                        f" Allowed: {', '.join(sorted(ALLOWED_EXTS))}",
             )
 
-    batch_id  = await _create_batch("upload", current_user.tenant_id)
+    batch_id  = await _create_batch("upload", current_user.tenant_id, created_by=current_user.id)
     batch_dir = UPLOADS_DIR / batch_id
     batch_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2440,6 +2525,7 @@ async def ingest_from_path(
     batch_id = await _create_batch(
         "google_drive" if body.google_drive_folder_id else "server_path",
         current_user.tenant_id,
+        created_by=current_user.id,
     )
 
     if body.google_drive_folder_id:
@@ -2739,10 +2825,11 @@ async def manual_enter_page(
     request:      Request,
     page_id:      str,
     body:         ManualPageEntry,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_extraction_editor),
 ):
     """Store a human-entered result for one page (bypassing the VLM) and
-    merge it into the parent document."""
+    merge it into the parent document. Requires the extraction-editing
+    permission (admin, or a reviewer delegated can_edit_extraction)."""
     tenant = await _resolve_tenant_for_page(page_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
         raise HTTPException(status_code=404, detail="Page not found")

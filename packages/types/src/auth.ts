@@ -8,6 +8,7 @@ export const UserSchema = z.object({
   tenant_slug: z.string(),
   tenant_name: z.string(),
   can_manage_access: z.boolean(),
+  can_edit_extraction: z.boolean(),
 });
 export type User = z.infer<typeof UserSchema>;
 

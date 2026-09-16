@@ -6,8 +6,7 @@ import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
 import PanZoomImage from "../components/PanZoomImage";
 import { dbImageUrl, retryDocument, deleteDocument } from "@sdai/api-client";
-import { labelFor } from "../utils/format";
-import { renderFieldValue } from "../utils/renderField";
+import FieldsPanel from "../components/FieldsPanel";
 import LinksSection from "../components/LinksSection";
 import AccessSection from "../components/AccessSection";
 import SeriesSection from "../components/SeriesSection";
@@ -76,6 +75,8 @@ export default function DataBrowserDetailPage() {
     onSuccess:  afterDestructiveAction,
     onError:    (e: Error) => setActionError(e.message),
   });
+
+  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
 
   const pageImagePaths = Array.isArray(data?.page_image_paths)
     ? (data.page_image_paths as unknown[]).map(String)
@@ -269,19 +270,13 @@ export default function DataBrowserDetailPage() {
 
           {/* Right — extracted fields (45%) */}
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-1">
-            {fieldRows.length === 0 ? (
-              <p className="text-sm text-gray-400">No fields available.</p>
-            ) : (
-              fieldRows.map(([key, value]) => (
-                <div key={key} className="py-2 border-b border-gray-100 last:border-0">
-                  <dt className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
-                    {labelFor(key)}
-                  </dt>
-                  <dd className="text-sm text-gray-800 break-words">
-                    {renderFieldValue(value)}
-                  </dd>
-                </div>
-              ))
+            {tableName && id && (
+              <FieldsPanel
+                tableName={tableName}
+                id={id}
+                fieldRows={fieldRows}
+                canEdit={canEditExtraction}
+              />
             )}
             {tableName && id && <LinksSection tableName={tableName} id={id} basePath="/ops/data" />}
             {tableName && id && (
