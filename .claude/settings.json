@@ -139,7 +139,20 @@
       "Bash(curl -sk -b admin.txt -X POST https://localhost:8443/api/ingest/upload -F \"files=@fake.pdf\" -w \"\\\\nstatus: %{http_code}\\\\n\")",
       "Bash(curl -sk -b admin.txt -X POST https://localhost:8443/api/ingest/upload -F \"files=@real_test.png\" -w \"\\\\nstatus: %{http_code}\\\\n\")",
       "Bash(curl -sk -o /dev/null -w \"frontend: %{http_code}\\\\n\" https://localhost:8443/)",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(pnpm --version)",
+      "Bash(pnpm add *)",
+      "Bash(node -e ' *)",
+      "Bash(pnpm build *)",
+      "Bash(curl -sk https://localhost:8443/)",
+      "Bash(curl -s http://localhost:8080/)",
+      "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\), f\\) for f in ['auth.py','api_server.py','admin_router.py','documents_router.py','ingest_router.py','review_router.py','i18n.py']]; print\\('all files parse OK'\\)\")",
+      "Bash(python3 -m pytest tests/ -q)",
+      "Bash(grep -rhoE \"^import pytest.*|^from pytest.*\" apps/api/tests/*.py | sort -u; echo \"---asyncio marker---\"; grep -rl \"asyncio\" apps/api/tests/*.py | head -3; find /Users/ndoradoumngue -maxdepth 4 -iname \"pytest.ini\" -o -iname \"pyproject.toml\" 2>/dev/null | grep -v node_modules)",
+      "Read(//Users/ndoradoumngue/**)",
+      "Bash(curl -sk https://localhost:8443/api/auth/login -X POST -H \"Content-Type: application/json\" -H \"Accept-Language: en\" -d '{\"email\":\"nobody@nowhere.test\",\"password\":\"wrong\"}')",
+      "Bash(curl -sk https://localhost:8443/api/auth/login -X POST -H \"Content-Type: application/json\" -H \"Accept-Language: fr\" -d '{\"email\":\"nobody@nowhere.test\",\"password\":\"wrong\"}')",
+      "Bash(curl -sk https://localhost:8443/api/auth/login -X POST -H \"Content-Type: application/json\" -d '{\"email\":\"nobody@nowhere.test\",\"password\":\"wrong\"}')"
     ]
   }
 }

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
 import { useDbTypes } from "../hooks/useDocumentsDb";
 import { useReviewCount } from "../hooks/useReview";
@@ -27,6 +28,7 @@ function ActionCard({ to, title, description }: { to: string; title: string; des
 
 export default function DashboardPage() {
   const { user }               = useAuth();
+  const { t }                  = useTranslation();
   const { data: dbTypes }      = useDbTypes();
   const dbTotal                = (dbTypes ?? []).reduce((acc, t) => acc + t.count, 0);
   const typeCount              = (dbTypes ?? []).length;
@@ -39,38 +41,38 @@ export default function DashboardPage() {
 
       <main className="flex-1 overflow-y-auto p-8">
         <h1 className="text-2xl font-bold text-gray-900">
-          Welcome{user?.full_name ? `, ${user.full_name}` : ""}
+          {user?.full_name ? t("dashboard.welcomeName", { name: user.full_name }) : t("dashboard.welcome")}
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          Here's what's happening in the document pipeline.
+          {t("dashboard.subtitle")}
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
-          <StatCard label="Documents ingested" value={dbTotal}       accent="text-gray-900" />
-          <StatCard label="Pending review"      value={pendingReview} accent={pendingReview > 0 ? "text-amber-600" : "text-gray-900"} />
-          <StatCard label="Document types"      value={typeCount}     accent="text-gray-900" />
+          <StatCard label={t("dashboard.documentsIngested")} value={dbTotal}       accent="text-gray-900" />
+          <StatCard label={t("dashboard.pendingReview")}      value={pendingReview} accent={pendingReview > 0 ? "text-amber-600" : "text-gray-900"} />
+          <StatCard label={t("dashboard.documentTypes")}      value={typeCount}     accent="text-gray-900" />
         </div>
 
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mt-8 mb-3">
-          Quick actions
+          {t("dashboard.quickActions")}
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <ActionCard
             to="/upload"
-            title="Upload documents →"
-            description="Ingest new files via upload, a server path, or Google Drive."
+            title={t("dashboard.uploadTitle")}
+            description={t("dashboard.uploadDescription")}
           />
           <ActionCard
             to="/review"
-            title="Review queue →"
+            title={t("dashboard.reviewTitle")}
             description={pendingReview > 0
-              ? `${pendingReview} document${pendingReview === 1 ? "" : "s"} waiting for review.`
-              : "Nothing pending — all caught up."}
+              ? t("dashboard.reviewDescriptionPending", { count: pendingReview })
+              : t("dashboard.reviewDescriptionEmpty")}
           />
           <ActionCard
             to="/documents"
-            title="Browse documents →"
-            description="Search and filter everything that's been ingested."
+            title={t("dashboard.browseTitle")}
+            description={t("dashboard.browseDescription")}
           />
         </div>
       </main>

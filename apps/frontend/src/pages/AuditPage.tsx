@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useAuditLog } from "../hooks/useAudit";
 import NavSidebar from "../components/NavSidebar";
 import type { AuditLogEntry } from "@sdai/types";
@@ -28,10 +29,11 @@ const ACTION_STYLES: Record<string, string> = {
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);
 
 function ActionBadge({ action }: { action: string }) {
+  const { t } = useTranslation();
   const cls = ACTION_STYLES[action] ?? "bg-gray-100 text-gray-600";
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
-      {action.replace(/_/g, " ")}
+      {t(`audit.actions.${action}`, action.replace(/_/g, " "))}
     </span>
   );
 }
@@ -95,6 +97,7 @@ function DetailCell({ details }: { details: Record<string, unknown> | null }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AuditPage() {
+  const { t } = useTranslation();
   const [page,     setPage]     = useState(1);
   const [action,   setAction]   = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -134,10 +137,10 @@ export default function AuditPage() {
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4 flex-shrink-0">
         <div className="flex-1">
-          <h1 className="text-lg font-bold text-gray-900">Audit Log</h1>
+          <h1 className="text-lg font-bold text-gray-900">{t("audit.header")}</h1>
           {data && (
             <p className="text-xs text-gray-500 mt-0.5">
-              {data.total.toLocaleString()} events recorded
+              {t("audit.eventsRecorded", { count: data.total.toLocaleString() })}
             </p>
           )}
         </div>
@@ -149,9 +152,9 @@ export default function AuditPage() {
             onChange={(e) => { setAction(e.target.value); setPage(1); }}
             className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 bg-white focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
           >
-            <option value="">All actions</option>
+            <option value="">{t("audit.allActions")}</option>
             {ALL_ACTIONS.map((a) => (
-              <option key={a} value={a}>{a.replace(/_/g, " ")}</option>
+              <option key={a} value={a}>{t(`audit.actions.${a}`, a.replace(/_/g, " "))}</option>
             ))}
           </select>
 
@@ -160,7 +163,7 @@ export default function AuditPage() {
             value={dateFrom}
             onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
             className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
-            placeholder="From"
+            placeholder={t("audit.fromPlaceholder")}
           />
 
           <input
@@ -168,7 +171,7 @@ export default function AuditPage() {
             value={dateTo}
             onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
             className="text-sm rounded-lg border border-gray-300 px-3 py-1.5 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
-            placeholder="To"
+            placeholder={t("audit.toPlaceholder")}
           />
 
           {(action || dateFrom || dateTo) && (
@@ -176,7 +179,7 @@ export default function AuditPage() {
               onClick={resetFilters}
               className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
             >
-              Clear
+              {t("audit.clear")}
             </button>
           )}
 
@@ -188,7 +191,7 @@ export default function AuditPage() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
             </svg>
-            Export CSV
+            {t("audit.exportCsv")}
           </button>
         </div>
       </header>
@@ -197,7 +200,7 @@ export default function AuditPage() {
       <div className="flex-1 overflow-auto">
         {error ? (
           <div className="p-8 text-sm text-red-500">
-            Failed to load audit log. Do you have admin access?
+            {t("audit.loadError")}
           </div>
         ) : isLoading ? (
           <div className="p-8 space-y-3">
@@ -210,13 +213,16 @@ export default function AuditPage() {
             <svg className="w-10 h-10 opacity-40" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25Z" />
             </svg>
-            <p className="text-sm">No audit events match the current filters</p>
+            <p className="text-sm">{t("audit.noMatches")}</p>
           </div>
         ) : (
           <table className="w-full text-sm border-collapse">
             <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
               <tr>
-                {["Timestamp", "User", "Action", "Table", "Document", "Details", "IP"].map((h) => (
+                {[
+                  t("audit.colTimestamp"), t("audit.colUser"), t("audit.colAction"),
+                  t("audit.colTable"), t("audit.colDocument"), t("audit.colDetails"), t("audit.colIp"),
+                ].map((h) => (
                   <th
                     key={h}
                     className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
@@ -234,7 +240,7 @@ export default function AuditPage() {
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-700 max-w-[160px] truncate">
                     {entry.user_email ?? (
-                      <span className="text-gray-400 italic">system</span>
+                      <span className="text-gray-400 italic">{t("audit.systemUser")}</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
@@ -270,8 +276,11 @@ export default function AuditPage() {
       {data && data.total > PAGE_SIZE && (
         <footer className="bg-white border-t border-gray-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
           <p className="text-xs text-gray-500">
-            Showing {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, data.total)} of{" "}
-            {data.total.toLocaleString()} events
+            {t("audit.showingRange", {
+              from: ((page - 1) * PAGE_SIZE) + 1,
+              to: Math.min(page * PAGE_SIZE, data.total),
+              total: data.total.toLocaleString(),
+            })}
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -279,17 +288,17 @@ export default function AuditPage() {
               disabled={page === 1}
               className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              ← Previous
+              {t("audit.prevPage")}
             </button>
             <span className="text-xs text-gray-500 px-2">
-              Page {page} of {totalPages}
+              {t("audit.pageOf", { page, totalPages })}
             </span>
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
               className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Next →
+              {t("audit.nextPage")}
             </button>
           </div>
         </footer>

@@ -13,6 +13,8 @@ from typing import Optional
 from fastapi import Cookie, Depends, HTTPException
 from jose import JWTError, jwt
 
+from i18n import resolve_locale, t
+
 SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError("AUTH_SECRET_KEY environment variable is not set")
@@ -31,6 +33,7 @@ class CurrentUser:
     can_manage_access: bool
     can_edit_extraction: bool
     group_ids:         list[str]
+    locale:            str
 
     @property
     def can_manage_document_access(self) -> bool:
@@ -51,10 +54,11 @@ class CurrentUser:
 
 async def get_current_user(
     access_token: Optional[str] = Cookie(default=None),
+    locale:       str           = Depends(resolve_locale),
 ) -> CurrentUser:
     """FastAPI dependency — raises 401 if the JWT cookie is missing, invalid, or revoked."""
     if not access_token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(status_code=401, detail=t("auth.not_authenticated", locale))
 
     try:
         token   = access_token.removeprefix("Bearer ")
@@ -62,9 +66,9 @@ async def get_current_user(
         user_id: Optional[str] = payload.get("sub")
         jti:     Optional[str] = payload.get("jti")
         if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(status_code=401, detail=t("auth.invalid_token", locale))
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(status_code=401, detail=t("auth.invalid_or_expired_token", locale))
 
     # Lazy import avoids circular dependency (ingest_router imports auth at module level).
     from ingest_router import _engine  # noqa: PLC0415
@@ -78,7 +82,7 @@ async def get_current_user(
                 {"jti": jti},
             )
             if bl.one_or_none() is not None:
-                raise HTTPException(status_code=401, detail="Token revoked")
+                raise HTTPException(status_code=401, detail=t("auth.token_revoked", locale))
 
         row = await conn.execute(
             text(
@@ -95,7 +99,7 @@ async def get_current_user(
         user = row.one_or_none()
 
         if user is None or not user[4] or not user[8]:
-            raise HTTPException(status_code=401, detail="User not found or deactivated")
+            raise HTTPException(status_code=401, detail=t("auth.user_not_found_or_deactivated", locale))
 
         group_rows = await conn.execute(
             text("SELECT group_id FROM sdai_user_groups WHERE user_id = CAST(:id AS uuid)"),
@@ -114,6 +118,7 @@ async def get_current_user(
         can_manage_access=user[9],
         can_edit_extraction=user[10],
         group_ids=group_ids,
+        locale=locale,
     )
 
 
@@ -122,7 +127,7 @@ async def require_admin(
 ) -> CurrentUser:
     """FastAPI dependency — raises 403 unless the authenticated user has role='admin'."""
     if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+        raise HTTPException(status_code=403, detail=t("auth.admin_required", current_user.locale))
     return current_user
 
 
@@ -133,7 +138,7 @@ async def require_access_manager(
     with access grants (admin, or a reviewer delegated can_manage_access).
     Creating/managing groups themselves stays admin-only (require_admin)."""
     if not current_user.can_manage_document_access:
-        raise HTTPException(status_code=403, detail="Access-management permission required")
+        raise HTTPException(status_code=403, detail=t("auth.access_manager_required", current_user.locale))
     return current_user
 
 
@@ -146,5 +151,5 @@ async def require_extraction_editor(
     approving a review_required document, and editing an already-filed
     document's fields — everywhere extraction content can be changed."""
     if not current_user.can_edit_extraction_data:
-        raise HTTPException(status_code=403, detail="Extraction-editing permission required")
+        raise HTTPException(status_code=403, detail=t("auth.extraction_editor_required", current_user.locale))
     return current_user

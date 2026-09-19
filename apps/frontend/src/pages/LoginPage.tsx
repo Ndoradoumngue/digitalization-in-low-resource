@@ -1,10 +1,13 @@
 import { type FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../context/AuthContext";
+import LanguageSwitcher from "../components/LanguageSwitcher";
 
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -21,7 +24,7 @@ export default function LoginPage() {
       await login(email, password);
       navigate("/", { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      setError(err instanceof Error ? err.message : t("login.loginFailed"));
     } finally {
       setLoading(false);
     }
@@ -30,11 +33,14 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm">
+        <div className="flex justify-end mb-3">
+          <LanguageSwitcher />
+        </div>
         {/* Logo / title block */}
         <div className="text-center mb-8">
           <img src="/logo.png" alt="SDAI Digitalization" className="w-16 h-16 mx-auto mb-4 object-contain" />
-          <h1 className="text-2xl font-bold text-gray-900">SDAI Digitalization</h1>
-          <p className="text-sm text-gray-500 mt-1">Document extraction platform</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t("nav.appName")}</h1>
+          <p className="text-sm text-gray-500 mt-1">{t("login.tagline")}</p>
         </div>
 
         {/* Login card */}
@@ -42,7 +48,7 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1.5">
-                Email
+                {t("login.email")}
               </label>
               <input
                 id="email"
@@ -58,7 +64,7 @@ export default function LoginPage() {
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1.5">
-                Password
+                {t("login.password")}
               </label>
               <input
                 id="password"
@@ -82,7 +88,7 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? "Signing in…" : "Sign in"}
+              {loading ? t("login.signingIn") : t("login.signIn")}
             </button>
           </form>
         </div>

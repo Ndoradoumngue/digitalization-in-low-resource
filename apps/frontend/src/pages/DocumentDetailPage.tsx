@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
 import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
@@ -41,6 +42,7 @@ export default function DocumentDetailPage() {
   const { tableName = "", id = "" } = useParams<{ tableName: string; id: string }>();
   const navigate  = useNavigate();
   const location  = useLocation();
+  const { t }     = useTranslation();
   const state     = (location.state ?? {}) as LocationState;
   const list      = state.list ?? [];
   const idx       = state.currentIndex ?? -1;
@@ -95,7 +97,7 @@ export default function DocumentDetailPage() {
         <button
           onClick={() => navigate("/documents")}
           className="text-gray-500 hover:text-gray-800 transition-colors"
-          aria-label="Back to documents"
+          aria-label={t("documentDetail.backToDocuments")}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
@@ -124,20 +126,20 @@ export default function DocumentDetailPage() {
               disabled={idx <= 0}
               onClick={() => goTo(idx - 1)}
               className="px-2.5 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              title="Previous (←)"
+              title={t("documentDetail.prevTitle")}
             >
-              ← Prev
+              {t("documentDetail.prev")}
             </button>
             <span className="text-xs text-gray-500 px-1">
-              {idx + 1} / {list.length}
+              {t("documentDetail.indexOf", { current: idx + 1, total: list.length })}
             </span>
             <button
               disabled={idx >= list.length - 1}
               onClick={() => goTo(idx + 1)}
               className="px-2.5 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              title="Next (→)"
+              title={t("documentDetail.nextTitle")}
             >
-              Next →
+              {t("documentDetail.next")}
             </button>
           </div>
         )}
@@ -146,11 +148,11 @@ export default function DocumentDetailPage() {
       {/* Body */}
       {isLoading ? (
         <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-          Loading…
+          {t("documentDetail.loading")}
         </div>
       ) : error ? (
         <div className="flex-1 p-8 text-sm text-red-500">
-          Failed to load document.
+          {t("documentDetail.loadError")}
         </div>
       ) : (
         <div className="flex flex-1 overflow-hidden">
@@ -169,7 +171,7 @@ export default function DocumentDetailPage() {
                           : "border-gray-300 text-gray-600 hover:bg-gray-50"
                       }`}
                     >
-                      Page {i + 1}
+                      {t("documentDetail.page", { n: i + 1 })}
                     </button>
                   ))}
                 {pdfPath && (
@@ -179,7 +181,7 @@ export default function DocumentDetailPage() {
                     rel="noreferrer"
                     className="flex-shrink-0 ml-auto px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
                   >
-                    View original PDF ↗
+                    {t("documentDetail.viewOriginalPdf")}
                   </a>
                 )}
               </div>
@@ -189,7 +191,7 @@ export default function DocumentDetailPage() {
                 <PanZoomImage src={imgSrc} key={imgSrc} />
               ) : (
                 <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
-                  No image available
+                  {t("documentDetail.noImage")}
                 </div>
               )}
             </div>

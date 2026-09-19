@@ -51,6 +51,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from audit import client_ip, log_action
 from auth import CurrentUser, get_current_user  # noqa: F401 — re-exported for Depends() callers
+from i18n import resolve_locale, t
 from rate_limit import limiter
 
 # ── Config from environment ───────────────────────────────────────────────────
@@ -160,7 +161,12 @@ class LoginRequest(BaseModel):
 
 @app.post("/api/auth/login", tags=["auth"], summary="Log in")
 @limiter.limit("10/minute")
-async def login(body: LoginRequest, request: Request, response: Response):
+async def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    locale: str = Depends(resolve_locale),
+):
     """
     Authenticate with email and password.
     On success, sets an httpOnly `access_token` cookie containing a signed JWT.
@@ -186,7 +192,7 @@ async def login(body: LoginRequest, request: Request, response: Response):
         user is None or not user[5] or not user[8]
         or not _bcrypt.checkpw(body.password.encode(), user[4].encode())
     ):
-        raise HTTPException(status_code=401, detail="Incorrect email or password")
+        raise HTTPException(status_code=401, detail=t("auth.incorrect_credentials", locale))
 
     jti   = str(uuid.uuid4())
     token = _create_token(str(user[0]), jti)
@@ -281,11 +287,11 @@ def _list_images(dir_path: Path) -> list[str]:
     )
 
 
-def _load_vlm_all() -> dict:
+def _load_vlm_all(locale: str = "en") -> dict:
     if not VLM_RESULTS_FILE.exists():
         raise HTTPException(
             status_code=404,
-            detail="VLM results file not found. Run vlm_ollama_test.py first.",
+            detail=t("benchmarks.vlm_results_not_found", locale),
         )
     return json.loads(VLM_RESULTS_FILE.read_text(encoding="utf-8"))
 
@@ -318,7 +324,7 @@ def get_document_result(filename: str, current_user: str = Depends(get_current_u
     """
     json_path = JSON_DIR / f"{_stem(filename)}_results.json"
     if not json_path.exists():
-        raise HTTPException(status_code=404, detail="No OCR result for this document")
+        raise HTTPException(status_code=404, detail=t("benchmarks.no_ocr_result", current_user.locale))
     return json.loads(json_path.read_text(encoding="utf-8"))
 
 
@@ -327,7 +333,7 @@ def get_all_ocr_results(current_user: str = Depends(get_current_user)):
     """Return the combined _all_results.json file containing OCR results for every document."""
     all_path = JSON_DIR / "_all_results.json"
     if not all_path.exists():
-        raise HTTPException(status_code=404, detail="_all_results.json not found")
+        raise HTTPException(status_code=404, detail=t("benchmarks.all_results_not_found", current_user.locale))
     return json.loads(all_path.read_text(encoding="utf-8"))
 
 
@@ -339,7 +345,7 @@ def list_vlm_documents(current_user: str = Depends(get_current_user)):
     Return all document filenames with a `hasResult` flag indicating whether a
     VLM extraction result exists. Used by the VLM Extraction dashboard tab.
     """
-    all_results = _load_vlm_all()
+    all_results = _load_vlm_all(current_user.locale)
     images = _list_images(DOCS_DIR)
     return [{"filename": fname, "hasResult": fname in all_results} for fname in images]
 
@@ -351,16 +357,16 @@ def get_vlm_result(filename: str, current_user: str = Depends(get_current_user))
     The result is a discriminated union on the confidence tier
     (`high`, `medium`, `low`, or `failed`).
     """
-    all_results = _load_vlm_all()
+    all_results = _load_vlm_all(current_user.locale)
     if filename not in all_results:
-        raise HTTPException(status_code=404, detail="No VLM result for this document")
+        raise HTTPException(status_code=404, detail=t("benchmarks.no_vlm_result", current_user.locale))
     return all_results[filename]
 
 
 @app.get("/api/vlm/results", tags=["vlm"], summary="All VLM results")
 def get_all_vlm_results(current_user: str = Depends(get_current_user)):
     """Return all VLM extraction results as a filename-keyed map."""
-    return _load_vlm_all()
+    return _load_vlm_all(current_user.locale)
 
 
 # ── Image endpoints ───────────────────────────────────────────────────────────
@@ -370,7 +376,7 @@ def serve_raw_image(filename: str, current_user: str = Depends(get_current_user)
     """Serve the original (un-preprocessed) document image from anonymized_docs/."""
     path = DOCS_DIR / filename
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Raw image not found")
+        raise HTTPException(status_code=404, detail=t("images.raw_not_found", current_user.locale))
     return FileResponse(path)
 
 
@@ -381,7 +387,7 @@ def serve_preprocessed_image(filename: str, current_user: str = Depends(get_curr
     ext = Path(filename).suffix
     path = PREPROCESS_DIR / f"{stem}_preprocessed{ext}"
     if not path.exists():
-        raise HTTPException(status_code=404, detail="Preprocessed image not found")
+        raise HTTPException(status_code=404, detail=t("images.preprocessed_not_found", current_user.locale))
     return FileResponse(path)
 
 

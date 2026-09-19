@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import NavSidebar from "../components/NavSidebar";
 import {
   useGroups,
@@ -18,16 +19,17 @@ import type { AdminUser, Group, Series } from "@sdai/types";
 // ── Archive export panel ─────────────────────────────────────────────────────
 
 function ExportArchivePanel() {
+  const { t } = useTranslation();
   const [format, setFormat] = useState<"json" | "sql">("json");
   const exportMutation = useExportArchive();
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 className="text-sm font-bold text-gray-900 mb-1">Export archive</h2>
+      <h2 className="text-sm font-bold text-gray-900 mb-1">{t("accessAdmin.export.heading")}</h2>
       <p className="text-xs text-gray-500 mb-3">
-        Downloads every document in this tenant — all extracted fields plus a{" "}
-        <code className="font-mono">documents/</code> folder with every source image and PDF —
-        bundled into one zip file.
+        {t("accessAdmin.export.descriptionPrefix")}
+        <code className="font-mono">documents/</code>
+        {t("accessAdmin.export.descriptionSuffix")}
       </p>
 
       <div className="flex items-center gap-2">
@@ -44,7 +46,7 @@ function ExportArchivePanel() {
           disabled={exportMutation.isPending}
           className="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
         >
-          {exportMutation.isPending ? "Preparing export…" : "Download export"}
+          {exportMutation.isPending ? t("accessAdmin.export.preparing") : t("accessAdmin.export.download")}
         </button>
       </div>
 
@@ -52,7 +54,7 @@ function ExportArchivePanel() {
         <p className="text-xs text-red-600 mt-3">{(exportMutation.error as Error).message}</p>
       )}
       {exportMutation.isSuccess && !exportMutation.isPending && (
-        <p className="text-xs text-emerald-600 mt-3">Download started.</p>
+        <p className="text-xs text-emerald-600 mt-3">{t("accessAdmin.export.started")}</p>
       )}
     </div>
   );
@@ -61,16 +63,15 @@ function ExportArchivePanel() {
 // ── Fixity / integrity check panel ──────────────────────────────────────────
 
 function IntegrityCheckPanel() {
+  const { t } = useTranslation();
   const runMutation = useRunIntegrityCheck();
   const result = runMutation.data;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 className="text-sm font-bold text-gray-900 mb-1">Fixity / integrity check</h2>
+      <h2 className="text-sm font-bold text-gray-900 mb-1">{t("accessAdmin.integrity.heading")}</h2>
       <p className="text-xs text-gray-500 mb-3">
-        Verifies every document's file(s) still exist on disk, and re-verifies content
-        hashes where an unmodified original is available. Runs automatically on a weekly
-        schedule — use this to run it on demand.
+        {t("accessAdmin.integrity.description")}
       </p>
 
       <button
@@ -78,7 +79,7 @@ function IntegrityCheckPanel() {
         disabled={runMutation.isPending}
         className="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
       >
-        {runMutation.isPending ? "Running…" : "Run integrity check"}
+        {runMutation.isPending ? t("accessAdmin.integrity.running") : t("accessAdmin.integrity.run")}
       </button>
 
       {runMutation.isError && (
@@ -89,25 +90,27 @@ function IntegrityCheckPanel() {
         <div className="mt-4 grid grid-cols-4 gap-3 text-center">
           <div className="rounded-md bg-gray-50 py-2">
             <div className="text-lg font-bold text-gray-800">{result.checked}</div>
-            <div className="text-[11px] text-gray-500">Checked</div>
+            <div className="text-[11px] text-gray-500">{t("accessAdmin.integrity.checked")}</div>
           </div>
           <div className="rounded-md bg-emerald-50 py-2">
             <div className="text-lg font-bold text-emerald-700">{result.ok}</div>
-            <div className="text-[11px] text-emerald-600">OK</div>
+            <div className="text-[11px] text-emerald-600">{t("accessAdmin.integrity.ok")}</div>
           </div>
           <div className="rounded-md bg-amber-50 py-2">
             <div className="text-lg font-bold text-amber-700">{result.mismatched}</div>
-            <div className="text-[11px] text-amber-600">Mismatched</div>
+            <div className="text-[11px] text-amber-600">{t("accessAdmin.integrity.mismatched")}</div>
           </div>
           <div className="rounded-md bg-red-50 py-2">
             <div className="text-lg font-bold text-red-700">{result.missing}</div>
-            <div className="text-[11px] text-red-600">Missing</div>
+            <div className="text-[11px] text-red-600">{t("accessAdmin.integrity.missing")}</div>
           </div>
         </div>
       )}
       {result && (result.mismatched > 0 || result.missing > 0) && (
         <p className="text-xs text-gray-500 mt-3">
-          Failures are logged to the Audit Log as <code className="font-mono">integrity_check_failed</code> entries.
+          {t("accessAdmin.integrity.failuresNotePrefix")}
+          <code className="font-mono">integrity_check_failed</code>
+          {t("accessAdmin.integrity.failuresNoteSuffix")}
         </p>
       )}
     </div>
@@ -117,6 +120,7 @@ function IntegrityCheckPanel() {
 // ── Series panel ──────────────────────────────────────────────────────────────
 
 function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boolean }) {
+  const { t } = useTranslation();
   const [name, setName]               = useState("");
   const [description, setDescription] = useState("");
   const createMutation = useCreateSeries();
@@ -132,28 +136,28 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
   }
 
   function remove(seriesId: string) {
-    if (!confirm("Delete this series? Documents assigned to it will show as unassigned.")) return;
+    if (!confirm(t("accessAdmin.series.confirmDelete"))) return;
     setDeletingId(seriesId);
     deleteMutation.mutate(seriesId, { onSettled: () => setDeletingId(null) });
   }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 className="text-sm font-bold text-gray-900 mb-3">Series (fonds)</h2>
+      <h2 className="text-sm font-bold text-gray-900 mb-3">{t("accessAdmin.series.heading")}</h2>
 
       <div className="flex items-center gap-2 mb-4">
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New series name (e.g. Land Deeds 1990-2000)"
+          placeholder={t("accessAdmin.series.namePlaceholder")}
           className="flex-1 h-9 rounded-md border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Description (optional)"
+          placeholder={t("accessAdmin.series.descriptionPlaceholder")}
           className="flex-1 h-9 rounded-md border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
         <button
@@ -161,7 +165,7 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
           disabled={!name.trim() || createMutation.isPending}
           className="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
         >
-          {createMutation.isPending ? "Creating…" : "Create"}
+          {createMutation.isPending ? t("accessAdmin.series.creating") : t("accessAdmin.series.create")}
         </button>
       </div>
       {createMutation.isError && (
@@ -169,9 +173,9 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
       )}
 
       {isLoading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-gray-400">{t("accessAdmin.series.loading")}</p>
       ) : series.length === 0 ? (
-        <p className="text-sm text-gray-400">No series yet.</p>
+        <p className="text-sm text-gray-400">{t("accessAdmin.series.none")}</p>
       ) : (
         <div className="divide-y divide-gray-100">
           {series.map((s) => (
@@ -187,7 +191,7 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
                 disabled={deletingId === s.id}
                 className="text-xs text-gray-400 hover:text-red-600 disabled:opacity-40 transition-colors"
               >
-                Delete
+                {t("accessAdmin.series.delete")}
               </button>
             </div>
           ))}
@@ -200,6 +204,7 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
 // ── Groups panel ──────────────────────────────────────────────────────────────
 
 function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolean }) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const createMutation = useCreateGroup();
   const deleteMutation = useDeleteGroup();
@@ -211,14 +216,14 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
   }
 
   function remove(groupId: string) {
-    if (!confirm("Delete this group? It will be removed from all users and from any documents it was tagged on.")) return;
+    if (!confirm(t("accessAdmin.groups.confirmDelete"))) return;
     setDeletingId(groupId);
     deleteMutation.mutate(groupId, { onSettled: () => setDeletingId(null) });
   }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 className="text-sm font-bold text-gray-900 mb-3">Groups</h2>
+      <h2 className="text-sm font-bold text-gray-900 mb-3">{t("accessAdmin.groups.heading")}</h2>
 
       <div className="flex items-center gap-2 mb-4">
         <input
@@ -226,7 +231,7 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="New group name (e.g. Management, HR)"
+          placeholder={t("accessAdmin.groups.namePlaceholder")}
           className="flex-1 h-9 rounded-md border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
         <button
@@ -234,7 +239,7 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
           disabled={!name.trim() || createMutation.isPending}
           className="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
         >
-          {createMutation.isPending ? "Creating…" : "Create"}
+          {createMutation.isPending ? t("accessAdmin.groups.creating") : t("accessAdmin.groups.create")}
         </button>
       </div>
       {createMutation.isError && (
@@ -242,9 +247,9 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
       )}
 
       {isLoading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-gray-400">{t("accessAdmin.groups.loading")}</p>
       ) : groups.length === 0 ? (
-        <p className="text-sm text-gray-400">No groups yet.</p>
+        <p className="text-sm text-gray-400">{t("accessAdmin.groups.none")}</p>
       ) : (
         <div className="divide-y divide-gray-100">
           {groups.map((g) => (
@@ -252,7 +257,7 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
               <div>
                 <span className="text-sm font-medium text-gray-800">{g.name}</span>
                 <span className="text-xs text-gray-400 ml-2">
-                  {g.member_count} member{g.member_count === 1 ? "" : "s"}
+                  {t(g.member_count === 1 ? "accessAdmin.groups.member_one" : "accessAdmin.groups.member_other", { count: g.member_count })}
                 </span>
               </div>
               <button
@@ -260,7 +265,7 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
                 disabled={deletingId === g.id}
                 className="text-xs text-gray-400 hover:text-red-600 disabled:opacity-40 transition-colors"
               >
-                Delete
+                {t("accessAdmin.groups.delete")}
               </button>
             </div>
           ))}
@@ -273,6 +278,7 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
 // ── Users panel ───────────────────────────────────────────────────────────────
 
 function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
+  const { t } = useTranslation();
   const updateAccessManager    = useUpdateUserAccessManager();
   const updateExtractionEditor = useUpdateUserExtractionEditor();
   const addToGroup      = useAddUserToGroup();
@@ -307,7 +313,7 @@ function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
                 }
                 className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
               />
-              Can manage document access
+              {t("accessAdmin.users.canManageAccess")}
             </label>
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
               <input
@@ -318,7 +324,7 @@ function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
                 }
                 className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
               />
-              Can edit extraction data
+              {t("accessAdmin.users.canEditExtraction")}
             </label>
           </div>
         )}
@@ -334,7 +340,7 @@ function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
             <button
               onClick={() => removeFromGroup.mutate({ userId: user.id, groupId: g.id })}
               className="text-amber-500 hover:text-amber-900"
-              aria-label={`Remove from ${g.name}`}
+              aria-label={t("accessAdmin.users.removeFromGroup", { group: g.name })}
             >
               ✕
             </button>
@@ -352,7 +358,7 @@ function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
             }}
             className="text-xs rounded-md border border-gray-300 px-1.5 py-0.5 text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
           >
-            <option value="">+ Add to group…</option>
+            <option value="">{t("accessAdmin.users.addToGroup")}</option>
             {availableGroups.map((g) => (
               <option key={g.id} value={g.id}>{g.name}</option>
             ))}
@@ -364,13 +370,14 @@ function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
 }
 
 function UsersPanel({ users, groups, isLoading }: { users: AdminUser[]; groups: Group[]; isLoading: boolean }) {
+  const { t } = useTranslation();
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 className="text-sm font-bold text-gray-900 mb-3">Users</h2>
+      <h2 className="text-sm font-bold text-gray-900 mb-3">{t("accessAdmin.users.heading")}</h2>
       {isLoading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-gray-400">{t("accessAdmin.users.loading")}</p>
       ) : users.length === 0 ? (
-        <p className="text-sm text-gray-400">No users found.</p>
+        <p className="text-sm text-gray-400">{t("accessAdmin.users.none")}</p>
       ) : (
         <div>
           {users.map((u) => (
@@ -385,6 +392,7 @@ function UsersPanel({ users, groups, isLoading }: { users: AdminUser[]; groups: 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AccessAdminPage() {
+  const { t } = useTranslation();
   const { data: groups, isLoading: groupsLoading } = useGroups();
   const { data: users, isLoading: usersLoading }   = useAdminUsers();
   const { data: series, isLoading: seriesLoading }  = useSeries();
@@ -394,9 +402,9 @@ export default function AccessAdminPage() {
       <NavSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
-          <h1 className="text-lg font-bold text-gray-900">Access &amp; Groups</h1>
+          <h1 className="text-lg font-bold text-gray-900">{t("accessAdmin.header")}</h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            Manage groups, series, and who can restrict documents to a group or a specific person.
+            {t("accessAdmin.subtitle")}
           </p>
         </header>
 

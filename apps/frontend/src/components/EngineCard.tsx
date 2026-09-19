@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { EngineResult } from "@sdai/types";
 import ConfidenceBadge from "./ConfidenceBadge";
 
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function EngineCard({ label, result }: Props) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col border border-gray-200 rounded-lg overflow-hidden bg-white">
       <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
@@ -32,7 +34,7 @@ export default function EngineCard({ label, result }: Props) {
 
       {result.error && (
         <div className="px-4 py-3 text-xs text-red-600 bg-red-50 border-b border-red-100">
-          Error: {result.error}
+          {t("engineCard.error", { message: result.error })}
         </div>
       )}
 
@@ -42,13 +44,13 @@ export default function EngineCard({ label, result }: Props) {
             {result.text}
           </p>
         ) : (
-          <p className="text-sm text-gray-400 italic">No text extracted.</p>
+          <p className="text-sm text-gray-400 italic">{t("engineCard.noText")}</p>
         )}
       </div>
 
       <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 text-xs text-gray-500 flex gap-4">
-        <span>{result.text.length} chars</span>
-        <span>{result.text.split(/\s+/).filter(Boolean).length} words</span>
+        <span>{t("engineCard.chars", { count: result.text.length })}</span>
+        <span>{t("engineCard.words", { count: result.text.split(/\s+/).filter(Boolean).length })}</span>
       </div>
     </div>
   );

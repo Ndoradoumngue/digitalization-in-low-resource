@@ -24,6 +24,7 @@ REVIEWER = CurrentUser(
     can_manage_access=False,
     can_edit_extraction=False,
     group_ids=[],
+    locale="en",
 )
 
 ADMIN = CurrentUser(
@@ -37,6 +38,7 @@ ADMIN = CurrentUser(
     can_manage_access=False,
     can_edit_extraction=False,
     group_ids=[],
+    locale="en",
 )
 
 # A reviewer delegated the can_manage_access permission — for testing the
@@ -52,6 +54,7 @@ ACCESS_MANAGER = CurrentUser(
     can_manage_access=True,
     can_edit_extraction=False,
     group_ids=[],
+    locale="en",
 )
 
 # A reviewer delegated the can_edit_extraction permission — for testing the
@@ -67,6 +70,7 @@ EXTRACTION_EDITOR = CurrentUser(
     can_manage_access=False,
     can_edit_extraction=True,
     group_ids=[],
+    locale="en",
 )
 
 

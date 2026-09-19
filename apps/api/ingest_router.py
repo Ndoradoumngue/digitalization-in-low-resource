@@ -52,6 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from audit import log_action
 from auth import CurrentUser, get_current_user, require_admin, require_extraction_editor
 from cache import invalidate_cache
+from i18n import DEFAULT_LOCALE, t
 from rate_limit import limiter
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -1946,7 +1947,7 @@ async def _register_and_enqueue(
     await _queue.put((doc_id, batch_id, src_path, filename, content_hash, tenant_id, tenant_slug))
 
 
-async def _retry_document(table_name: str, doc_id: str, tenant_id: str, tenant_slug: str) -> str:
+async def _retry_document(table_name: str, doc_id: str, tenant_id: str, tenant_slug: str, locale: str = DEFAULT_LOCALE) -> str:
     """Re-run VLM extraction for a crashed (manual_entry) document, reusing
     its already-preprocessed page image(s) instead of re-uploading.
 
@@ -1965,11 +1966,11 @@ async def _retry_document(table_name: str, doc_id: str, tenant_id: str, tenant_s
         record = row.mappings().one_or_none()
 
     if record is None:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=t("common.document_not_found", locale))
     if record["review_status"] != "manual_entry":
         raise HTTPException(
             status_code=422,
-            detail="Only crashed documents (manual_entry status) can be retried.",
+            detail=t("ingest.only_crashed_can_retry", locale),
         )
 
     if record["page_image_paths"]:
@@ -1977,14 +1978,13 @@ async def _retry_document(table_name: str, doc_id: str, tenant_id: str, tenant_s
     elif record["source_image_path"]:
         page_paths = [Path(record["source_image_path"])]
     else:
-        raise HTTPException(status_code=422, detail="No stored images to retry from.")
+        raise HTTPException(status_code=422, detail=t("ingest.no_stored_images", locale))
 
     missing = [str(p) for p in page_paths if not p.exists()]
     if missing:
         raise HTTPException(
             status_code=422,
-            detail=f"Stored image(s) no longer on disk: {', '.join(missing)}."
-                   " Re-upload the original file instead.",
+            detail=t("ingest.stored_images_missing", locale, missing=", ".join(missing)),
         )
 
     pdf_path     = Path(record["source_pdf_path"]) if record["source_pdf_path"] else None
@@ -2103,7 +2103,7 @@ async def _merge_page_into_document(batch_document_id: str) -> None:
     await invalidate_cache("review")
 
 
-async def _reload_single_page(page_id: str) -> None:
+async def _reload_single_page(page_id: str, locale: str = DEFAULT_LOCALE) -> None:
     """Validate the page can be reloaded from its original source, then
     hand the actual re-derivation + VLM call off to a background task
     (same reasoning as _retry_single_page — this can take a while)."""
@@ -2120,20 +2120,18 @@ async def _reload_single_page(page_id: str) -> None:
         record = row.mappings().one_or_none()
 
     if record is None:
-        raise HTTPException(status_code=404, detail="Page not found")
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", locale))
     if record["source_page_number"] is None or not record["source_path"]:
         raise HTTPException(
             status_code=422,
-            detail="The original source file wasn't recorded for this document "
-                   "(it was ingested before this feature existed). Use Retry "
-                   "instead, or re-upload the file.",
+            detail=t("ingest.source_not_recorded", locale),
         )
 
     source_path = Path(record["source_path"])
     if not source_path.exists():
         raise HTTPException(
             status_code=422,
-            detail=f"Original source file no longer on disk: {source_path}",
+            detail=t("ingest.source_file_missing", locale, path=source_path),
         )
 
     asyncio.create_task(_run_page_reload(page_id))
@@ -2236,7 +2234,7 @@ async def _run_page_reload(page_id: str) -> None:
     await _merge_page_into_document(batch_document_id)
 
 
-async def _retry_single_page(page_id: str) -> None:
+async def _retry_single_page(page_id: str, locale: str = DEFAULT_LOCALE) -> None:
     """Validate the page and mark it 'processing', then hand the actual
     VLM call off to a background task. A VLM call can take up to
     VLM_PAGE_TIMEOUT (240s+) — awaiting it directly in the request handler
@@ -2255,13 +2253,13 @@ async def _retry_single_page(page_id: str) -> None:
         record = row.mappings().one_or_none()
 
     if record is None:
-        raise HTTPException(status_code=404, detail="Page not found")
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", locale))
 
     image_path = Path(record["image_path"])
     if not image_path.exists():
         raise HTTPException(
             status_code=422,
-            detail=f"Stored page image no longer on disk: {image_path}",
+            detail=t("ingest.stored_page_image_missing", locale, path=image_path),
         )
 
     await _update_page_status(page_id, "processing")
@@ -2379,7 +2377,7 @@ async def _run_resume(batch_document_id: str, pages: list[tuple[str, Path]]) -> 
     await _merge_page_into_document(batch_document_id)
 
 
-async def _manual_enter_page(page_id: str, fields: dict) -> None:
+async def _manual_enter_page(page_id: str, fields: dict, locale: str = DEFAULT_LOCALE) -> None:
     """Store a human-entered result for one page (bypassing the VLM
     entirely) and merge it back into the parent document."""
     async with _engine().connect() as conn:
@@ -2393,13 +2391,13 @@ async def _manual_enter_page(page_id: str, fields: dict) -> None:
         record = row.mappings().one_or_none()
 
     if record is None:
-        raise HTTPException(status_code=404, detail="Page not found")
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", locale))
 
     await _update_page_status(page_id, "manual", fields=fields, processing_time=0.0)
     await _merge_page_into_document(record["batch_document_id"])
 
 
-async def _skip_page(page_id: str) -> None:
+async def _skip_page(page_id: str, locale: str = DEFAULT_LOCALE) -> None:
     """Mark a page as not relevant (cover sheet, blank, out-of-scope
     layout, ...) and exclude it from the document's reconciled result. If
     the page had previously contributed content (e.g. it was completed
@@ -2415,7 +2413,7 @@ async def _skip_page(page_id: str) -> None:
         record = row.mappings().one_or_none()
 
     if record is None:
-        raise HTTPException(status_code=404, detail="Page not found")
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", locale))
 
     await _update_page_status(page_id, "skipped", error_message=None, processing_time=0.0)
     await _merge_page_into_document(record["batch_document_id"])
@@ -2493,8 +2491,10 @@ async def upload_files(
         if ext not in ALLOWED_EXTS:
             raise HTTPException(
                 status_code=422,
-                detail=f"Unsupported file type '{ext}' for {f.filename}."
-                       f" Allowed: {', '.join(sorted(ALLOWED_EXTS))}",
+                detail=t(
+                    "ingest.unsupported_file_type", current_user.locale,
+                    ext=ext, filename=f.filename, allowed=", ".join(sorted(ALLOWED_EXTS)),
+                ),
             )
 
     batch_id  = await _create_batch("upload", current_user.tenant_id, created_by=current_user.id)
@@ -2508,15 +2508,16 @@ async def upload_files(
         if len(content) > MAX_UPLOAD_BYTES:
             raise HTTPException(
                 status_code=413,
-                detail=f"{filename} exceeds the maximum upload size "
-                       f"({MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+                detail=t(
+                    "ingest.file_too_large", current_user.locale,
+                    filename=filename, max_mb=MAX_UPLOAD_BYTES // (1024 * 1024),
+                ),
             )
         ext = Path(filename).suffix.lower()
         if not _sniff_matches_extension(content, ext):
             raise HTTPException(
                 status_code=422,
-                detail=f"{filename} does not look like a valid {ext} file"
-                       " (content doesn't match its extension).",
+                detail=t("ingest.invalid_file_content", current_user.locale, filename=filename, ext=ext),
             )
         dest.write_bytes(content)
         await _register_and_enqueue(batch_id, dest, filename, current_user.tenant_id, current_user.tenant_slug)
@@ -2544,7 +2545,7 @@ async def ingest_from_path(
     if not body.path and not body.google_drive_folder_id:
         raise HTTPException(
             status_code=422,
-            detail="Provide either 'path' or 'google_drive_folder_id'.",
+            detail=t("ingest.provide_path_or_drive", current_user.locale),
         )
 
     batch_id = await _create_batch(
@@ -2565,17 +2566,17 @@ async def ingest_from_path(
         if not src_dir.is_relative_to(INGEST_ROOT):
             raise HTTPException(
                 status_code=403,
-                detail=f"Path is outside the allowed ingest directory ({INGEST_ROOT}).",
+                detail=t("ingest.path_outside_root", current_user.locale, root=INGEST_ROOT),
             )
         if not src_dir.exists() or not src_dir.is_dir():
-            raise HTTPException(status_code=404, detail=f"Path not found: {body.path}")
+            raise HTTPException(status_code=404, detail=t("ingest.path_not_found", current_user.locale, path=body.path))
         files = [
             p for p in src_dir.iterdir()
             if p.suffix.lower() in ALLOWED_EXTS
         ]
 
     if not files:
-        raise HTTPException(status_code=422, detail="No supported files found.")
+        raise HTTPException(status_code=422, detail=t("ingest.no_supported_files", current_user.locale))
 
     for p in files:
         await _register_and_enqueue(batch_id, p, p.name, current_user.tenant_id, current_user.tenant_slug)
@@ -2699,7 +2700,7 @@ async def get_batch_status(
         )
         batch = batch_row.one_or_none()
         if batch is None or str(batch[0]) != current_user.tenant_id:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise HTTPException(status_code=404, detail=t("common.batch_not_found", current_user.locale))
 
         docs_result = await sess.execute(
             text(
@@ -2712,7 +2713,7 @@ async def get_batch_status(
         rows = docs_result.fetchall()
 
     if not rows:
-        raise HTTPException(status_code=404, detail="Batch not found")
+        raise HTTPException(status_code=404, detail=t("common.batch_not_found", current_user.locale))
 
     documents = [
         {
@@ -2753,7 +2754,7 @@ async def list_pages(
     bar and failed-pages list for multi-page documents."""
     tenant = await _resolve_tenant_for_batch_document(batch_document_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail="No pages found for this document")
+        raise HTTPException(status_code=404, detail=t("ingest.no_pages_found", current_user.locale))
 
     async with _session()() as sess:
         result = await sess.execute(
@@ -2768,7 +2769,7 @@ async def list_pages(
         rows = result.mappings().all()
 
     if not rows:
-        raise HTTPException(status_code=404, detail="No pages found for this document")
+        raise HTTPException(status_code=404, detail=t("ingest.no_pages_found", current_user.locale))
 
     pages = [
         {
@@ -2817,8 +2818,8 @@ async def retry_page(
     GET /api/ingest/pages/{batch_document_id} for the result."""
     tenant = await _resolve_tenant_for_page(page_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail="Page not found")
-    await _retry_single_page(page_id)
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _retry_single_page(page_id, current_user.locale)
     return {"ok": True, "status": "processing"}
 
 
@@ -2839,8 +2840,8 @@ async def reload_page(
     older documents don't have a recorded source path."""
     tenant = await _resolve_tenant_for_page(page_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail="Page not found")
-    await _reload_single_page(page_id)
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _reload_single_page(page_id, current_user.locale)
     return {"ok": True, "status": "processing"}
 
 
@@ -2857,8 +2858,8 @@ async def manual_enter_page(
     permission (admin, or a reviewer delegated can_edit_extraction)."""
     tenant = await _resolve_tenant_for_page(page_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail="Page not found")
-    await _manual_enter_page(page_id, body.fields)
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _manual_enter_page(page_id, body.fields, current_user.locale)
     return {"ok": True}
 
 
@@ -2873,8 +2874,8 @@ async def skip_page(
     layout, ...) so it's excluded from the document's reconciled result."""
     tenant = await _resolve_tenant_for_page(page_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail="Page not found")
-    await _skip_page(page_id)
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _skip_page(page_id, current_user.locale)
     return {"ok": True}
 
 
@@ -2891,10 +2892,10 @@ async def resume_document(
     for progress. Already-completed pages are left untouched."""
     tenant = await _resolve_tenant_for_batch_document(batch_document_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail="No pending or failed pages to resume")
+        raise HTTPException(status_code=404, detail=t("ingest.no_pending_or_failed_pages", current_user.locale))
     count = await _resume_document_pages(batch_document_id)
     if count == 0:
-        raise HTTPException(status_code=404, detail="No pending or failed pages to resume")
+        raise HTTPException(status_code=404, detail=t("ingest.no_pending_or_failed_pages", current_user.locale))
     return {"ok": True, "queued": count}
 
 
@@ -2914,15 +2915,13 @@ async def delete_ingested_document(
     if tenant is None or tenant[0] != current_user.tenant_id:
         raise HTTPException(
             status_code=404,
-            detail="No extracted document found for this upload — it may not have "
-                   "finished processing yet, or was already deleted.",
+            detail=t("ingest.no_extracted_document", current_user.locale),
         )
     tenant_id, tenant_slug = tenant
     deleted = await _delete_document_by_batch_document_id(batch_document_id, tenant_id, tenant_slug)
     if not deleted:
         raise HTTPException(
             status_code=404,
-            detail="No extracted document found for this upload — it may not have "
-                   "finished processing yet, or was already deleted.",
+            detail=t("ingest.no_extracted_document", current_user.locale),
         )
     return {"ok": True}

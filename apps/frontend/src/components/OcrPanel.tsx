@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { OcrDocument, ImageVariant } from "@sdai/types";
 import { ENGINE_LABELS } from "@sdai/types";
 import EngineCard from "./EngineCard";
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export default function OcrPanel({ doc }: Props) {
+  const { t } = useTranslation();
   const [variant, setVariant] = useState<ImageVariant>("raw");
   const variantData = doc[variant];
 
@@ -21,7 +23,7 @@ export default function OcrPanel({ doc }: Props) {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center gap-3">
-        <span className="text-sm font-medium text-gray-600">Results for:</span>
+        <span className="text-sm font-medium text-gray-600">{t("ocr.resultsFor")}</span>
         {(["raw", "preprocessed"] as ImageVariant[]).map((v) => (
           <button
             key={v}
@@ -32,11 +34,11 @@ export default function OcrPanel({ doc }: Props) {
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
           >
-            {v === "raw" ? "Raw image" : "Preprocessed image"}
+            {v === "raw" ? t("ocr.rawImage") : t("ocr.preprocessedImage")}
           </button>
         ))}
         <span className="ml-auto text-xs text-gray-400">
-          Best engine:{" "}
+          {t("ocr.bestEngine")}{" "}
           <span className="font-semibold text-indigo-600">
             {ENGINE_LABELS[bestEngine]}
           </span>
@@ -45,12 +47,12 @@ export default function OcrPanel({ doc }: Props) {
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div>
-          <h3 className="text-sm font-medium text-gray-500 mb-2">Document image</h3>
+          <h3 className="text-sm font-medium text-gray-500 mb-2">{t("ocr.documentImage")}</h3>
           <ImageViewer filename={doc.filename} />
         </div>
 
         <div className="flex flex-col gap-4">
-          <h3 className="text-sm font-medium text-gray-500">Extraction results</h3>
+          <h3 className="text-sm font-medium text-gray-500">{t("ocr.extractionResults")}</h3>
           {(["tesseract", "easyocr", "surya"] as const).map((eng) => (
             <EngineCard
               key={eng}

@@ -5,6 +5,7 @@ import {
   useState,
 } from "react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { flagReview, patchReview, dbImageUrl } from "@sdai/api-client";
 import { useReviewQueue } from "../hooks/useReview";
@@ -30,14 +31,14 @@ function tierColor(t: string | null) {
   return "bg-gray-100 text-gray-500";
 }
 
-function timeAgo(iso: string | null | undefined): string {
-  if (!iso) return "unknown time";
+function timeAgo(iso: string | null | undefined, t: (key: string, opts?: Record<string, unknown>) => string): string {
+  if (!iso) return t("review.timeAgo.unknown");
   const ms = Date.now() - new Date(iso).getTime();
   const m  = Math.floor(ms / 60_000);
-  if (m < 60)   return `${m}m ago`;
+  if (m < 60)   return t("review.timeAgo.minutes", { count: m });
   const h = Math.floor(m / 60);
-  if (h < 24)   return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+  if (h < 24)   return t("review.timeAgo.hours", { count: h });
+  return t("review.timeAgo.days", { count: Math.floor(h / 24) });
 }
 
 function labelFor(key: string) {
@@ -47,6 +48,7 @@ function labelFor(key: string) {
 // ── Pan/zoom image (same pattern as DocumentDetailPage) ───────────────────────
 
 function PanZoomImage({ src }: { src: string }) {
+  const { t } = useTranslation();
   const [scale, setScale] = useState(1);
   const [tx, setTx]       = useState(0);
   const [ty, setTy]       = useState(0);
@@ -77,7 +79,7 @@ function PanZoomImage({ src }: { src: string }) {
     >
       <img
         src={src}
-        alt="Document"
+        alt={t("panZoom.alt")}
         draggable={false}
         className="absolute top-1/2 left-1/2 max-w-none"
         style={{
@@ -86,7 +88,7 @@ function PanZoomImage({ src }: { src: string }) {
         }}
       />
       <div className="absolute bottom-2 right-2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded pointer-events-none">
-        {Math.round(scale * 100)}% · scroll zoom · drag pan · dbl reset
+        {t("panZoom.overlay", { pct: Math.round(scale * 100) })}
       </div>
     </div>
   );
@@ -118,6 +120,7 @@ interface FormProps {
 }
 
 function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: FormProps) {
+  const { t } = useTranslation();
   const confidence   = detail.confidence   ? String(detail.confidence)   : null;
   const documentType = detail.document_type ? String(detail.document_type) : null;
 
@@ -134,7 +137,7 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
         )}
         {confidence && (
           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${tierColor(confidence)}`}>
-            {confidence} confidence
+            {t("review.confidenceLabel", { level: confidence })}
           </span>
         )}
       </div>
@@ -143,12 +146,11 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
       <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
         {!canEdit && (
           <p className="text-xs text-gray-400 italic">
-            You can approve or reject this document, but correcting its fields needs the
-            extraction-editing permission.
+            {t("review.permissionNote")}
           </p>
         )}
         {editableKeys.length === 0 && (
-          <p className="text-sm text-gray-400">No editable fields.</p>
+          <p className="text-sm text-gray-400">{t("review.noEditableFields")}</p>
         )}
         {editableKeys.map((key) => {
           const val     = form[key] ?? "";
@@ -165,7 +167,7 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
                 {labelFor(key)}
                 {isArray && (
-                  <span className="ml-1 font-normal normal-case text-gray-400">(comma-separated)</span>
+                  <span className="ml-1 font-normal normal-case text-gray-400">{t("review.commaSeparated")}</span>
                 )}
               </label>
               <input
@@ -173,7 +175,7 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
                 value={val}
                 onChange={(e) => onChange(key, e.target.value)}
                 disabled={!canEdit}
-                placeholder="Not found — fill if visible"
+                placeholder={t("review.fieldPlaceholder")}
                 className="w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-gray-300 disabled:bg-gray-50 disabled:text-gray-500"
               />
             </div>
@@ -187,6 +189,7 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ReviewPage() {
+  const { t }        = useTranslation();
   const queryClient  = useQueryClient();
   const { user }     = useAuth();
   const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
@@ -286,21 +289,21 @@ export default function ReviewPage() {
         fields: buildFields(),
         action: "approve",
       }),
-    onSuccess: () => { showToast("Approved"); advanceAfterAction(); },
-    onError:   (e: Error) => showToast(`Error: ${e.message}`),
+    onSuccess: () => { showToast(t("review.toast.approved")); advanceAfterAction(); },
+    onError:   (e: Error) => showToast(t("review.toast.error", { message: e.message })),
   });
 
   const rejectMutation = useMutation({
     mutationFn: () =>
       patchReview(current!.table_name, current!.id, { fields: {}, action: "reject" }),
-    onSuccess: () => { showToast("Rejected"); advanceAfterAction(); },
-    onError:   (e: Error) => showToast(`Error: ${e.message}`),
+    onSuccess: () => { showToast(t("review.toast.rejected")); advanceAfterAction(); },
+    onError:   (e: Error) => showToast(t("review.toast.error", { message: e.message })),
   });
 
   const flagMutation = useMutation({
     mutationFn: () => flagReview(current!.table_name, current!.id),
-    onSuccess:  () => { showToast("Flagged for manual entry"); advanceAfterAction(); },
-    onError:    (e: Error) => showToast(`Error: ${e.message}`),
+    onSuccess:  () => { showToast(t("review.toast.flagged")); advanceAfterAction(); },
+    onError:    (e: Error) => showToast(t("review.toast.error", { message: e.message })),
   });
 
   const isBusy =
@@ -355,14 +358,14 @@ export default function ReviewPage() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex-shrink-0">
         <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-base font-bold text-indigo-700 tracking-tight">Review Queue</h1>
+          <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("review.header")}</h1>
 
           {!queueLoading && (
             <div className="flex items-center gap-3 ml-2">
               <span className="text-2xl font-bold text-gray-800">{totalQueue}</span>
               <span className="text-xs text-gray-500">
-                document{totalQueue !== 1 ? "s" : ""} waiting
-                {oldestIngested && ` · oldest ${timeAgo(oldestIngested)}`}
+                {totalQueue === 1 ? t("review.waiting_one") : t("review.waiting_other")}
+                {oldestIngested && t("review.oldestSuffix", { time: timeAgo(oldestIngested, t) })}
               </span>
             </div>
           )}
@@ -392,12 +395,12 @@ export default function ReviewPage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
             </svg>
           </div>
-          <p className="text-sm text-gray-600 font-medium">Review queue is empty — all documents processed</p>
+          <p className="text-sm text-gray-600 font-medium">{t("review.emptyQueue")}</p>
           <Link
             to="/upload"
             className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
           >
-            Upload more documents
+            {t("review.uploadMore")}
           </Link>
         </div>
       ) : (
@@ -409,17 +412,17 @@ export default function ReviewPage() {
               disabled={idx <= 0 || isBusy}
               className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
             >
-              ← Previous
+              {t("review.navPrevious")}
             </button>
             <span className="text-xs text-gray-500 flex-1 text-center">
-              {queueLoading ? "Loading…" : `Reviewing ${idx + 1} of ${totalQueue}`}
+              {queueLoading ? t("common.loading") : t("review.reviewingOf", { current: idx + 1, total: totalQueue })}
             </span>
             <button
               onClick={handleNext}
               disabled={idx >= items.length - 1 || isBusy}
               className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
             >
-              Next →
+              {t("review.navNext")}
             </button>
           </div>
 
@@ -432,7 +435,7 @@ export default function ReviewPage() {
                   <PanZoomImage src={imgSrc} />
                 ) : (
                   <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
-                    No image available
+                    {t("review.noImage")}
                   </div>
                 )}
               </div>
@@ -444,7 +447,7 @@ export default function ReviewPage() {
                   </span>
                   {current.ingested_at && (
                     <span className="text-xs text-gray-400 ml-auto shrink-0">
-                      Ingested {timeAgo(current.ingested_at)}
+                      {t("review.ingested", { time: timeAgo(current.ingested_at, t) })}
                     </span>
                   )}
                 </div>
@@ -455,7 +458,7 @@ export default function ReviewPage() {
             <div className="flex flex-col overflow-hidden" style={{ width: "42%" }}>
               {detailLoading ? (
                 <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-                  Loading fields…
+                  {t("review.loadingFields")}
                 </div>
               ) : detail ? (
                 <ReviewForm
@@ -468,7 +471,7 @@ export default function ReviewPage() {
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-                  Select a document
+                  {t("review.selectDocument")}
                 </div>
               )}
 
@@ -479,9 +482,9 @@ export default function ReviewPage() {
                     onClick={() => approveMutation.mutate()}
                     disabled={isBusy || !detail}
                     className="flex-1 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                    title="Enter to approve"
+                    title={t("review.approveTitle")}
                   >
-                    {approveMutation.isPending ? "Approving…" : "Approve"}
+                    {approveMutation.isPending ? t("review.approving") : t("review.approve")}
                   </button>
 
                   <button
@@ -489,25 +492,25 @@ export default function ReviewPage() {
                     disabled={isBusy || !detail}
                     className="flex-1 px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors"
                   >
-                    {rejectMutation.isPending ? "Rejecting…" : "Reject"}
+                    {rejectMutation.isPending ? t("review.rejecting") : t("review.reject")}
                   </button>
 
                   <button
                     onClick={() => flagMutation.mutate()}
                     disabled={isBusy || !detail}
                     className="px-3 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                    title="Flag for manual data entry"
+                    title={t("review.flagTitle")}
                   >
-                    {flagMutation.isPending ? "…" : "Flag"}
+                    {flagMutation.isPending ? t("review.flagging") : t("review.flag")}
                   </button>
 
                   <button
                     onClick={handleSkip}
                     disabled={isBusy}
                     className="px-3 py-2 rounded-lg border border-gray-300 text-gray-500 text-sm hover:bg-gray-50 disabled:opacity-40 transition-colors"
-                    title="Skip (Escape)"
+                    title={t("review.skipTitle")}
                   >
-                    Skip
+                    {t("review.skip")}
                   </button>
                 </div>
               )}

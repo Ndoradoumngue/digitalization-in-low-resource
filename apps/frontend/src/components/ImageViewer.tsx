@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ImageVariant } from "@sdai/types";
 import { imageUrl } from "@sdai/api-client";
 
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function ImageViewer({ filename }: Props) {
+  const { t } = useTranslation();
   const [variant, setVariant] = useState<ImageVariant>("raw");
   const [error, setError] = useState(false);
 
@@ -15,7 +17,7 @@ export default function ImageViewer({ filename }: Props) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-gray-600">Image variant:</span>
+        <span className="text-sm font-medium text-gray-600">{t("imageViewer.variantLabel")}</span>
         {(["raw", "preprocessed"] as ImageVariant[]).map((v) => (
           <button
             key={v}
@@ -26,7 +28,7 @@ export default function ImageViewer({ filename }: Props) {
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
             }`}
           >
-            {v === "raw" ? "Raw" : "Preprocessed"}
+            {v === "raw" ? t("imageViewer.raw") : t("imageViewer.preprocessed")}
           </button>
         ))}
       </div>
@@ -34,7 +36,7 @@ export default function ImageViewer({ filename }: Props) {
       <div className="relative border border-gray-200 rounded-lg overflow-hidden bg-gray-50 min-h-64 flex items-center justify-center">
         {error ? (
           <div className="text-sm text-gray-400 p-6 text-center">
-            Image not available for <strong>{variant}</strong> variant.
+            {t("imageViewer.notAvailable", { variant })}
           </div>
         ) : (
           <img

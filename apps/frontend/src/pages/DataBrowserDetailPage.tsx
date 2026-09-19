@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
 import { useAuth } from "../context/AuthContext";
@@ -49,6 +50,7 @@ export default function DataBrowserDetailPage() {
   const { tableName = "", id = "" } = useParams<{ tableName: string; id: string }>();
   const navigate  = useNavigate();
   const location  = useLocation();
+  const { t }     = useTranslation();
   const state     = (location.state ?? {}) as LocationState;
   const list      = state.list ?? [];
   const idx       = state.currentIndex ?? -1;
@@ -127,7 +129,7 @@ export default function DataBrowserDetailPage() {
         <button
           onClick={() => navigate("/ops/data")}
           className="text-gray-500 hover:text-gray-800 transition-colors"
-          aria-label="Back to data browser"
+          aria-label={t("databrowserDetail.backToDataBrowser")}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
@@ -146,13 +148,13 @@ export default function DataBrowserDetailPage() {
 
         {confidence && (
           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${tierColor(confidence)}`}>
-            {confidence}
+            {t(`databrowser.confidence.${confidence}`, confidence)}
           </span>
         )}
 
         {reviewStatus && (
           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${reviewColor(reviewStatus)}`}>
-            {reviewStatus.replace(/_/g, " ")}
+            {t(`databrowser.reviewStatus.${reviewStatus}`, reviewStatus.replace(/_/g, " "))}
           </span>
         )}
 
@@ -164,20 +166,20 @@ export default function DataBrowserDetailPage() {
                 disabled={retryMutation.isPending}
                 className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 transition-colors"
               >
-                {retryMutation.isPending ? "Retrying…" : "Retry"}
+                {retryMutation.isPending ? t("databrowserDetail.retrying") : t("databrowserDetail.retry")}
               </button>
             )}
             {user?.role === "admin" && (
               <button
                 onClick={() => {
-                  if (window.confirm("Permanently delete this document? This cannot be undone.")) {
+                  if (window.confirm(t("databrowserDetail.confirmDelete"))) {
                     deleteMutation.mutate();
                   }
                 }}
                 disabled={deleteMutation.isPending}
                 className="px-2.5 py-1.5 rounded-md text-xs font-medium border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50 transition-colors"
               >
-                {deleteMutation.isPending ? "Deleting…" : "Delete"}
+                {deleteMutation.isPending ? t("databrowserDetail.deleting") : t("databrowserDetail.delete")}
               </button>
             )}
           </div>
@@ -197,20 +199,20 @@ export default function DataBrowserDetailPage() {
               disabled={idx <= 0}
               onClick={() => goTo(idx - 1)}
               className="px-2.5 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              title="Previous (←)"
+              title={t("databrowserDetail.prevTitle")}
             >
-              ← Prev
+              {t("databrowserDetail.prev")}
             </button>
             <span className="text-xs text-gray-500 px-1">
-              {idx + 1} / {list.length}
+              {t("databrowserDetail.indexOf", { current: idx + 1, total: list.length })}
             </span>
             <button
               disabled={idx >= list.length - 1}
               onClick={() => goTo(idx + 1)}
               className="px-2.5 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
-              title="Next (→)"
+              title={t("databrowserDetail.nextTitle")}
             >
-              Next →
+              {t("databrowserDetail.next")}
             </button>
           </div>
         )}
@@ -219,11 +221,11 @@ export default function DataBrowserDetailPage() {
       {/* Body */}
       {isLoading ? (
         <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-          Loading…
+          {t("databrowserDetail.loading")}
         </div>
       ) : error ? (
         <div className="flex-1 p-8 text-sm text-red-500">
-          Failed to load document.
+          {t("databrowserDetail.loadError")}
         </div>
       ) : (
         <div className="flex flex-1 overflow-hidden">
@@ -242,7 +244,7 @@ export default function DataBrowserDetailPage() {
                           : "border-gray-300 text-gray-600 hover:bg-gray-50"
                       }`}
                     >
-                      Page {i + 1}
+                      {t("databrowserDetail.page", { n: i + 1 })}
                     </button>
                   ))}
                 {pdfPath && (
@@ -252,7 +254,7 @@ export default function DataBrowserDetailPage() {
                     rel="noreferrer"
                     className="flex-shrink-0 ml-auto px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
                   >
-                    View original PDF ↗
+                    {t("databrowserDetail.viewOriginalPdf")}
                   </a>
                 )}
               </div>
@@ -262,7 +264,7 @@ export default function DataBrowserDetailPage() {
                 <PanZoomImage src={imgSrc} key={imgSrc} />
               ) : (
                 <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
-                  No image available
+                  {t("databrowserDetail.noImage")}
                 </div>
               )}
             </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { AccessGrant } from "@sdai/types";
 import { useDocumentAccess, useCreateDocumentAccess, useDeleteDocumentAccess, useGrantees } from "../hooks/useAccess";
 
@@ -13,11 +14,12 @@ function GrantRow({
   removing: boolean;
   canManage: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
       <div className="flex-1 min-w-0">
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800 mr-2">
-          {grant.grantee_type === "group" ? "Group" : "Person"}
+          {grant.grantee_type === "group" ? t("access.group") : t("access.person")}
         </span>
         <span className="text-sm text-gray-800 truncate">{grant.grantee_name}</span>
       </div>
@@ -26,8 +28,8 @@ function GrantRow({
           onClick={onRemove}
           disabled={removing}
           className="flex-shrink-0 text-xs text-gray-400 hover:text-red-600 disabled:opacity-40 transition-colors"
-          title="Remove access grant"
-          aria-label="Remove access grant"
+          title={t("access.removeGrant")}
+          aria-label={t("access.removeGrant")}
         >
           ✕
         </button>
@@ -45,6 +47,7 @@ function AccessGrantPicker({
   id: string;
   onDone: () => void;
 }) {
+  const { t } = useTranslation();
   const [granteeType, setGranteeType] = useState<"group" | "user">("group");
   const [granteeId, setGranteeId]     = useState("");
   const { data: grantees } = useGrantees();
@@ -71,15 +74,15 @@ function AccessGrantPicker({
           }}
           className="h-8 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
-          <option value="group">Group</option>
-          <option value="user">Person</option>
+          <option value="group">{t("access.group")}</option>
+          <option value="user">{t("access.person")}</option>
         </select>
         <select
           value={granteeId}
           onChange={(e) => setGranteeId(e.target.value)}
           className="h-8 flex-1 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
-          <option value="">Select {granteeType === "group" ? "a group" : "a person"}…</option>
+          <option value="">{granteeType === "group" ? t("access.selectGroup") : t("access.selectPerson")}</option>
           {options.map((o) => (
             <option key={o.id} value={o.id}>
               {"name" in o ? o.name : (o.full_name ?? o.email)}
@@ -97,14 +100,14 @@ function AccessGrantPicker({
           onClick={onDone}
           className="px-2.5 py-1.5 rounded-md text-xs border border-gray-300 hover:bg-gray-100 transition-colors"
         >
-          Cancel
+          {t("access.cancel")}
         </button>
         <button
           onClick={submit}
           disabled={!granteeId || createMutation.isPending}
           className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
         >
-          {createMutation.isPending ? "Granting…" : "Grant access"}
+          {createMutation.isPending ? t("access.granting") : t("access.grantAccess")}
         </button>
       </div>
     </div>
@@ -112,6 +115,7 @@ function AccessGrantPicker({
 }
 
 export default function AccessSection({ tableName, id }: { tableName: string; id: string }) {
+  const { t } = useTranslation();
   const { data, isLoading } = useDocumentAccess(tableName, id);
   const deleteMutation = useDeleteDocumentAccess(tableName, id);
   const [showPicker, setShowPicker] = useState(false);
@@ -129,14 +133,14 @@ export default function AccessSection({ tableName, id }: { tableName: string; id
     <div className="pt-4 mt-4 border-t border-gray-200">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-          Access restrictions
+          {t("access.heading")}
         </h3>
         {canManage && (
           <button
             onClick={() => setShowPicker((s) => !s)}
             className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
           >
-            {showPicker ? "Cancel" : "+ Restrict to…"}
+            {showPicker ? t("access.cancel") : t("access.restrictTo")}
           </button>
         )}
       </div>
@@ -146,15 +150,15 @@ export default function AccessSection({ tableName, id }: { tableName: string; id
       )}
 
       {isLoading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-gray-400">{t("access.loading")}</p>
       ) : grants.length === 0 ? (
         <p className="text-sm text-gray-400">
-          Visible to everyone in your organization. No restrictions applied.
+          {t("access.openToAll")}
         </p>
       ) : (
         <div>
           <p className="text-xs text-gray-400 mb-1">
-            Restricted — visible only to admins and:
+            {t("access.restrictedNote")}
           </p>
           {grants.map((g) => (
             <GrantRow

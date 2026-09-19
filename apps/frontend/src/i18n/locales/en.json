@@ -1,0 +1,548 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…",
+    "delete": "Delete",
+    "deleting": "Deleting…",
+    "deleted": "Deleted",
+    "create": "Create",
+    "creating": "Creating…",
+    "change": "Change",
+    "reset": "Reset",
+    "previous": "Previous",
+    "next": "Next",
+    "loading": "Loading…",
+    "notAvailable": "—",
+    "backArrow": "← {{label}}",
+    "forwardArrow": "{{label}} →"
+  },
+  "nav": {
+    "appName": "SDAI Digitalization",
+    "documentCount_one": "{{count}} document",
+    "documentCount_other": "{{count}} documents",
+    "documents": "Documents",
+    "reviewQueue": "Review Queue",
+    "schema": "Schema",
+    "auditLog": "Audit Log",
+    "ocrVlmBenchmarks": "OCR/VLM Benchmarks",
+    "operations": "Operations",
+    "dataBrowser": "Data Browser",
+    "accessGroups": "Access & Groups",
+    "uploadDocuments": "Upload documents",
+    "signOut": "Sign out"
+  },
+  "login": {
+    "tagline": "Document extraction platform",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "signingIn": "Signing in…",
+    "loginFailed": "Login failed"
+  },
+  "dashboard": {
+    "welcome": "Welcome",
+    "welcomeName": "Welcome, {{name}}",
+    "subtitle": "How does it work?",
+    "documentsIngested": "Documents ingested",
+    "pendingReview": "Pending review",
+    "documentTypes": "Document types",
+    "quickActions": "Quick actions",
+    "uploadTitle": "Upload documents →",
+    "uploadDescription": "Ingest new files via upload, a server path, or Google Drive.",
+    "reviewTitle": "Review queue →",
+    "reviewDescriptionPending_one": "{{count}} document waiting for review.",
+    "reviewDescriptionPending_other": "{{count}} documents waiting for review.",
+    "reviewDescriptionEmpty": "Nothing pending — all caught up.",
+    "browseTitle": "Browse documents →",
+    "browseDescription": "Search and filter everything that's been ingested."
+  },
+  "documents": {
+    "header": "Documents",
+    "count_one": "{{count}} document",
+    "count_other": "{{count}} documents",
+    "searchPlaceholder": "Search documents…",
+    "allReviewers": "All reviewers",
+    "allSeries": "All series",
+    "from": "From",
+    "to": "To",
+    "reset": "Reset",
+    "loadError": "Failed to load documents. Is the API running?",
+    "noResults": "No documents found.",
+    "reviewedBy": "Reviewed by {{name}}",
+    "notYetReviewed": "Not yet reviewed",
+    "pagination": "Page {{page}} of {{totalPages}} — {{total}} total",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "documentDetail": {
+    "backToDocuments": "Back to documents",
+    "prev": "← Prev",
+    "next": "Next →",
+    "prevTitle": "Previous (←)",
+    "nextTitle": "Next (→)",
+    "indexOf": "{{current}} / {{total}}",
+    "loading": "Loading…",
+    "loadError": "Failed to load document.",
+    "page": "Page {{n}}",
+    "viewOriginalPdf": "View original PDF ↗",
+    "noImage": "No image available"
+  },
+  "fields": {
+    "title": "Fields",
+    "cancel": "Cancel",
+    "saving": "Saving…",
+    "save": "Save",
+    "editFields": "Edit fields",
+    "noFields": "No fields available.",
+    "jsonHint": "(JSON)",
+    "invalidJson": "Invalid JSON"
+  },
+  "links": {
+    "untitledDocument": "Untitled document",
+    "documentUnavailable": "Document no longer available",
+    "removeLink": "Remove link",
+    "heading": "Related documents",
+    "cancel": "Cancel",
+    "addLink": "+ Add link",
+    "loading": "Loading…",
+    "noLinks": "No related documents yet.",
+    "relatesTo": "Relates to",
+    "referencedBy": "Referenced by"
+  },
+  "linkPicker": {
+    "searchPlaceholder": "Search for a document to link…",
+    "searching": "Searching…",
+    "noResults": "No documents found.",
+    "change": "Change",
+    "relationPlaceholder": "Relation (e.g. concerns)",
+    "notePlaceholder": "Note (optional)",
+    "cancel": "Cancel",
+    "linking": "Linking…",
+    "addLink": "Add link"
+  },
+  "series": {
+    "heading": "Series",
+    "change": "Change",
+    "assign": "+ Assign",
+    "none": "No series",
+    "cancel": "Cancel",
+    "notAssigned": "Not assigned to a series"
+  },
+  "access": {
+    "group": "Group",
+    "person": "Person",
+    "removeGrant": "Remove access grant",
+    "selectGroup": "Select a group…",
+    "selectPerson": "Select a person…",
+    "cancel": "Cancel",
+    "granting": "Granting…",
+    "grantAccess": "Grant access",
+    "heading": "Access restrictions",
+    "restrictTo": "+ Restrict to…",
+    "loading": "Loading…",
+    "openToAll": "Visible to everyone in your organization. No restrictions applied.",
+    "restrictedNote": "Restricted — visible only to admins and:"
+  },
+  "upload": {
+    "status": {
+      "completed": "Completed",
+      "review_required": "Review",
+      "crashed": "Crashed",
+      "pending": "Pending",
+      "processing": "Processing…",
+      "out_of_scope": "Out of scope",
+      "duplicate": "Duplicate"
+    },
+    "manualEntry": {
+      "invalidJson": "Invalid JSON",
+      "saving": "Saving…",
+      "save": "Save",
+      "cancel": "Cancel"
+    },
+    "viewPage": "View page ↗",
+    "skipButton": {
+      "title": "Mark as not relevant (cover page, blank, out of scope) — excluded from the extracted result",
+      "skipping": "Skipping…",
+      "skip": "Skip"
+    },
+    "reloadButton": {
+      "title": "Re-derive this page from the original document from scratch (re-runs page extraction and layout detection, e.g. column splitting) — unlike Retry/Re-run, which reuses the already-processed image",
+      "reloading": "Reloading…",
+      "reload": "Reload from source"
+    },
+    "failedPage": {
+      "page": "Page {{n}}",
+      "defaultError": "Failed",
+      "retrying": "Retrying…",
+      "retry": "Retry",
+      "cancel": "Cancel",
+      "enterManually": "Enter manually"
+    },
+    "completedPage": {
+      "page": "Page {{n}}",
+      "manual": "(manual)",
+      "hideData": "Hide data",
+      "viewData": "View data",
+      "rerunTitle": "Re-run extraction on this page's stored image (e.g. to pick up a prompt change) and merge the new result in, replacing what's there now. Uses the same stored image — won't re-evaluate page layout/splitting.",
+      "rerunning": "Re-running…",
+      "rerun": "Re-run"
+    },
+    "skippedPage": "Page {{n}} — skipped (not relevant)",
+    "pendingPage": {
+      "processing": "Page {{n}} — processing…",
+      "pending": "Page {{n}} — pending"
+    },
+    "pageProgress": {
+      "summary": "Pages: {{done}} / {{total}} processed",
+      "failedSuffix": " · {{count}} failed",
+      "skippedSuffix": " · {{count}} skipped",
+      "resumeTitle": "Process every page that hasn't been attempted yet — use this if the run was interrupted (e.g. a server restart) and hasn't moved in a while",
+      "resuming": "Resuming…",
+      "resumeRemaining": "Resume remaining ({{count}})"
+    },
+    "deleteDocument": {
+      "confirm": "Delete the extracted document for this upload? This lets you re-upload the same file without it being blocked as a duplicate. This cannot be undone.",
+      "title": "Delete so this file can be re-uploaded without hitting the duplicate check",
+      "deleting": "Deleting…",
+      "deleted": "Deleted",
+      "delete": "Delete"
+    },
+    "progressTable": {
+      "loadingBatch": "Loading batch status…",
+      "processed": "{{done}} / {{total}} processed",
+      "refreshing": "Refreshing…",
+      "refresh": "↻ Refresh",
+      "approved": "✓ {{count}} approved",
+      "review": "⚑ {{count}} review",
+      "crashed": "✕ {{count}} crashed",
+      "outOfScope": "◌ {{count}} out of scope",
+      "duplicate": "⊜ {{count}} duplicate",
+      "duplicateTooltip": "These files were already ingested. Their content hash matched an existing document so processing was skipped.",
+      "processingProgress": "Processing progress",
+      "colFilename": "Filename",
+      "colStatus": "Status",
+      "colDocumentType": "Document type",
+      "colConfidence": "Confidence",
+      "colTime": "Time (s)",
+      "colActions": "Actions"
+    },
+    "timeAgo": {
+      "justNow": "just now",
+      "minutes": "{{count}}m ago",
+      "hours": "{{count}}h ago",
+      "days": "{{count}}d ago"
+    },
+    "recentUploads": {
+      "heading": "Recent uploads",
+      "inProgress": "In progress",
+      "finished": "Finished",
+      "processed": "{{done}} / {{total}} processed",
+      "documentCount_one": "{{count}} document",
+      "documentCount_other": "{{count}} documents",
+      "crashed": "{{count}} crashed"
+    },
+    "modeTabs": {
+      "files": "File upload",
+      "path": "Server path",
+      "drive": "Google Drive"
+    },
+    "errors": {
+      "selectFile": "Select at least one file.",
+      "enterPath": "Enter a server directory path.",
+      "enterDriveId": "Enter a Google Drive folder ID.",
+      "uploadFailed": "Upload failed"
+    },
+    "header": "Upload documents",
+    "dropzone": {
+      "instructions": "Drag & drop JPG, PNG, or PDF files here",
+      "browse": "or click to browse"
+    },
+    "pathMode": {
+      "label": "Server directory path",
+      "helper": "Must be accessible on the API server filesystem."
+    },
+    "driveMode": {
+      "label": "Google Drive folder ID",
+      "helperPrefix": "Found in the folder URL after",
+      "helperSuffix": ". Requires a service account with read access."
+    },
+    "starting": "Starting…",
+    "startIngestion": "Start ingestion",
+    "ingestionStarted": "Ingestion started",
+    "batchLabel": "batch {{id}}",
+    "newBatch": "New batch"
+  },
+  "review": {
+    "toast": {
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "flagged": "Flagged for manual entry",
+      "error": "Error: {{message}}"
+    },
+    "confidenceLabel": "{{level}} confidence",
+    "permissionNote": "You can approve or reject this document, but correcting its fields needs the extraction-editing permission.",
+    "noEditableFields": "No editable fields.",
+    "commaSeparated": "(comma-separated)",
+    "fieldPlaceholder": "Not found — fill if visible",
+    "header": "Review Queue",
+    "waiting_one": "document waiting",
+    "waiting_other": "documents waiting",
+    "oldestSuffix": " · oldest {{time}}",
+    "emptyQueue": "Review queue is empty — all documents processed",
+    "uploadMore": "Upload more documents",
+    "navPrevious": "← Previous",
+    "navNext": "Next →",
+    "reviewingOf": "Reviewing {{current}} of {{total}}",
+    "noImage": "No image available",
+    "ingested": "Ingested {{time}}",
+    "loadingFields": "Loading fields…",
+    "selectDocument": "Select a document",
+    "approveTitle": "Enter to approve",
+    "approving": "Approving…",
+    "approve": "Approve",
+    "rejecting": "Rejecting…",
+    "reject": "Reject",
+    "flagTitle": "Flag for manual data entry",
+    "flagging": "…",
+    "flag": "Flag",
+    "skipTitle": "Skip (Escape)",
+    "skip": "Skip",
+    "timeAgo": {
+      "unknown": "unknown time",
+      "minutes": "{{count}}m ago",
+      "hours": "{{count}}h ago",
+      "days": "{{count}}d ago"
+    }
+  },
+  "accessAdmin": {
+    "header": "Access & Groups",
+    "subtitle": "Manage groups, series, and who can restrict documents to a group or a specific person.",
+    "export": {
+      "heading": "Export archive",
+      "descriptionPrefix": "Downloads every document in this tenant — all extracted fields plus a ",
+      "descriptionSuffix": " folder with every source image and PDF — bundled into one zip file.",
+      "preparing": "Preparing export…",
+      "download": "Download export",
+      "started": "Download started."
+    },
+    "integrity": {
+      "heading": "Fixity / integrity check",
+      "description": "Verifies every document's file(s) still exist on disk, and re-verifies content hashes where an unmodified original is available. Runs automatically on a weekly schedule — use this to run it on demand.",
+      "running": "Running…",
+      "run": "Run integrity check",
+      "checked": "Checked",
+      "ok": "OK",
+      "mismatched": "Mismatched",
+      "missing": "Missing",
+      "failuresNotePrefix": "Failures are logged to the Audit Log as ",
+      "failuresNoteSuffix": " entries."
+    },
+    "series": {
+      "heading": "Series (fonds)",
+      "namePlaceholder": "New series name (e.g. Land Deeds 1990-2000)",
+      "descriptionPlaceholder": "Description (optional)",
+      "creating": "Creating…",
+      "create": "Create",
+      "loading": "Loading…",
+      "none": "No series yet.",
+      "confirmDelete": "Delete this series? Documents assigned to it will show as unassigned.",
+      "delete": "Delete"
+    },
+    "groups": {
+      "heading": "Groups",
+      "namePlaceholder": "New group name (e.g. Management, HR)",
+      "creating": "Creating…",
+      "create": "Create",
+      "loading": "Loading…",
+      "none": "No groups yet.",
+      "member_one": "{{count}} member",
+      "member_other": "{{count}} members",
+      "confirmDelete": "Delete this group? It will be removed from all users and from any documents it was tagged on.",
+      "delete": "Delete"
+    },
+    "users": {
+      "heading": "Users",
+      "loading": "Loading…",
+      "none": "No users found.",
+      "canManageAccess": "Can manage document access",
+      "canEditExtraction": "Can edit extraction data",
+      "removeFromGroup": "Remove from {{group}}",
+      "addToGroup": "+ Add to group…"
+    }
+  },
+  "audit": {
+    "actions": {
+      "document_approved": "document approved",
+      "document_rejected": "document rejected",
+      "document_flagged": "document flagged",
+      "document_ingested": "document ingested",
+      "user_login": "user login",
+      "user_logout": "user logout",
+      "schema_created": "schema created",
+      "schema_altered": "schema altered",
+      "document_linked": "document linked",
+      "document_link_removed": "document link removed",
+      "document_access_granted": "document access granted",
+      "document_access_revoked": "document access revoked",
+      "series_created": "series created",
+      "series_assigned": "series assigned",
+      "integrity_check_failed": "integrity check failed",
+      "document_fields_edited": "document fields edited",
+      "archive_exported": "archive exported"
+    },
+    "header": "Audit Log",
+    "eventsRecorded": "{{count}} events recorded",
+    "allActions": "All actions",
+    "fromPlaceholder": "From",
+    "toPlaceholder": "To",
+    "clear": "Clear",
+    "exportCsv": "Export CSV",
+    "loadError": "Failed to load audit log. Do you have admin access?",
+    "noMatches": "No audit events match the current filters",
+    "colTimestamp": "Timestamp",
+    "colUser": "User",
+    "colAction": "Action",
+    "colTable": "Table",
+    "colDocument": "Document",
+    "colDetails": "Details",
+    "colIp": "IP",
+    "systemUser": "system",
+    "showingRange": "Showing {{from}}–{{to}} of {{total}} events",
+    "prevPage": "← Previous",
+    "pageOf": "Page {{page}} of {{totalPages}}",
+    "nextPage": "Next →"
+  },
+  "schema": {
+    "documentCount_one": "{{count}} document",
+    "documentCount_other": "{{count}} documents",
+    "moreColumns": "+{{count}} more columns",
+    "documentType": "Document type",
+    "rows": "Rows",
+    "lastIngested": "Last ingested",
+    "columnsCount": "Columns ({{count}})",
+    "notNull": " NOT NULL",
+    "viewDocumentsOfType": "View documents of this type",
+    "loading": "Loading…",
+    "tableCount_one": "{{count}} table",
+    "tableCount_other": "{{count}} tables",
+    "autoRefresh": "Auto-refresh",
+    "refresh": "Refresh",
+    "fitView": "Fit view",
+    "downloadPng": "Download PNG",
+    "empty": "No documents ingested yet",
+    "uploadDocuments": "Upload documents",
+    "header": "Schema Visualisation",
+    "loadError": "Failed to load schema"
+  },
+  "databrowser": {
+    "header": "Data Browser",
+    "count_one": "{{count}} document",
+    "count_other": "{{count}} documents",
+    "searchPlaceholder": "Search extracted fields…",
+    "allTypes": "All types",
+    "allConfidence": "All confidence",
+    "confidence": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "allStatuses": "All statuses",
+    "reviewStatus": {
+      "auto_approved": "auto approved",
+      "review_required": "review required",
+      "manual_entry": "manual entry"
+    },
+    "from": "From",
+    "to": "To",
+    "reset": "Reset",
+    "loadError": "Failed to load documents. Is the API running?",
+    "noResults": "No documents found.",
+    "colType": "Type",
+    "colDetails": "Details",
+    "colConfidence": "Confidence",
+    "colReviewStatus": "Review status",
+    "colIngested": "Ingested",
+    "pagination": "Page {{page}} of {{totalPages}} — {{total}} total",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "databrowserDetail": {
+    "backToDataBrowser": "Back to data browser",
+    "retrying": "Retrying…",
+    "retry": "Retry",
+    "confirmDelete": "Permanently delete this document? This cannot be undone.",
+    "deleting": "Deleting…",
+    "delete": "Delete",
+    "loading": "Loading…",
+    "loadError": "Failed to load document.",
+    "page": "Page {{n}}",
+    "viewOriginalPdf": "View original PDF ↗",
+    "noImage": "No image available",
+    "prev": "← Prev",
+    "next": "Next →",
+    "prevTitle": "Previous (←)",
+    "nextTitle": "Next (→)",
+    "indexOf": "{{current}} / {{total}}"
+  },
+  "benchmarks": {
+    "header": "OCR/VLM Benchmarks",
+    "subtitle": "Standalone comparison tool — not part of the ingestion pipeline.",
+    "tabVlm": "VLM Extraction",
+    "tabOcr": "OCR Comparison",
+    "vlmNotFound": "VLM results not found. Run vlm_ollama_test.py first.",
+    "loadError": "Failed to load documents. Is the API server running?",
+    "selectDocument": "Select a document to view its {{kind}} results.",
+    "kindVlm": "VLM extraction",
+    "kindOcr": "OCR comparison",
+    "noResultFor": "No {{kind}} result for",
+    "runVlmScript": "Run vlm_ollama_test.py to generate it."
+  },
+  "ocr": {
+    "resultsFor": "Results for:",
+    "rawImage": "Raw image",
+    "preprocessedImage": "Preprocessed image",
+    "bestEngine": "Best engine:",
+    "documentImage": "Document image",
+    "extractionResults": "Extraction results"
+  },
+  "engineCard": {
+    "error": "Error: {{message}}",
+    "noText": "No text extracted.",
+    "chars": "{{count}} chars",
+    "words": "{{count}} words"
+  },
+  "imageViewer": {
+    "variantLabel": "Image variant:",
+    "raw": "Raw",
+    "preprocessed": "Preprocessed",
+    "notAvailable": "Image not available for {{variant}} variant."
+  },
+  "panZoom": {
+    "alt": "Document",
+    "overlay": "{{pct}}% — scroll to zoom · drag to pan · dbl-click to reset"
+  },
+  "vlm": {
+    "fields": {
+      "document_type": "Document type",
+      "reference_number": "Reference",
+      "date": "Date",
+      "person_names": "People",
+      "functions": "Functions",
+      "destination_or_subject": "Subject / destination",
+      "organisation": "Organisation",
+      "signatory": "Signatory",
+      "budget_line": "Budget line",
+      "language": "Language",
+      "bilingual_layout": "Bilingual layout",
+      "quality_issues": "Quality issues"
+    },
+    "documentImage": "Document image",
+    "extractedFields": "Extracted fields",
+    "runtimeError": "Runtime error: ",
+    "parseError": "Model output could not be parsed as JSON."
+  },
+  "languageSwitcher": {
+    "label": "Language"
+  }
+}

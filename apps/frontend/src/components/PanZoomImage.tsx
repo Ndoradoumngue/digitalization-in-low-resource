@@ -1,6 +1,8 @@
 import { useRef, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 
 export default function PanZoomImage({ src }: { src: string }) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const [scale, setScale]   = useState(1);
   const [tx, setTx]         = useState(0);
@@ -42,7 +44,7 @@ export default function PanZoomImage({ src }: { src: string }) {
     >
       <img
         src={src}
-        alt="Document"
+        alt={t("panZoom.alt")}
         draggable={false}
         className="absolute top-1/2 left-1/2 max-w-none"
         style={{
@@ -51,7 +53,7 @@ export default function PanZoomImage({ src }: { src: string }) {
         }}
       />
       <div className="absolute bottom-3 right-3 bg-black/50 text-white text-xs px-2 py-1 rounded pointer-events-none">
-        {Math.round(scale * 100)}% — scroll to zoom · drag to pan · dbl-click to reset
+        {t("panZoom.overlay", { pct: Math.round(scale * 100) })}
       </div>
     </div>
   );

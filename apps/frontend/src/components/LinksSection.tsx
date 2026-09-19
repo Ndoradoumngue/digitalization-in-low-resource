@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import type { DocumentLink } from "@sdai/types";
 import { useDocumentLinks, useDeleteDocumentLink } from "../hooks/useDocumentLinks";
 import DocumentLinkPicker from "./DocumentLinkPicker";
@@ -16,7 +17,8 @@ function LinkRow({
   basePath: string;
 }) {
   const navigate = useNavigate();
-  const title = link.other_display ?? link.other_document_type ?? "Untitled document";
+  const { t } = useTranslation();
+  const title = link.other_display ?? link.other_document_type ?? t("links.untitledDocument");
 
   return (
     <div className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
@@ -33,7 +35,7 @@ function LinkRow({
           {link.relation}
         </span>
         <span className={`text-sm truncate ${link.other_missing ? "text-gray-400 italic" : "text-gray-800"}`}>
-          {link.other_missing ? "Document no longer available" : title}
+          {link.other_missing ? t("links.documentUnavailable") : title}
         </span>
         {link.other_document_type && !link.other_missing && (
           <span className="text-xs text-gray-400 ml-2">{link.other_document_type}</span>
@@ -43,8 +45,8 @@ function LinkRow({
         onClick={onRemove}
         disabled={removing}
         className="flex-shrink-0 text-xs text-gray-400 hover:text-red-600 disabled:opacity-40 transition-colors"
-        title="Remove link"
-        aria-label="Remove link"
+        title={t("links.removeLink")}
+        aria-label={t("links.removeLink")}
       >
         ✕
       </button>
@@ -61,6 +63,7 @@ export default function LinksSection({
   id: string;
   basePath?: string;
 }) {
+  const { t } = useTranslation();
   const { data, isLoading } = useDocumentLinks(tableName, id);
   const deleteMutation = useDeleteDocumentLink(tableName, id);
   const [showPicker, setShowPicker] = useState(false);
@@ -79,13 +82,13 @@ export default function LinksSection({
     <div className="pt-4 mt-4 border-t border-gray-200">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-          Related documents
+          {t("links.heading")}
         </h3>
         <button
           onClick={() => setShowPicker((s) => !s)}
           className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
         >
-          {showPicker ? "Cancel" : "+ Add link"}
+          {showPicker ? t("links.cancel") : t("links.addLink")}
         </button>
       </div>
 
@@ -98,14 +101,14 @@ export default function LinksSection({
       )}
 
       {isLoading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-gray-400">{t("links.loading")}</p>
       ) : links.length === 0 ? (
-        <p className="text-sm text-gray-400">No related documents yet.</p>
+        <p className="text-sm text-gray-400">{t("links.noLinks")}</p>
       ) : (
         <div className="space-y-3">
           {outgoing.length > 0 && (
             <div>
-              <div className="text-[11px] font-medium text-gray-400 mb-1">Relates to</div>
+              <div className="text-[11px] font-medium text-gray-400 mb-1">{t("links.relatesTo")}</div>
               {outgoing.map((l) => (
                 <LinkRow key={l.id} link={l} onRemove={() => remove(l.id)} removing={removingId === l.id} basePath={basePath} />
               ))}
@@ -113,7 +116,7 @@ export default function LinksSection({
           )}
           {incoming.length > 0 && (
             <div>
-              <div className="text-[11px] font-medium text-gray-400 mb-1">Referenced by</div>
+              <div className="text-[11px] font-medium text-gray-400 mb-1">{t("links.referencedBy")}</div>
               {incoming.map((l) => (
                 <LinkRow key={l.id} link={l} onRemove={() => remove(l.id)} removing={removingId === l.id} basePath={basePath} />
               ))}

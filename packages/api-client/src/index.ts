@@ -59,13 +59,39 @@ import {
 } from "@sdai/types";
 
 // ── Core fetch helper ─────────────────────────────────────────────────────────
-// credentials: "include" ensures the httpOnly auth cookie is sent on every request.
+// credentials: "include" ensures the httpOnly auth cookie is sent on every
+// request. Accept-Language carries the user's chosen UI language (set by the
+// language switcher, stored under the same localStorage key i18next's
+// browser-language-detector uses) so the backend can localize error/response
+// text — see apps/api/i18n.py.
+
+function currentLocale(): string {
+  try {
+    return localStorage.getItem("sdai_lang") || "en";
+  } catch {
+    // localStorage can throw (private browsing, disabled storage) — English
+    // is the backend's own default, so falling back to it here is a no-op.
+    return "en";
+  }
+}
+
+function withAuth(init: RequestInit = {}): RequestInit {
+  return {
+    ...init,
+    credentials: "include",
+    headers: {
+      ...(init.headers as Record<string, string> | undefined),
+      "Accept-Language": currentLocale(),
+    },
+  };
+}
+
 async function fetchJson<T>(
   url: string,
   schema: { parse: (data: unknown) => T },
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(url, { credentials: "include", ...init });
+  const res = await fetch(url, withAuth(init));
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${url}`);
   return schema.parse(await res.json());
 }
@@ -73,12 +99,11 @@ async function fetchJson<T>(
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
 export async function login(email: string, password: string): Promise<User> {
-  const res = await fetch("/api/auth/login", {
+  const res = await fetch("/api/auth/login", withAuth({
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? "Login failed");
@@ -87,12 +112,12 @@ export async function login(email: string, password: string): Promise<User> {
 }
 
 export async function logout(): Promise<void> {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  await fetch("/api/auth/logout", withAuth({ method: "POST" }));
 }
 
 // Returns null instead of throwing so AuthContext can handle the 401 silently.
 export async function getMe(): Promise<User | null> {
-  const res = await fetch("/api/auth/me", { credentials: "include" });
+  const res = await fetch("/api/auth/me", withAuth());
   if (res.status === 401) return null;
   if (!res.ok) return null;
   try {
@@ -157,11 +182,10 @@ export async function uploadFiles(files: File[]): Promise<BatchCreated> {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
 
-  const res = await fetch("/api/ingest/upload", {
+  const res = await fetch("/api/ingest/upload", withAuth({
     method: "POST",
-    credentials: "include",
     body: fd,
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -172,12 +196,11 @@ export async function uploadFiles(files: File[]): Promise<BatchCreated> {
 export async function ingestFromPath(
   payload: { path?: string; google_drive_folder_id?: string }
 ): Promise<BatchCreated> {
-  const res = await fetch("/api/ingest/path", {
+  const res = await fetch("/api/ingest/path", withAuth({
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -198,10 +221,9 @@ export async function fetchPageStatus(batchDocumentId: string): Promise<PageList
 }
 
 export async function retryPage(pageId: string): Promise<void> {
-  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/retry`, {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/retry`, withAuth({
     method: "POST",
-    credentials: "include",
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -209,10 +231,9 @@ export async function retryPage(pageId: string): Promise<void> {
 }
 
 export async function reloadPage(pageId: string): Promise<void> {
-  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/reload`, {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/reload`, withAuth({
     method: "POST",
-    credentials: "include",
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -220,12 +241,11 @@ export async function reloadPage(pageId: string): Promise<void> {
 }
 
 export async function manualEnterPage(pageId: string, fields: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/manual`, {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/manual`, withAuth({
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ fields }),
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -233,10 +253,9 @@ export async function manualEnterPage(pageId: string, fields: Record<string, unk
 }
 
 export async function skipPage(pageId: string): Promise<void> {
-  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/skip`, {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/skip`, withAuth({
     method: "POST",
-    credentials: "include",
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -244,10 +263,9 @@ export async function skipPage(pageId: string): Promise<void> {
 }
 
 export async function resumeDocument(batchDocumentId: string): Promise<{ queued: number }> {
-  const res = await fetch(`/api/ingest/pages/resume/${encodeURIComponent(batchDocumentId)}`, {
+  const res = await fetch(`/api/ingest/pages/resume/${encodeURIComponent(batchDocumentId)}`, withAuth({
     method: "POST",
-    credentials: "include",
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -256,10 +274,9 @@ export async function resumeDocument(batchDocumentId: string): Promise<{ queued:
 }
 
 export async function deleteIngestedDocument(batchDocumentId: string): Promise<void> {
-  const res = await fetch(`/api/ingest/documents/${encodeURIComponent(batchDocumentId)}`, {
+  const res = await fetch(`/api/ingest/documents/${encodeURIComponent(batchDocumentId)}`, withAuth({
     method: "DELETE",
-    credentials: "include",
-  });
+  }));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -306,12 +323,11 @@ export async function updateDocumentFields(
 ): Promise<DbDocumentDetail> {
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/fields`,
-    {
-      method:      "PATCH",
-      credentials: "include",
-      headers:     { "Content-Type": "application/json" },
-      body:        JSON.stringify({ fields }),
-    },
+    withAuth({
+      method:  "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ fields }),
+    }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -358,12 +374,11 @@ export async function createDocumentLink(
 ): Promise<{ id: string }> {
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/links`,
-    {
-      method:      "POST",
-      credentials: "include",
-      headers:     { "Content-Type": "application/json" },
-      body:        JSON.stringify(body),
-    },
+    withAuth({
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -373,10 +388,9 @@ export async function createDocumentLink(
 }
 
 export async function deleteDocumentLink(linkId: string): Promise<void> {
-  const res = await fetch(`/api/db/links/${encodeURIComponent(linkId)}`, {
-    method:      "DELETE",
-    credentials: "include",
-  });
+  const res = await fetch(`/api/db/links/${encodeURIComponent(linkId)}`, withAuth({
+    method: "DELETE",
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -411,12 +425,11 @@ export async function createDocumentAccess(
 ): Promise<{ id: string }> {
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/access`,
-    {
-      method:      "POST",
-      credentials: "include",
-      headers:     { "Content-Type": "application/json" },
-      body:        JSON.stringify(body),
-    },
+    withAuth({
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -426,10 +439,9 @@ export async function createDocumentAccess(
 }
 
 export async function deleteDocumentAccess(grantId: string): Promise<void> {
-  const res = await fetch(`/api/db/access/${encodeURIComponent(grantId)}`, {
-    method:      "DELETE",
-    credentials: "include",
-  });
+  const res = await fetch(`/api/db/access/${encodeURIComponent(grantId)}`, withAuth({
+    method: "DELETE",
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -446,12 +458,11 @@ export async function createSeries(
   name: string,
   description?: string,
 ): Promise<{ id: string; name: string }> {
-  const res = await fetch("/api/db/series", {
-    method:      "POST",
-    credentials: "include",
-    headers:     { "Content-Type": "application/json" },
-    body:        JSON.stringify({ name, description }),
-  });
+  const res = await fetch("/api/db/series", withAuth({
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ name, description }),
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -460,10 +471,9 @@ export async function createSeries(
 }
 
 export async function deleteSeries(seriesId: string): Promise<void> {
-  const res = await fetch(`/api/db/series/${encodeURIComponent(seriesId)}`, {
-    method:      "DELETE",
-    credentials: "include",
-  });
+  const res = await fetch(`/api/db/series/${encodeURIComponent(seriesId)}`, withAuth({
+    method: "DELETE",
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -477,12 +487,11 @@ export async function assignDocumentSeries(
 ): Promise<void> {
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/series`,
-    {
-      method:      "PATCH",
-      credentials: "include",
-      headers:     { "Content-Type": "application/json" },
-      body:        JSON.stringify({ series_id: seriesId }),
-    },
+    withAuth({
+      method:  "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ series_id: seriesId }),
+    }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -522,12 +531,11 @@ export async function patchReview(
 ): Promise<DbDocumentDetail> {
   const res = await fetch(
     `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
-    {
-      method:      "PATCH",
-      credentials: "include",
-      headers:     { "Content-Type": "application/json" },
-      body:        JSON.stringify(body),
-    },
+    withAuth({
+      method:  "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(body),
+    }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -539,7 +547,7 @@ export async function patchReview(
 export async function flagReview(tableName: string, id: string): Promise<void> {
   const res = await fetch(
     `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/flag`,
-    { method: "POST", credentials: "include" },
+    withAuth({ method: "POST" }),
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
@@ -547,7 +555,7 @@ export async function flagReview(tableName: string, id: string): Promise<void> {
 export async function retryDocument(tableName: string, id: string): Promise<{ batch_id: string }> {
   const res = await fetch(
     `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/retry`,
-    { method: "POST", credentials: "include" },
+    withAuth({ method: "POST" }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -559,7 +567,7 @@ export async function retryDocument(tableName: string, id: string): Promise<{ ba
 export async function deleteDocument(tableName: string, id: string): Promise<void> {
   const res = await fetch(
     `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
-    { method: "DELETE", credentials: "include" },
+    withAuth({ method: "DELETE" }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -597,12 +605,11 @@ export async function fetchGroups(): Promise<Group[]> {
 }
 
 export async function createGroup(name: string): Promise<{ id: string; name: string }> {
-  const res = await fetch("/api/admin/groups", {
-    method:      "POST",
-    credentials: "include",
-    headers:     { "Content-Type": "application/json" },
-    body:        JSON.stringify({ name }),
-  });
+  const res = await fetch("/api/admin/groups", withAuth({
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ name }),
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -611,10 +618,9 @@ export async function createGroup(name: string): Promise<{ id: string; name: str
 }
 
 export async function deleteGroup(groupId: string): Promise<void> {
-  const res = await fetch(`/api/admin/groups/${encodeURIComponent(groupId)}`, {
-    method:      "DELETE",
-    credentials: "include",
-  });
+  const res = await fetch(`/api/admin/groups/${encodeURIComponent(groupId)}`, withAuth({
+    method: "DELETE",
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -631,12 +637,11 @@ export async function updateUserAccessManager(
   userId: string,
   canManageAccess: boolean,
 ): Promise<void> {
-  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
-    method:      "PATCH",
-    credentials: "include",
-    headers:     { "Content-Type": "application/json" },
-    body:        JSON.stringify({ can_manage_access: canManageAccess }),
-  });
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, withAuth({
+    method:  "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ can_manage_access: canManageAccess }),
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -647,12 +652,11 @@ export async function updateUserExtractionEditor(
   userId: string,
   canEditExtraction: boolean,
 ): Promise<void> {
-  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
-    method:      "PATCH",
-    credentials: "include",
-    headers:     { "Content-Type": "application/json" },
-    body:        JSON.stringify({ can_edit_extraction: canEditExtraction }),
-  });
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, withAuth({
+    method:  "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ can_edit_extraction: canEditExtraction }),
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -660,12 +664,11 @@ export async function updateUserExtractionEditor(
 }
 
 export async function addUserToGroup(userId: string, groupId: string): Promise<void> {
-  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/groups`, {
-    method:      "POST",
-    credentials: "include",
-    headers:     { "Content-Type": "application/json" },
-    body:        JSON.stringify({ group_id: groupId }),
-  });
+  const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/groups`, withAuth({
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ group_id: groupId }),
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -675,7 +678,7 @@ export async function addUserToGroup(userId: string, groupId: string): Promise<v
 export async function removeUserFromGroup(userId: string, groupId: string): Promise<void> {
   const res = await fetch(
     `/api/admin/users/${encodeURIComponent(userId)}/groups/${encodeURIComponent(groupId)}`,
-    { method: "DELETE", credentials: "include" },
+    withAuth({ method: "DELETE" }),
   );
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -686,10 +689,9 @@ export async function removeUserFromGroup(userId: string, groupId: string): Prom
 // ── Admin: fixity / integrity check ──────────────────────────────────────────
 
 export async function runIntegrityCheck(): Promise<IntegrityCheckResult> {
-  const res = await fetch("/api/admin/integrity-check", {
-    method:      "POST",
-    credentials: "include",
-  });
+  const res = await fetch("/api/admin/integrity-check", withAuth({
+    method: "POST",
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
@@ -705,10 +707,9 @@ export interface ArchiveExportResult {
 }
 
 export async function exportArchive(format: "json" | "sql"): Promise<ArchiveExportResult> {
-  const res = await fetch(`/api/admin/export?format=${format}`, {
-    method:      "GET",
-    credentials: "include",
-  });
+  const res = await fetch(`/api/admin/export?format=${format}`, withAuth({
+    method: "GET",
+  }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);

@@ -19,6 +19,7 @@ import "@xyflow/react/dist/style.css";
 import Dagre from "@dagrejs/dagre";
 import { toPng } from "html-to-image";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useDbSchema } from "../hooks/useSchema";
 import NavSidebar from "../components/NavSidebar";
 import type { DbTableInfo } from "@sdai/types";
@@ -44,6 +45,7 @@ interface TableNodeData {
 }
 
 function TableNode({ data, selected }: NodeProps<Node<TableNodeData>>) {
+  const { t } = useTranslation();
   const { table, nodeWidth } = data;
   const visibleCols = table.columns.slice(0, MAX_VISIBLE_COLS);
   const overflow    = table.columns.length - visibleCols.length;
@@ -81,14 +83,14 @@ function TableNode({ data, selected }: NodeProps<Node<TableNodeData>>) {
         ))}
         {overflow > 0 && (
           <div className="px-3 py-[3px] text-gray-400 italic">
-            +{overflow} more columns
+            {t("schema.moreColumns", { count: overflow })}
           </div>
         )}
       </div>
 
       {/* Footer */}
       <div className="border-t border-gray-100 px-3 py-1.5 text-gray-500 bg-gray-50 flex-shrink-0 font-medium">
-        {table.row_count.toLocaleString()} documents
+        {t(table.row_count === 1 ? "schema.documentCount_one" : "schema.documentCount_other", { count: table.row_count.toLocaleString() })}
       </div>
     </div>
   );
@@ -151,6 +153,7 @@ function buildLayout(tables: DbTableInfo[]): { nodes: Node[]; edges: Edge[] } {
 // ── Side panel ────────────────────────────────────────────────────────────────
 
 function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void }) {
+  const { t } = useTranslation();
   return (
     <aside className="w-72 border-l border-gray-200 bg-white flex flex-col overflow-hidden flex-shrink-0">
       <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
@@ -163,17 +166,17 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
       </div>
 
       <div className="px-4 py-3 border-b border-gray-200 space-y-1 flex-shrink-0">
-        <div className="text-xs text-gray-500">Document type</div>
+        <div className="text-xs text-gray-500">{t("schema.documentType")}</div>
         <div className="text-sm font-medium text-gray-800">{table.document_type}</div>
       </div>
 
       <div className="px-4 py-3 border-b border-gray-200 flex gap-6 flex-shrink-0">
         <div>
-          <div className="text-xs text-gray-500">Rows</div>
+          <div className="text-xs text-gray-500">{t("schema.rows")}</div>
           <div className="text-sm font-semibold text-gray-800">{table.row_count.toLocaleString()}</div>
         </div>
         <div>
-          <div className="text-xs text-gray-500">Last ingested</div>
+          <div className="text-xs text-gray-500">{t("schema.lastIngested")}</div>
           <div className="text-sm font-medium text-gray-800">
             {table.last_ingested ? new Date(table.last_ingested).toLocaleDateString() : "—"}
           </div>
@@ -182,7 +185,7 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
 
       <div className="flex-1 overflow-y-auto">
         <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide sticky top-0 bg-white border-b border-gray-100">
-          Columns ({table.columns.length})
+          {t("schema.columnsCount", { count: table.columns.length })}
         </div>
         {table.columns.map((col) => (
           <div
@@ -194,7 +197,7 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
             <span className="truncate mr-2 font-mono">{col.name}</span>
             <span className="text-gray-400 font-mono shrink-0 text-[10px]">
               {col.type.replace("character varying", "varchar")}
-              {!col.nullable && " NOT NULL"}
+              {!col.nullable && t("schema.notNull")}
             </span>
           </div>
         ))}
@@ -205,7 +208,7 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
           to={`/documents?document_type=${encodeURIComponent(table.name)}`}
           className="block w-full text-center px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
         >
-          View documents of this type
+          {t("schema.viewDocumentsOfType")}
         </Link>
       </div>
     </aside>
@@ -224,6 +227,7 @@ interface CanvasProps {
 }
 
 function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onRefresh }: CanvasProps) {
+  const { t } = useTranslation();
   const { fitView } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -267,13 +271,17 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
       {/* Toolbar */}
       <div className="bg-white border-b border-gray-200 px-6 py-2 flex items-center gap-3 flex-shrink-0">
         <span className="text-xs text-gray-500">
-          {loading ? "Loading…" : error ? "" : `${tables?.length ?? 0} table${(tables?.length ?? 0) !== 1 ? "s" : ""}`}
+          {loading
+            ? t("schema.loading")
+            : error
+            ? ""
+            : t((tables?.length ?? 0) === 1 ? "schema.tableCount_one" : "schema.tableCount_other", { count: tables?.length ?? 0 })}
         </span>
 
         <div className="flex items-center gap-2 ml-auto">
           {/* Auto-refresh toggle */}
           <label className="flex items-center gap-2 cursor-pointer select-none">
-            <span className="text-xs text-gray-600">Auto-refresh</span>
+            <span className="text-xs text-gray-600">{t("schema.autoRefresh")}</span>
             <button
               role="switch"
               aria-checked={autoRefresh}
@@ -294,21 +302,21 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
             onClick={onRefresh}
             className="px-3 py-1.5 rounded-md text-xs border border-gray-300 hover:bg-gray-50 transition-colors"
           >
-            Refresh
+            {t("schema.refresh")}
           </button>
 
           <button
             onClick={() => fitView({ padding: 0.15, duration: 400 })}
             className="px-3 py-1.5 rounded-md text-xs border border-gray-300 hover:bg-gray-50 transition-colors"
           >
-            Fit view
+            {t("schema.fitView")}
           </button>
 
           <button
             onClick={downloadPng}
             className="px-3 py-1.5 rounded-md text-xs border border-gray-300 hover:bg-gray-50 transition-colors"
           >
-            Download PNG
+            {t("schema.downloadPng")}
           </button>
         </div>
       </div>
@@ -318,12 +326,12 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
         <div className="flex-1 relative">
           {isEmpty ? (
             <div className="flex h-full flex-col items-center justify-center gap-4">
-              <p className="text-sm text-gray-400">No documents ingested yet</p>
+              <p className="text-sm text-gray-400">{t("schema.empty")}</p>
               <Link
                 to="/upload"
                 className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
               >
-                Upload documents
+                {t("schema.uploadDocuments")}
               </Link>
             </div>
           ) : (
@@ -366,6 +374,7 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
 // ── Page shell ────────────────────────────────────────────────────────────────
 
 export default function SchemaPage() {
+  const { t } = useTranslation();
   const [autoRefresh, setAutoRefresh]          = useState(false);
   const { data, isLoading, error, refetch }    = useDbSchema({ autoRefresh });
 
@@ -374,8 +383,8 @@ export default function SchemaPage() {
       <NavSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-shrink-0">
-        <h1 className="text-base font-bold text-indigo-700 tracking-tight">Schema Visualisation</h1>
-        {error && <span className="text-xs text-red-500">Failed to load schema</span>}
+        <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("schema.header")}</h1>
+        {error && <span className="text-xs text-red-500">{t("schema.loadError")}</span>}
       </header>
 
       <div className="flex-1 overflow-hidden">

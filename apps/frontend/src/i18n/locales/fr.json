@@ -1,0 +1,548 @@
+{
+  "common": {
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "delete": "Supprimer",
+    "deleting": "Suppression…",
+    "deleted": "Supprimé",
+    "create": "Créer",
+    "creating": "Création…",
+    "change": "Modifier",
+    "reset": "Réinitialiser",
+    "previous": "Précédent",
+    "next": "Suivant",
+    "loading": "Chargement…",
+    "notAvailable": "—",
+    "backArrow": "← {{label}}",
+    "forwardArrow": "{{label}} →"
+  },
+  "nav": {
+    "appName": "SDAI Digitalization",
+    "documentCount_one": "{{count}} document",
+    "documentCount_other": "{{count}} documents",
+    "documents": "Documents",
+    "reviewQueue": "File de révision",
+    "schema": "Schéma",
+    "auditLog": "Journal d'audit",
+    "ocrVlmBenchmarks": "Comparatifs OCR/VLM",
+    "operations": "Opérations",
+    "dataBrowser": "Explorateur de données",
+    "accessGroups": "Accès & Groupes",
+    "uploadDocuments": "Téléverser des documents",
+    "signOut": "Se déconnecter"
+  },
+  "login": {
+    "tagline": "Plateforme d'extraction de documents",
+    "email": "E-mail",
+    "password": "Mot de passe",
+    "signIn": "Se connecter",
+    "signingIn": "Connexion…",
+    "loginFailed": "Échec de connexion"
+  },
+  "dashboard": {
+    "welcome": "Bienvenue",
+    "welcomeName": "Bienvenue, {{name}}",
+    "subtitle": "Comment ça marche ?",
+    "documentsIngested": "Documents ingérés",
+    "pendingReview": "En attente de révision",
+    "documentTypes": "Types de documents",
+    "quickActions": "Actions rapides",
+    "uploadTitle": "Téléverser des documents →",
+    "uploadDescription": "Ingérer de nouveaux fichiers par téléversement, un chemin serveur ou Google Drive.",
+    "reviewTitle": "File de révision →",
+    "reviewDescriptionPending_one": "{{count}} document en attente de révision.",
+    "reviewDescriptionPending_other": "{{count}} documents en attente de révision.",
+    "reviewDescriptionEmpty": "Rien en attente — tout est à jour.",
+    "browseTitle": "Parcourir les documents →",
+    "browseDescription": "Rechercher et filtrer tout ce qui a été ingéré."
+  },
+  "documents": {
+    "header": "Documents",
+    "count_one": "{{count}} document",
+    "count_other": "{{count}} documents",
+    "searchPlaceholder": "Rechercher des documents…",
+    "allReviewers": "Tous les réviseurs",
+    "allSeries": "Toutes les séries",
+    "from": "Du",
+    "to": "Au",
+    "reset": "Réinitialiser",
+    "loadError": "Échec du chargement des documents. L'API est-elle en cours d'exécution ?",
+    "noResults": "Aucun document trouvé.",
+    "reviewedBy": "Révisé par {{name}}",
+    "notYetReviewed": "Pas encore révisé",
+    "pagination": "Page {{page}} sur {{totalPages}} — {{total}} au total",
+    "previous": "Précédent",
+    "next": "Suivant"
+  },
+  "documentDetail": {
+    "backToDocuments": "Retour aux documents",
+    "prev": "← Préc.",
+    "next": "Suiv. →",
+    "prevTitle": "Précédent (←)",
+    "nextTitle": "Suivant (→)",
+    "indexOf": "{{current}} / {{total}}",
+    "loading": "Chargement…",
+    "loadError": "Échec du chargement du document.",
+    "page": "Page {{n}}",
+    "viewOriginalPdf": "Voir le PDF original ↗",
+    "noImage": "Aucune image disponible"
+  },
+  "fields": {
+    "title": "Champs",
+    "cancel": "Annuler",
+    "saving": "Enregistrement…",
+    "save": "Enregistrer",
+    "editFields": "Modifier les champs",
+    "noFields": "Aucun champ disponible.",
+    "jsonHint": "(JSON)",
+    "invalidJson": "JSON invalide"
+  },
+  "links": {
+    "untitledDocument": "Document sans titre",
+    "documentUnavailable": "Document non disponible",
+    "removeLink": "Supprimer le lien",
+    "heading": "Documents liés",
+    "cancel": "Annuler",
+    "addLink": "+ Ajouter un lien",
+    "loading": "Chargement…",
+    "noLinks": "Aucun document lié pour le moment.",
+    "relatesTo": "Concerne",
+    "referencedBy": "Référencé par"
+  },
+  "linkPicker": {
+    "searchPlaceholder": "Rechercher un document à lier…",
+    "searching": "Recherche…",
+    "noResults": "Aucun document trouvé.",
+    "change": "Modifier",
+    "relationPlaceholder": "Relation (ex. concerne)",
+    "notePlaceholder": "Note (facultatif)",
+    "cancel": "Annuler",
+    "linking": "Liaison…",
+    "addLink": "Ajouter le lien"
+  },
+  "series": {
+    "heading": "Série",
+    "change": "Modifier",
+    "assign": "+ Assigner",
+    "none": "Aucune série",
+    "cancel": "Annuler",
+    "notAssigned": "Non assigné à une série"
+  },
+  "access": {
+    "group": "Groupe",
+    "person": "Personne",
+    "removeGrant": "Supprimer l'accès",
+    "selectGroup": "Sélectionner un groupe…",
+    "selectPerson": "Sélectionner une personne…",
+    "cancel": "Annuler",
+    "granting": "Attribution…",
+    "grantAccess": "Accorder l'accès",
+    "heading": "Restrictions d'accès",
+    "restrictTo": "+ Restreindre à…",
+    "loading": "Chargement…",
+    "openToAll": "Visible par tous dans votre organisation. Aucune restriction appliquée.",
+    "restrictedNote": "Restreint — visible uniquement par les administrateurs et :"
+  },
+  "upload": {
+    "status": {
+      "completed": "Terminé",
+      "review_required": "Révision",
+      "crashed": "Échoué",
+      "pending": "En attente",
+      "processing": "Traitement…",
+      "out_of_scope": "Hors périmètre",
+      "duplicate": "Doublon"
+    },
+    "manualEntry": {
+      "invalidJson": "JSON invalide",
+      "saving": "Enregistrement…",
+      "save": "Enregistrer",
+      "cancel": "Annuler"
+    },
+    "viewPage": "Voir la page ↗",
+    "skipButton": {
+      "title": "Marquer comme non pertinent (page de couverture, vierge, hors périmètre) — exclu du résultat extrait",
+      "skipping": "Ignoré…",
+      "skip": "Ignorer"
+    },
+    "reloadButton": {
+      "title": "Redériver cette page à partir du document original (relance l'extraction de page et la détection de mise en page, ex. division en colonnes) — contrairement à Réessayer/Relancer, qui réutilise l'image déjà traitée",
+      "reloading": "Rechargement…",
+      "reload": "Recharger depuis la source"
+    },
+    "failedPage": {
+      "page": "Page {{n}}",
+      "defaultError": "Échec",
+      "retrying": "Nouvelle tentative…",
+      "retry": "Réessayer",
+      "cancel": "Annuler",
+      "enterManually": "Saisir manuellement"
+    },
+    "completedPage": {
+      "page": "Page {{n}}",
+      "manual": "(manuel)",
+      "hideData": "Masquer les données",
+      "viewData": "Voir les données",
+      "rerunTitle": "Relancer l'extraction sur l'image stockée de cette page (ex. pour prendre en compte un changement de prompt) et fusionner le nouveau résultat, en remplaçant ce qui existe. Utilise la même image stockée — ne réévaluera pas la mise en page/découpage.",
+      "rerunning": "Relance…",
+      "rerun": "Relancer"
+    },
+    "skippedPage": "Page {{n}} — ignorée (non pertinente)",
+    "pendingPage": {
+      "processing": "Page {{n}} — traitement…",
+      "pending": "Page {{n}} — en attente"
+    },
+    "pageProgress": {
+      "summary": "Pages : {{done}} / {{total}} traitées",
+      "failedSuffix": " · {{count}} échouées",
+      "skippedSuffix": " · {{count}} ignorées",
+      "resumeTitle": "Traiter chaque page qui n'a pas encore été tentée — utiliser ceci si l'exécution a été interrompue (ex. redémarrage du serveur) et n'a pas avancé depuis un moment",
+      "resuming": "Reprise…",
+      "resumeRemaining": "Reprendre le reste ({{count}})"
+    },
+    "deleteDocument": {
+      "confirm": "Supprimer le document extrait de ce téléversement ? Cela permet de retéléverser le même fichier sans qu'il soit bloqué comme doublon. Cette action est irréversible.",
+      "title": "Supprimer pour que ce fichier puisse être retéléversé sans déclencher la vérification de doublon",
+      "deleting": "Suppression…",
+      "deleted": "Supprimé",
+      "delete": "Supprimer"
+    },
+    "progressTable": {
+      "loadingBatch": "Chargement du statut du lot…",
+      "processed": "{{done}} / {{total}} traités",
+      "refreshing": "Actualisation…",
+      "refresh": "↻ Actualiser",
+      "approved": "✓ {{count}} approuvés",
+      "review": "⚑ {{count}} à réviser",
+      "crashed": "✕ {{count}} échoués",
+      "outOfScope": "◌ {{count}} hors périmètre",
+      "duplicate": "⊜ {{count}} doublon",
+      "duplicateTooltip": "Ces fichiers avaient déjà été ingérés. Leur empreinte de contenu correspondait à un document existant, donc le traitement a été ignoré.",
+      "processingProgress": "Progression du traitement",
+      "colFilename": "Nom du fichier",
+      "colStatus": "Statut",
+      "colDocumentType": "Type de document",
+      "colConfidence": "Confiance",
+      "colTime": "Temps (s)",
+      "colActions": "Actions"
+    },
+    "timeAgo": {
+      "justNow": "à l'instant",
+      "minutes": "il y a {{count}} min",
+      "hours": "il y a {{count}} h",
+      "days": "il y a {{count}} j"
+    },
+    "recentUploads": {
+      "heading": "Téléversements récents",
+      "inProgress": "En cours",
+      "finished": "Terminé",
+      "processed": "{{done}} / {{total}} traités",
+      "documentCount_one": "{{count}} document",
+      "documentCount_other": "{{count}} documents",
+      "crashed": "{{count}} échoués"
+    },
+    "modeTabs": {
+      "files": "Téléversement de fichiers",
+      "path": "Chemin serveur",
+      "drive": "Google Drive"
+    },
+    "errors": {
+      "selectFile": "Sélectionnez au moins un fichier.",
+      "enterPath": "Entrez un chemin de répertoire serveur.",
+      "enterDriveId": "Entrez un identifiant de dossier Google Drive.",
+      "uploadFailed": "Échec du téléversement"
+    },
+    "header": "Téléverser des documents",
+    "dropzone": {
+      "instructions": "Glissez-déposez des fichiers JPG, PNG ou PDF ici",
+      "browse": "ou cliquez pour parcourir"
+    },
+    "pathMode": {
+      "label": "Chemin de répertoire serveur",
+      "helper": "Doit être accessible depuis le système de fichiers du serveur API."
+    },
+    "driveMode": {
+      "label": "Identifiant de dossier Google Drive",
+      "helperPrefix": "Trouvé dans l'URL du dossier après",
+      "helperSuffix": ". Nécessite un compte de service avec accès en lecture."
+    },
+    "starting": "Démarrage…",
+    "startIngestion": "Démarrer l'ingestion",
+    "ingestionStarted": "Ingestion démarrée",
+    "batchLabel": "lot {{id}}",
+    "newBatch": "Nouveau lot"
+  },
+  "review": {
+    "toast": {
+      "approved": "Approuvé",
+      "rejected": "Rejeté",
+      "flagged": "Signalé pour saisie manuelle",
+      "error": "Erreur : {{message}}"
+    },
+    "confidenceLabel": "confiance {{level}}",
+    "permissionNote": "Vous pouvez approuver ou rejeter ce document, mais la correction de ses champs nécessite la permission de modification des extractions.",
+    "noEditableFields": "Aucun champ modifiable.",
+    "commaSeparated": "(séparé par des virgules)",
+    "fieldPlaceholder": "Non trouvé — remplir si visible",
+    "header": "File de révision",
+    "waiting_one": "document en attente",
+    "waiting_other": "documents en attente",
+    "oldestSuffix": " · le plus ancien {{time}}",
+    "emptyQueue": "La file de révision est vide — tous les documents sont traités",
+    "uploadMore": "Téléverser plus de documents",
+    "navPrevious": "← Précédent",
+    "navNext": "Suivant →",
+    "reviewingOf": "Révision {{current}} sur {{total}}",
+    "noImage": "Aucune image disponible",
+    "ingested": "Ingéré {{time}}",
+    "loadingFields": "Chargement des champs…",
+    "selectDocument": "Sélectionner un document",
+    "approveTitle": "Entrée pour approuver",
+    "approving": "Approbation…",
+    "approve": "Approuver",
+    "rejecting": "Rejet…",
+    "reject": "Rejeter",
+    "flagTitle": "Signaler pour saisie manuelle",
+    "flagging": "…",
+    "flag": "Signaler",
+    "skipTitle": "Ignorer (Échap)",
+    "skip": "Ignorer",
+    "timeAgo": {
+      "unknown": "heure inconnue",
+      "minutes": "il y a {{count}} min",
+      "hours": "il y a {{count}} h",
+      "days": "il y a {{count}} j"
+    }
+  },
+  "accessAdmin": {
+    "header": "Accès & Groupes",
+    "subtitle": "Gérez les groupes, les séries, et qui peut restreindre des documents à un groupe ou une personne spécifique.",
+    "export": {
+      "heading": "Exporter l'archive",
+      "descriptionPrefix": "Télécharge tous les documents de ce tenant — tous les champs extraits ainsi qu'un dossier ",
+      "descriptionSuffix": " contenant chaque image et PDF source — regroupés dans un fichier zip.",
+      "preparing": "Préparation de l'export…",
+      "download": "Télécharger l'export",
+      "started": "Téléchargement démarré."
+    },
+    "integrity": {
+      "heading": "Vérification de fixité / intégrité",
+      "description": "Vérifie que le(s) fichier(s) de chaque document existe(nt) toujours sur le disque, et revérifie les empreintes de contenu lorsqu'un original non modifié est disponible. S'exécute automatiquement chaque semaine — utilisez ceci pour la lancer à la demande.",
+      "running": "Exécution…",
+      "run": "Lancer la vérification d'intégrité",
+      "checked": "Vérifiés",
+      "ok": "OK",
+      "mismatched": "Non concordants",
+      "missing": "Manquants",
+      "failuresNotePrefix": "Les échecs sont enregistrés dans le journal d'audit sous forme d'entrées ",
+      "failuresNoteSuffix": "."
+    },
+    "series": {
+      "heading": "Séries (fonds)",
+      "namePlaceholder": "Nom de la nouvelle série (ex. Titres fonciers 1990-2000)",
+      "descriptionPlaceholder": "Description (facultatif)",
+      "creating": "Création…",
+      "create": "Créer",
+      "loading": "Chargement…",
+      "none": "Aucune série pour le moment.",
+      "confirmDelete": "Supprimer cette série ? Les documents qui lui sont assignés apparaîtront comme non assignés.",
+      "delete": "Supprimer"
+    },
+    "groups": {
+      "heading": "Groupes",
+      "namePlaceholder": "Nom du nouveau groupe (ex. Direction, RH)",
+      "creating": "Création…",
+      "create": "Créer",
+      "loading": "Chargement…",
+      "none": "Aucun groupe pour le moment.",
+      "member_one": "{{count}} membre",
+      "member_other": "{{count}} membres",
+      "confirmDelete": "Supprimer ce groupe ? Il sera retiré de tous les utilisateurs et de tous les documents auxquels il était associé.",
+      "delete": "Supprimer"
+    },
+    "users": {
+      "heading": "Utilisateurs",
+      "loading": "Chargement…",
+      "none": "Aucun utilisateur trouvé.",
+      "canManageAccess": "Peut gérer l'accès aux documents",
+      "canEditExtraction": "Peut modifier les données extraites",
+      "removeFromGroup": "Retirer de {{group}}",
+      "addToGroup": "+ Ajouter à un groupe…"
+    }
+  },
+  "audit": {
+    "actions": {
+      "document_approved": "document approuvé",
+      "document_rejected": "document rejeté",
+      "document_flagged": "document signalé",
+      "document_ingested": "document ingéré",
+      "user_login": "connexion utilisateur",
+      "user_logout": "déconnexion utilisateur",
+      "schema_created": "schéma créé",
+      "schema_altered": "schéma modifié",
+      "document_linked": "document lié",
+      "document_link_removed": "lien de document supprimé",
+      "document_access_granted": "accès document accordé",
+      "document_access_revoked": "accès document révoqué",
+      "series_created": "série créée",
+      "series_assigned": "série assignée",
+      "integrity_check_failed": "échec de vérification d'intégrité",
+      "document_fields_edited": "champs de document modifiés",
+      "archive_exported": "archive exportée"
+    },
+    "header": "Journal d'audit",
+    "eventsRecorded": "{{count}} événements enregistrés",
+    "allActions": "Toutes les actions",
+    "fromPlaceholder": "Du",
+    "toPlaceholder": "Au",
+    "clear": "Effacer",
+    "exportCsv": "Exporter en CSV",
+    "loadError": "Échec du chargement du journal d'audit. Avez-vous un accès administrateur ?",
+    "noMatches": "Aucun événement d'audit ne correspond aux filtres actuels",
+    "colTimestamp": "Horodatage",
+    "colUser": "Utilisateur",
+    "colAction": "Action",
+    "colTable": "Table",
+    "colDocument": "Document",
+    "colDetails": "Détails",
+    "colIp": "IP",
+    "systemUser": "système",
+    "showingRange": "Affichage de {{from}}–{{to}} sur {{total}} événements",
+    "prevPage": "← Précédent",
+    "pageOf": "Page {{page}} sur {{totalPages}}",
+    "nextPage": "Suivant →"
+  },
+  "schema": {
+    "documentCount_one": "{{count}} document",
+    "documentCount_other": "{{count}} documents",
+    "moreColumns": "+{{count}} colonnes supplémentaires",
+    "documentType": "Type de document",
+    "rows": "Lignes",
+    "lastIngested": "Dernière ingestion",
+    "columnsCount": "Colonnes ({{count}})",
+    "notNull": " NON NULL",
+    "viewDocumentsOfType": "Voir les documents de ce type",
+    "loading": "Chargement…",
+    "tableCount_one": "{{count}} table",
+    "tableCount_other": "{{count}} tables",
+    "autoRefresh": "Actualisation automatique",
+    "refresh": "Actualiser",
+    "fitView": "Ajuster la vue",
+    "downloadPng": "Télécharger en PNG",
+    "empty": "Aucun document ingéré pour le moment",
+    "uploadDocuments": "Téléverser des documents",
+    "header": "Visualisation du schéma",
+    "loadError": "Échec du chargement du schéma"
+  },
+  "databrowser": {
+    "header": "Explorateur de données",
+    "count_one": "{{count}} document",
+    "count_other": "{{count}} documents",
+    "searchPlaceholder": "Rechercher dans les champs extraits…",
+    "allTypes": "Tous les types",
+    "allConfidence": "Toutes les confiances",
+    "confidence": {
+      "high": "Élevée",
+      "medium": "Moyenne",
+      "low": "Faible"
+    },
+    "allStatuses": "Tous les statuts",
+    "reviewStatus": {
+      "auto_approved": "approuvé automatiquement",
+      "review_required": "révision requise",
+      "manual_entry": "saisie manuelle"
+    },
+    "from": "Du",
+    "to": "Au",
+    "reset": "Réinitialiser",
+    "loadError": "Échec du chargement des documents. L'API est-elle en cours d'exécution ?",
+    "noResults": "Aucun document trouvé.",
+    "colType": "Type",
+    "colDetails": "Détails",
+    "colConfidence": "Confiance",
+    "colReviewStatus": "Statut de révision",
+    "colIngested": "Ingéré",
+    "pagination": "Page {{page}} sur {{totalPages}} — {{total}} au total",
+    "previous": "Précédent",
+    "next": "Suivant"
+  },
+  "databrowserDetail": {
+    "backToDataBrowser": "Retour à l'explorateur de données",
+    "retrying": "Nouvelle tentative…",
+    "retry": "Réessayer",
+    "confirmDelete": "Supprimer définitivement ce document ? Cette action est irréversible.",
+    "deleting": "Suppression…",
+    "delete": "Supprimer",
+    "loading": "Chargement…",
+    "loadError": "Échec du chargement du document.",
+    "page": "Page {{n}}",
+    "viewOriginalPdf": "Voir le PDF original ↗",
+    "noImage": "Aucune image disponible",
+    "prev": "← Préc.",
+    "next": "Suiv. →",
+    "prevTitle": "Précédent (←)",
+    "nextTitle": "Suivant (→)",
+    "indexOf": "{{current}} / {{total}}"
+  },
+  "benchmarks": {
+    "header": "Comparatifs OCR/VLM",
+    "subtitle": "Outil de comparaison autonome — ne fait pas partie du pipeline d'ingestion.",
+    "tabVlm": "Extraction VLM",
+    "tabOcr": "Comparaison OCR",
+    "vlmNotFound": "Résultats VLM introuvables. Exécutez d'abord vlm_ollama_test.py.",
+    "loadError": "Échec du chargement des documents. Le serveur API est-il en cours d'exécution ?",
+    "selectDocument": "Sélectionnez un document pour voir ses résultats {{kind}}.",
+    "kindVlm": "d'extraction VLM",
+    "kindOcr": "de comparaison OCR",
+    "noResultFor": "Aucun résultat {{kind}} pour",
+    "runVlmScript": "Exécutez vlm_ollama_test.py pour le générer."
+  },
+  "ocr": {
+    "resultsFor": "Résultats pour :",
+    "rawImage": "Image brute",
+    "preprocessedImage": "Image prétraitée",
+    "bestEngine": "Meilleur moteur :",
+    "documentImage": "Image du document",
+    "extractionResults": "Résultats d'extraction"
+  },
+  "engineCard": {
+    "error": "Erreur : {{message}}",
+    "noText": "Aucun texte extrait.",
+    "chars": "{{count}} caractères",
+    "words": "{{count}} mots"
+  },
+  "imageViewer": {
+    "variantLabel": "Variante d'image :",
+    "raw": "Brute",
+    "preprocessed": "Prétraitée",
+    "notAvailable": "Image non disponible pour la variante {{variant}}."
+  },
+  "panZoom": {
+    "alt": "Document",
+    "overlay": "{{pct}}% — molette pour zoomer · glisser pour déplacer · double-clic pour réinitialiser"
+  },
+  "vlm": {
+    "fields": {
+      "document_type": "Type de document",
+      "reference_number": "Référence",
+      "date": "Date",
+      "person_names": "Personnes",
+      "functions": "Fonctions",
+      "destination_or_subject": "Objet / destination",
+      "organisation": "Organisation",
+      "signatory": "Signataire",
+      "budget_line": "Ligne budgétaire",
+      "language": "Langue",
+      "bilingual_layout": "Mise en page bilingue",
+      "quality_issues": "Problèmes de qualité"
+    },
+    "documentImage": "Image du document",
+    "extractedFields": "Champs extraits",
+    "runtimeError": "Erreur d'exécution : ",
+    "parseError": "La sortie du modèle n'a pas pu être analysée comme du JSON."
+  },
+  "languageSwitcher": {
+    "label": "Langue"
+  }
+}

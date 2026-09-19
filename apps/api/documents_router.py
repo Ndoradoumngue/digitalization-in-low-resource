@@ -39,6 +39,7 @@ from audit import client_ip, log_action
 from auth import CurrentUser, get_current_user, require_access_manager, require_admin, require_extraction_editor
 from cache import _path_key_builder, invalidate_cache
 from fastapi_cache.decorator import cache
+from i18n import t
 from ingest_router import DOCS_DIR as _INGEST_DOCS_DIR
 from ingest_router import UPLOADS_DIR as _INGEST_UPLOADS_DIR
 from ingest_router import _engine  # lazy accessor — None until startup()
@@ -594,7 +595,7 @@ async def get_document_detail(
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
 
         access_clause = _access_where_clause(safe, current_user)
         where = "id = CAST(:id AS uuid)"
@@ -607,7 +608,7 @@ async def get_document_detail(
         row = result.mappings().one_or_none()
 
     if row is None:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
     return _serialize_row(row)
 
@@ -636,14 +637,14 @@ async def update_document_fields(
     async with _engine().begin() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
         cols = tables_cols[safe]
         editable, set_parts, params = _build_field_set_clause(cols, body.fields)
         if not editable:
-            raise HTTPException(status_code=422, detail="No editable fields in request")
+            raise HTTPException(status_code=422, detail=t("documents.no_editable_fields", current_user.locale))
 
         params["id"] = doc_id
         result = await conn.execute(
@@ -653,7 +654,7 @@ async def update_document_fields(
         row = result.mappings().one_or_none()
 
     if row is None:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
     await log_action(
         action="document_fields_edited",
@@ -786,9 +787,9 @@ async def get_document_links(
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
         links = await _enrich_links(conn, current_user, safe, doc_id)
 
@@ -814,19 +815,19 @@ async def create_document_link(
     to_safe = _sanitize(body.to_table)
 
     if safe == to_safe and doc_id == body.to_id:
-        raise HTTPException(status_code=400, detail="A document cannot be linked to itself.")
+        raise HTTPException(status_code=400, detail=t("documents.cannot_link_self", current_user.locale))
 
     async with _engine().begin() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if to_safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{to_safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=to_safe))
 
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
         if not await _document_visible(conn, to_safe, body.to_id, current_user):
-            raise HTTPException(status_code=404, detail="Target document not found")
+            raise HTTPException(status_code=404, detail=t("documents.target_document_not_found", current_user.locale))
 
         result = await conn.execute(
             text("""
@@ -897,12 +898,12 @@ async def delete_document_link(
         )
         link = link_row.mappings().one_or_none()
         if link is None:
-            raise HTTPException(status_code=404, detail="Link not found")
+            raise HTTPException(status_code=404, detail=t("common.link_not_found", current_user.locale))
 
         can_see_from = await _document_visible(conn, link["from_table"], str(link["from_id"]), current_user)
         can_see_to   = await _document_visible(conn, link["to_table"], str(link["to_id"]), current_user)
         if not (can_see_from or can_see_to):
-            raise HTTPException(status_code=404, detail="Link not found")
+            raise HTTPException(status_code=404, detail=t("common.link_not_found", current_user.locale))
 
         result = await conn.execute(
             text("DELETE FROM sdai_document_links WHERE id = CAST(:id AS uuid) RETURNING from_table, from_id, to_table, to_id, relation"),
@@ -974,9 +975,9 @@ async def get_document_access(
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
         rows = (await conn.execute(
             text("""
@@ -1034,11 +1035,11 @@ async def create_document_access(
     async with _engine().begin() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         # can_manage_access still can't grant access to a document they
         # can't already see (an admin bypasses this, same as everywhere else).
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
         if body.grantee_type == "group":
             grantee_row = await conn.execute(
@@ -1051,7 +1052,7 @@ async def create_document_access(
                 {"id": body.grantee_id, "tid": current_user.tenant_id},
             )
         if grantee_row.one_or_none() is None:
-            raise HTTPException(status_code=404, detail=f"{body.grantee_type.capitalize()} not found")
+            raise HTTPException(status_code=404, detail=t("common.group_not_found" if body.grantee_type == "group" else "common.user_not_found", current_user.locale))
 
         result = await conn.execute(
             text("""
@@ -1109,7 +1110,7 @@ async def delete_document_access(
         row = result.mappings().one_or_none()
 
     if row is None:
-        raise HTTPException(status_code=404, detail="Grant not found")
+        raise HTTPException(status_code=404, detail=t("common.grant_not_found", current_user.locale))
 
     await log_action(
         action="document_access_revoked",
@@ -1175,7 +1176,7 @@ async def create_series(body: CreateSeriesBody, current_user: CurrentUser = Depe
         )
         series_id = result.scalar()
         if series_id is None:
-            raise HTTPException(status_code=409, detail=f"Series '{body.name}' already exists")
+            raise HTTPException(status_code=409, detail=t("common.series_already_exists", current_user.locale, name=body.name))
 
     await log_action(
         action="series_created",
@@ -1199,7 +1200,7 @@ async def delete_series(series_id: str, current_user: CurrentUser = Depends(requ
             {"id": series_id, "tid": current_user.tenant_id},
         )
         if result.one_or_none() is None:
-            raise HTTPException(status_code=404, detail="Series not found")
+            raise HTTPException(status_code=404, detail=t("common.series_not_found", current_user.locale))
     return {"ok": True}
 
 
@@ -1218,9 +1219,9 @@ async def assign_document_series(
     async with _engine().begin() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
         if body.series_id is not None:
             series_row = await conn.execute(
@@ -1228,7 +1229,7 @@ async def assign_document_series(
                 {"id": body.series_id, "tid": current_user.tenant_id},
             )
             if series_row.one_or_none() is None:
-                raise HTTPException(status_code=404, detail="Series not found")
+                raise HTTPException(status_code=404, detail=t("common.series_not_found", current_user.locale))
 
         await conn.execute(
             text(f'UPDATE "{safe}" SET series_id = CAST(:sid AS uuid) WHERE id = CAST(:id AS uuid)'),
@@ -1346,7 +1347,7 @@ async def serve_processed_image(
     """
     file_path = Path(path).resolve()
     if not any(file_path.is_relative_to(root) for root in _SAFE_FILE_ROOTS):
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=403, detail=t("common.access_denied", current_user.locale))
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="File not found")
+        raise HTTPException(status_code=404, detail=t("common.file_not_found", current_user.locale))
     return FileResponse(file_path)

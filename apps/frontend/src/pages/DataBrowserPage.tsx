@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useDbDocuments, useDbTypes } from "../hooks/useDocumentsDb";
 import NavSidebar from "../components/NavSidebar";
 import type { DbListParams } from "@sdai/api-client";
@@ -35,6 +36,7 @@ function fmtDate(iso: string | null) {
 
 export default function DataBrowserPage() {
   const navigate                  = useNavigate();
+  const { t }                     = useTranslation();
   const [searchParams]            = useSearchParams();
   const { data: types }           = useDbTypes();
 
@@ -85,9 +87,9 @@ export default function DataBrowserPage() {
       <div className="flex-1 flex flex-col overflow-hidden">
       {/* Top bar */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-shrink-0">
-        <h1 className="text-base font-bold text-indigo-700 tracking-tight">Data Browser</h1>
+        <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("databrowser.header")}</h1>
         {total > 0 && (
-          <span className="ml-1 text-xs text-gray-500">{total.toLocaleString()} documents</span>
+          <span className="ml-1 text-xs text-gray-500">{t("databrowser.count", { count: total })}</span>
         )}
       </header>
 
@@ -98,7 +100,7 @@ export default function DataBrowserPage() {
           type="text"
           value={inputQ}
           onChange={(e) => handleSearch(e.target.value)}
-          placeholder="Search extracted fields…"
+          placeholder={t("databrowser.searchPlaceholder")}
           className="h-8 rounded-md border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 w-56"
         />
 
@@ -108,7 +110,7 @@ export default function DataBrowserPage() {
           onChange={(e) => handleFilter(() => setDocumentType(e.target.value))}
           className="h-8 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
-          <option value="">All types</option>
+          <option value="">{t("databrowser.allTypes")}</option>
           {(types ?? []).map((t) => (
             <option key={t.table_name} value={t.table_name}>
               {t.document_type} ({t.count})
@@ -122,9 +124,9 @@ export default function DataBrowserPage() {
           onChange={(e) => handleFilter(() => setConfidence(e.target.value))}
           className="h-8 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
-          <option value="">All confidence</option>
+          <option value="">{t("databrowser.allConfidence")}</option>
           {CONFIDENCE_OPTIONS.filter(Boolean).map((c) => (
-            <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+            <option key={c} value={c}>{t(`databrowser.confidence.${c}`)}</option>
           ))}
         </select>
 
@@ -134,15 +136,15 @@ export default function DataBrowserPage() {
           onChange={(e) => handleFilter(() => setReviewStatus(e.target.value))}
           className="h-8 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         >
-          <option value="">All statuses</option>
+          <option value="">{t("databrowser.allStatuses")}</option>
           {REVIEW_OPTIONS.filter(Boolean).map((s) => (
-            <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+            <option key={s} value={s}>{t(`databrowser.reviewStatus.${s}`)}</option>
           ))}
         </select>
 
         {/* Date range */}
         <label className="flex items-center gap-1 text-xs text-gray-500">
-          From
+          {t("databrowser.from")}
           <input
             type="date"
             value={dateFrom}
@@ -151,7 +153,7 @@ export default function DataBrowserPage() {
           />
         </label>
         <label className="flex items-center gap-1 text-xs text-gray-500">
-          To
+          {t("databrowser.to")}
           <input
             type="date"
             value={dateTo}
@@ -169,7 +171,7 @@ export default function DataBrowserPage() {
             }}
             className="h-8 px-3 rounded-md text-xs text-gray-500 border border-gray-300 hover:bg-gray-50 transition-colors"
           >
-            Reset
+            {t("databrowser.reset")}
           </button>
         )}
       </div>
@@ -177,7 +179,7 @@ export default function DataBrowserPage() {
       {/* Table */}
       <div className="flex-1 overflow-auto">
         {error ? (
-          <div className="p-8 text-sm text-red-500">Failed to load documents. Is the API running?</div>
+          <div className="p-8 text-sm text-red-500">{t("databrowser.loadError")}</div>
         ) : isLoading && rows.length === 0 ? (
           <div className="p-8 space-y-3">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -185,12 +187,15 @@ export default function DataBrowserPage() {
             ))}
           </div>
         ) : rows.length === 0 ? (
-          <div className="p-8 text-sm text-gray-400">No documents found.</div>
+          <div className="p-8 text-sm text-gray-400">{t("databrowser.noResults")}</div>
         ) : (
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 bg-gray-100 z-10">
               <tr>
-                {["Type", "Details", "Confidence", "Review status", "Ingested"].map((h) => (
+                {[
+                  t("databrowser.colType"), t("databrowser.colDetails"), t("databrowser.colConfidence"),
+                  t("databrowser.colReviewStatus"), t("databrowser.colIngested"),
+                ].map((h) => (
                   <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap border-b border-gray-200">
                     {h}
                   </th>
@@ -223,14 +228,14 @@ export default function DataBrowserPage() {
                   <td className="px-4 py-2.5">
                     {row.confidence ? (
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${tierColor(row.confidence)}`}>
-                        {row.confidence}
+                        {t(`databrowser.confidence.${row.confidence}`, row.confidence)}
                       </span>
                     ) : "—"}
                   </td>
                   <td className="px-4 py-2.5">
                     {row.review_status ? (
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${reviewColor(row.review_status)}`}>
-                        {row.review_status.replace(/_/g, " ")}
+                        {t(`databrowser.reviewStatus.${row.review_status}`, row.review_status.replace(/_/g, " "))}
                       </span>
                     ) : "—"}
                   </td>
@@ -248,7 +253,7 @@ export default function DataBrowserPage() {
       {totalPages > 1 && (
         <div className="bg-white border-t border-gray-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
           <span className="text-xs text-gray-500">
-            Page {page} of {totalPages} — {total.toLocaleString()} total
+            {t("databrowser.pagination", { page, totalPages, total: total.toLocaleString() })}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -256,14 +261,14 @@ export default function DataBrowserPage() {
               onClick={() => setPage((p) => p - 1)}
               className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
             >
-              Previous
+              {t("databrowser.previous")}
             </button>
             <button
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
               className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
             >
-              Next
+              {t("databrowser.next")}
             </button>
           </div>
         </div>

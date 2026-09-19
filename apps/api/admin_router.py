@@ -33,6 +33,7 @@ from starlette.background import BackgroundTask
 
 from auth import CurrentUser, require_admin
 from documents_router import _get_tables_columns, _SAFE_FILE_ROOTS
+from i18n import t
 from ingest_router import _engine, _run_integrity_check
 from audit import log_action
 
@@ -179,7 +180,7 @@ async def create_group(body: CreateGroupBody, current_user: CurrentUser = Depend
         )
         group_id = result.scalar()
         if group_id is None:
-            raise HTTPException(status_code=409, detail=f"Group '{body.name}' already exists")
+            raise HTTPException(status_code=409, detail=t("common.group_already_exists", current_user.locale, name=body.name))
     return {"id": str(group_id), "name": body.name}
 
 
@@ -195,7 +196,7 @@ async def delete_group(group_id: str, current_user: CurrentUser = Depends(requir
             {"id": group_id, "tid": current_user.tenant_id},
         )
         if result.one_or_none() is None:
-            raise HTTPException(status_code=404, detail="Group not found")
+            raise HTTPException(status_code=404, detail=t("common.group_not_found", current_user.locale))
         await conn.execute(
             text("DELETE FROM sdai_document_access WHERE grantee_type = 'group' AND grantee_id = CAST(:id AS uuid)"),
             {"id": group_id},
@@ -257,7 +258,7 @@ async def update_user(user_id: str, body: UpdateUserBody, current_user: CurrentU
         set_parts.append("can_edit_extraction = :cee")
         params["cee"] = body.can_edit_extraction
     if not set_parts:
-        raise HTTPException(status_code=422, detail="No fields to update")
+        raise HTTPException(status_code=422, detail=t("admin.no_fields_to_update", current_user.locale))
 
     async with _engine().begin() as conn:
         result = await conn.execute(
@@ -269,7 +270,7 @@ async def update_user(user_id: str, body: UpdateUserBody, current_user: CurrentU
             params,
         )
         if result.one_or_none() is None:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise HTTPException(status_code=404, detail=t("common.user_not_found", current_user.locale))
     return {"ok": True}
 
 
@@ -282,13 +283,13 @@ async def add_user_to_group(user_id: str, body: GroupMembershipBody, current_use
             {"id": user_id, "tid": current_user.tenant_id},
         )
         if user_row.one_or_none() is None:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise HTTPException(status_code=404, detail=t("common.user_not_found", current_user.locale))
         group_row = await conn.execute(
             text("SELECT 1 FROM sdai_groups WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"),
             {"id": body.group_id, "tid": current_user.tenant_id},
         )
         if group_row.one_or_none() is None:
-            raise HTTPException(status_code=404, detail="Group not found")
+            raise HTTPException(status_code=404, detail=t("common.group_not_found", current_user.locale))
 
         await conn.execute(
             text("""

@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useDbDocuments, useDbReviewers, useDbTypes } from "../hooks/useDocumentsDb";
 import { useSeries } from "../hooks/useSeries";
 import NavSidebar from "../components/NavSidebar";
@@ -20,6 +21,7 @@ function fmtDate(iso: string | null) {
 
 export default function DocumentsPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { data: types }     = useDbTypes();
   const { data: reviewers } = useDbReviewers();
   const { data: series }    = useSeries();
@@ -84,9 +86,9 @@ export default function DocumentsPage() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top bar */}
         <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-shrink-0">
-          <h1 className="text-base font-bold text-indigo-700 tracking-tight">Documents</h1>
+          <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("documents.header")}</h1>
           {total > 0 && (
-            <span className="ml-1 text-xs text-gray-500">{total.toLocaleString()} documents</span>
+            <span className="ml-1 text-xs text-gray-500">{t("documents.count", { count: total })}</span>
           )}
         </header>
 
@@ -96,7 +98,7 @@ export default function DocumentsPage() {
             type="text"
             value={inputQ}
             onChange={(e) => handleSearch(e.target.value)}
-            placeholder="Search documents…"
+            placeholder={t("documents.searchPlaceholder")}
             className="h-9 flex-1 min-w-[220px] max-w-md rounded-md border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
 
@@ -105,7 +107,7 @@ export default function DocumentsPage() {
             onChange={(e) => { setReviewedBy(e.target.value); setPage(1); }}
             className="h-9 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           >
-            <option value="">All reviewers</option>
+            <option value="">{t("documents.allReviewers")}</option>
             {(reviewers ?? []).map((r) => (
               <option key={r.id} value={r.id}>{r.full_name || r.email}</option>
             ))}
@@ -117,7 +119,7 @@ export default function DocumentsPage() {
               onChange={(e) => { setSeriesId(e.target.value); setPage(1); }}
               className="h-9 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
             >
-              <option value="">All series</option>
+              <option value="">{t("documents.allSeries")}</option>
               {series.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
@@ -125,7 +127,7 @@ export default function DocumentsPage() {
           )}
 
           <label className="flex items-center gap-1 text-xs text-gray-500">
-            From
+            {t("documents.from")}
             <input
               type="date"
               value={dateFrom}
@@ -134,7 +136,7 @@ export default function DocumentsPage() {
             />
           </label>
           <label className="flex items-center gap-1 text-xs text-gray-500">
-            To
+            {t("documents.to")}
             <input
               type="date"
               value={dateTo}
@@ -152,7 +154,7 @@ export default function DocumentsPage() {
               }}
               className="h-9 px-3 rounded-md text-xs text-gray-500 border border-gray-300 hover:bg-gray-50 transition-colors"
             >
-              Reset
+              {t("documents.reset")}
             </button>
           )}
         </div>
@@ -182,7 +184,7 @@ export default function DocumentsPage() {
         {/* Results */}
         <div className="flex-1 overflow-auto p-6">
           {error ? (
-            <div className="text-sm text-red-500">Failed to load documents. Is the API running?</div>
+            <div className="text-sm text-red-500">{t("documents.loadError")}</div>
           ) : isLoading && rows.length === 0 ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -190,7 +192,7 @@ export default function DocumentsPage() {
               ))}
             </div>
           ) : rows.length === 0 ? (
-            <div className="text-sm text-gray-400">No documents found.</div>
+            <div className="text-sm text-gray-400">{t("documents.noResults")}</div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {rows.map((row, i) => (
@@ -226,8 +228,8 @@ export default function DocumentsPage() {
                   <div className="mt-auto flex items-center justify-between text-xs text-gray-400 pt-1">
                     <span>
                       {row.reviewed_by
-                        ? `Reviewed by ${reviewerName.get(row.reviewed_by) ?? "—"}`
-                        : "Not yet reviewed"}
+                        ? t("documents.reviewedBy", { name: reviewerName.get(row.reviewed_by) ?? "—" })
+                        : t("documents.notYetReviewed")}
                     </span>
                     <span>{fmtDate(row.ingested_at)}</span>
                   </div>
@@ -241,7 +243,7 @@ export default function DocumentsPage() {
         {totalPages > 1 && (
           <div className="bg-white border-t border-gray-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
             <span className="text-xs text-gray-500">
-              Page {page} of {totalPages} — {total.toLocaleString()} total
+              {t("documents.pagination", { page, totalPages, total: total.toLocaleString() })}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -249,14 +251,14 @@ export default function DocumentsPage() {
                 onClick={() => setPage((p) => p - 1)}
                 className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
               >
-                Previous
+                {t("documents.previous")}
               </button>
               <button
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => p + 1)}
                 className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
               >
-                Next
+                {t("documents.next")}
               </button>
             </div>
           </div>

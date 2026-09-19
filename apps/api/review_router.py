@@ -22,6 +22,7 @@ from audit import client_ip, log_action
 from auth import CurrentUser, get_current_user, require_admin
 from cache import _path_key_builder, invalidate_cache
 from fastapi_cache.decorator import cache
+from i18n import t
 from rate_limit import limiter
 from documents_router import (
     _access_params,
@@ -210,16 +211,16 @@ async def patch_review(
     - reject:  sets review_status='rejected'
     """
     if body.action not in ("approve", "reject"):
-        raise HTTPException(status_code=422, detail="action must be 'approve' or 'reject'")
+        raise HTTPException(status_code=422, detail=t("review.invalid_action", current_user.locale))
 
     safe = _sanitize(table_name)
 
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
         cols = tables_cols[safe]
 
@@ -248,7 +249,7 @@ async def patch_review(
             # delegated permission (admin, or can_edit_extraction).
             if editable and not current_user.can_edit_extraction_data:
                 raise HTTPException(
-                    status_code=403, detail="Extraction-editing permission required"
+                    status_code=403, detail=t("auth.extraction_editor_required", current_user.locale)
                 )
 
             set_parts += [
@@ -277,7 +278,7 @@ async def patch_review(
 
     row = result.mappings().one_or_none()
     if row is None:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
     # This document just left the shared review pipeline (approved or
     # rejected) — it stops being open to every tenant user by default from
@@ -322,9 +323,9 @@ async def flag_review(
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
         result = await conn.execute(
             text(
@@ -336,7 +337,7 @@ async def flag_review(
         await conn.commit()
 
     if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
     await log_action(
         action="document_flagged",
@@ -365,11 +366,11 @@ async def retry_document(
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
         if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(status_code=404, detail="Document not found")
+            raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
-    batch_id = await _retry_document(safe, doc_id, current_user.tenant_id, current_user.tenant_slug)
+    batch_id = await _retry_document(safe, doc_id, current_user.tenant_id, current_user.tenant_slug, current_user.locale)
 
     await log_action(
         action="document_retried",
@@ -402,7 +403,7 @@ async def delete_document(
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
         if safe not in tables_cols:
-            raise HTTPException(status_code=404, detail=f"Table '{safe}' not found")
+            raise HTTPException(status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe))
 
         result = await conn.execute(
             text(f'DELETE FROM "{safe}" WHERE id = CAST(:doc_id AS uuid) RETURNING id'),
@@ -413,7 +414,7 @@ async def delete_document(
         await conn.commit()
 
     if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
 
     await log_action(
         action="document_deleted",

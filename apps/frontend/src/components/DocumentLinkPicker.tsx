@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useDbDocuments } from "../hooks/useDocumentsDb";
 import { useCreateDocumentLink } from "../hooks/useDocumentLinks";
 import { summarizeExtra } from "../utils/format";
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
+  const { t } = useTranslation();
   const [inputQ, setInputQ]     = useState("");
   const [q, setQ]               = useState("");
   const [selected, setSelected] = useState<{ tableName: string; id: string; label: string } | null>(null);
@@ -49,13 +51,13 @@ export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
             type="text"
             value={inputQ}
             onChange={(e) => handleSearch(e.target.value)}
-            placeholder="Search for a document to link…"
+            placeholder={t("linkPicker.searchPlaceholder")}
             autoFocus
             className="w-full h-8 rounded-md border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           />
-          {isFetching && <p className="text-xs text-gray-400">Searching…</p>}
+          {isFetching && <p className="text-xs text-gray-400">{t("linkPicker.searching")}</p>}
           {q && !isFetching && results.length === 0 && (
-            <p className="text-xs text-gray-400">No documents found.</p>
+            <p className="text-xs text-gray-400">{t("linkPicker.noResults")}</p>
           )}
           {results.length > 0 && (
             <div className="max-h-48 overflow-y-auto rounded-md border border-gray-200 bg-white divide-y divide-gray-100">
@@ -85,7 +87,7 @@ export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
             onClick={() => setSelected(null)}
             className="flex-shrink-0 text-gray-400 hover:text-gray-700"
           >
-            Change
+            {t("linkPicker.change")}
           </button>
         </div>
       )}
@@ -96,7 +98,7 @@ export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
           list="relation-suggestions"
           value={relation}
           onChange={(e) => setRelation(e.target.value)}
-          placeholder="Relation (e.g. concerns)"
+          placeholder={t("linkPicker.relationPlaceholder")}
           className="h-8 rounded-md border border-gray-300 px-2 text-sm w-40 focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
         <datalist id="relation-suggestions">
@@ -108,7 +110,7 @@ export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
           type="text"
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder="Note (optional)"
+          placeholder={t("linkPicker.notePlaceholder")}
           className="h-8 flex-1 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
       </div>
@@ -122,14 +124,14 @@ export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
           onClick={onDone}
           className="px-2.5 py-1.5 rounded-md text-xs border border-gray-300 hover:bg-gray-100 transition-colors"
         >
-          Cancel
+          {t("linkPicker.cancel")}
         </button>
         <button
           onClick={submit}
           disabled={!selected || !relation.trim() || createMutation.isPending}
           className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
         >
-          {createMutation.isPending ? "Linking…" : "Add link"}
+          {createMutation.isPending ? t("linkPicker.linking") : t("linkPicker.addLink")}
         </button>
       </div>
     </div>

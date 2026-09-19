@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { updateDocumentFields } from "@sdai/api-client";
 import { labelFor } from "../utils/format";
@@ -23,7 +24,8 @@ interface Props {
   title?:    string;
 }
 
-export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title = "Fields" }: Props) {
+export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title }: Props) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editing, setEditing]       = useState(false);
   const [form, setForm]             = useState<Record<string, string>>({});
@@ -62,7 +64,7 @@ export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title =
         try {
           payload[k] = JSON.parse(v);
         } catch {
-          errors[k] = "Invalid JSON";
+          errors[k] = t("fields.invalidJson");
         }
       } else if (Array.isArray(original)) {
         payload[k] = v.trim() ? v.split(",").map((s) => s.trim()).filter(Boolean) : [];
@@ -82,7 +84,7 @@ export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title =
     <div>
       {canEdit && (
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{title}</h3>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{title ?? t("fields.title")}</h3>
           {editing ? (
             <div className="flex items-center gap-2">
               {mutation.isError && (
@@ -92,14 +94,14 @@ export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title =
                 onClick={() => setEditing(false)}
                 className="text-xs text-gray-400 hover:text-gray-700"
               >
-                Cancel
+                {t("fields.cancel")}
               </button>
               <button
                 onClick={save}
                 disabled={mutation.isPending}
                 className="px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
               >
-                {mutation.isPending ? "Saving…" : "Save"}
+                {mutation.isPending ? t("fields.saving") : t("fields.save")}
               </button>
             </div>
           ) : (
@@ -107,14 +109,14 @@ export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title =
               onClick={startEditing}
               className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
             >
-              Edit fields
+              {t("fields.editFields")}
             </button>
           )}
         </div>
       )}
 
       {fieldRows.length === 0 ? (
-        <p className="text-sm text-gray-400">No fields available.</p>
+        <p className="text-sm text-gray-400">{t("fields.noFields")}</p>
       ) : (
         <dl className="space-y-1">
           {fieldRows.map(([key, value]) => {
@@ -124,7 +126,7 @@ export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title =
                 <dt className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
                   {labelFor(key)}
                   {editing && complex && (
-                    <span className="ml-1 font-normal normal-case text-gray-400">(JSON)</span>
+                    <span className="ml-1 font-normal normal-case text-gray-400">{t("fields.jsonHint")}</span>
                   )}
                 </dt>
                 {editing ? (
