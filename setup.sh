@@ -1,5 +1,5 @@
 #!/bin/bash
-# SDAI Digitalisation — Offline Setup Script
+# SDAI Digitalisation - Offline Setup Script
 #
 # Run this ONCE on a machine WITH internet access before deploying offline.
 # It downloads all required models and dependencies into ./models/ so the
@@ -61,7 +61,7 @@ docker compose pull --quiet
 # docker compose config --images lists every image referenced by the stack
 IMAGES=$(docker compose config --images 2>/dev/null | tr '\n' ' ')
 if [ -z "$IMAGES" ]; then
-  warn "docker compose config --images returned nothing — falling back to 'docker compose images'"
+  warn "docker compose config --images returned nothing - falling back to 'docker compose images'"
   # shellcheck disable=SC2046
   IMAGES=$(docker compose images -q | sort -u | xargs docker inspect \
     --format '{{index .RepoTags 0}}' 2>/dev/null | tr '\n' ' ')
@@ -98,7 +98,7 @@ echo ""
 echo -e "${BOLD}=== Setup complete ===${RESET}"
 echo "Total bundle size: $(du -sh "$MODELS_DIR" | cut -f1)"
 echo ""
-echo "Next step — transfer the entire project directory to the offline server:"
+echo "Next step - transfer the entire project directory to the offline server:"
 echo "  rsync -av --exclude '.git' . user@ministry-server:/opt/sdai_digitalization/"
 echo ""
 echo "Then on the offline server, run:"

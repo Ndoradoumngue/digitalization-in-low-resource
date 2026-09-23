@@ -34,5 +34,5 @@ packages/
 - All API data routes must use `Depends(get_current_user)`.
 - Never add `rootDir` to `packages/api-client/tsconfig.json`.
 - Never use `allow_origins=["*"]` with `allow_credentials=True`.
-- Never bake `documents/` into Docker images — always mount as a volume.
+- Never bake `documents/` into Docker images - always mount as a volume.
 - Schemas live in `packages/types`; fetch functions live in `packages/api-client`.

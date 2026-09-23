@@ -8,17 +8,17 @@ const RELATION_SUGGESTIONS = ["concerns", "supersedes", "transfers", "amends", "
 
 interface Props {
   tableName: string;
-  id:        string;
-  onDone:    () => void;
+  id: string;
+  onDone: () => void;
 }
 
 export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
   const { t } = useTranslation();
-  const [inputQ, setInputQ]     = useState("");
-  const [q, setQ]               = useState("");
+  const [inputQ, setInputQ] = useState("");
+  const [q, setQ] = useState("");
   const [selected, setSelected] = useState<{ tableName: string; id: string; label: string } | null>(null);
   const [relation, setRelation] = useState("");
-  const [note, setNote]         = useState("");
+  const [note, setNote] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data, isFetching } = useDbDocuments({ q, page_size: 10 });
@@ -68,7 +68,7 @@ export default function DocumentLinkPicker({ tableName, id, onDone }: Props) {
                     setSelected({
                       tableName: r.table_name,
                       id: r.id,
-                      label: `${r.document_type ?? r.table_name} — ${summarizeExtra(r.extra_fields, 1)}`,
+                      label: `${r.document_type ?? r.table_name} - ${summarizeExtra(r.extra_fields, 1)}`,
                     })
                   }
                   className="block w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 transition-colors"

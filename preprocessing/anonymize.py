@@ -1,8 +1,9 @@
-import cv2
 import os
+
+import cv2
+import numpy as np
 from pdf2image import convert_from_path
 from PIL import Image
-import numpy as np
 
 drawing = False
 ix, iy = -1, -1
@@ -20,7 +21,7 @@ def draw_rectangle(event, x, y, flags, param):
 
     elif event == cv2.EVENT_MOUSEMOVE and drawing:
         img_copy = img.copy()
-        for (x1, y1, x2, y2) in rectangles:
+        for x1, y1, x2, y2 in rectangles:
             cv2.rectangle(img_copy, (x1, y1), (x2, y2), (0, 0, 0), -1)
         cv2.rectangle(img_copy, (ix, iy), (x, y), (0, 0, 0), -1)
 
@@ -28,7 +29,7 @@ def draw_rectangle(event, x, y, flags, param):
         drawing = False
         rectangles.append((min(ix, x), min(iy, y), max(ix, x), max(iy, y)))
         img_copy = img.copy()
-        for (x1, y1, x2, y2) in rectangles:
+        for x1, y1, x2, y2 in rectangles:
             cv2.rectangle(img_copy, (x1, y1), (x2, y2), (0, 0, 0), -1)
 
 
@@ -43,7 +44,7 @@ def anonymise_image(input_path, output_path):
     img_copy = img.copy()
     rectangles = []
 
-    window = "Anonymise — drag to redact, S=save, R=reset, Q=quit"
+    window = "Anonymise - drag to redact, S=save, R=reset, Q=quit"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window, 900, 1200)
     cv2.setMouseCallback(window, draw_rectangle)
@@ -59,21 +60,21 @@ def anonymise_image(input_path, output_path):
         cv2.imshow(window, img_copy)
         key = cv2.waitKey(10) & 0xFF
 
-        if key == ord('s'):
+        if key == ord("s"):
             final = img.copy()
-            for (x1, y1, x2, y2) in rectangles:
+            for x1, y1, x2, y2 in rectangles:
                 cv2.rectangle(final, (x1, y1), (x2, y2), (0, 0, 0), -1)
             cv2.imwrite(output_path, final)
             print(f"Saved: {output_path}")
             cv2.destroyWindow(window)
             return True
 
-        elif key == ord('r'):
+        elif key == ord("r"):
             rectangles = []
             img_copy = img.copy()
             print("Reset")
 
-        elif key == ord('q'):
+        elif key == ord("q"):
             print("Skipped")
             cv2.destroyWindow(window)
             return False
@@ -83,7 +84,6 @@ def images_to_pdf(image_paths, output_pdf_path):
     images = [Image.open(p).convert("RGB") for p in image_paths]
     first, rest = images[0], images[1:]
     first.save(output_pdf_path, save_all=True, append_images=rest)
-
 
 
 def anonymise_pdf(pdf_path, output_folder):

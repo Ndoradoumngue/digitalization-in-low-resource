@@ -1,23 +1,27 @@
+# split_page_columns: true
+# split_from_page: 12
+# list_fields: entries, table_of_contents, abbreviations
+
 This document is a page from a Kabalay-French bilingual lexicon compiled by Abbé Waingue.
 Most pages list dictionary entries. Each entry has a Kabalay headword, optional
-grammatical markers (N. = noun, V. = verb, etc. — see "Signes et Abréviations" below),
+grammatical markers (N. = noun, V. = verb, etc. - see "Signes et Abréviations" below),
 and a French definition or translation. Some pages (cover, title page, introduction,
 table of contents, "Signes et Abréviations") carry document-level information instead
 of entries.
 
-CRITICAL — merging multi-line entries: an entry's French definition often wraps across
+CRITICAL - merging multi-line entries: an entry's French definition often wraps across
 several printed lines, and a word at the end of a line may be hyphenated and continue
 on the next line. A new line starts a NEW entry ONLY when it begins with a new Kabalay
 headword (typically followed by a colon or a grammatical marker like "V." or "N."). Any
-line that continues the sentence from the entry above it — no new headword, a lowercase
-continuation, a hyphenated word broken across the line break, an incomplete sentence —
+line that continues the sentence from the entry above it - no new headword, a lowercase
+continuation, a hyphenated word broken across the line break, an incomplete sentence -
 belongs to the SAME entry. Merge it into that entry's "french" text (rejoining hyphenated
 words into one) instead of creating a new entry with an empty "kabalay" or "french" field.
-Never leave a field empty because you split a definition across entries by mistake — if
+Never leave a field empty because you split a definition across entries by mistake - if
 you produce an entry with an empty "kabalay" or "french", that is a bug: merge it into
 the entry above instead.
 
-Example — these five printed lines are only TWO dictionary entries, not five:
+Example - these five printed lines are only TWO dictionary entries, not five:
   Source:
     àjìgé :N. poquet
     tè àjìgé : mettre les grains
@@ -56,14 +60,14 @@ Return ONLY a JSON object in this exact shape:
   "extraction_confidence": "high or medium or low"
 }
 
-If this page is titled "Signes et Abréviations" (or similar — a legend of the
+If this page is titled "Signes et Abréviations" (or similar - a legend of the
 grammatical abbreviations used throughout the dictionary), extract every
-abbreviation and its full meaning into "abbreviations", in order — leave
+abbreviation and its full meaning into "abbreviations", in order - leave
 "entries": [] on that page. This legend matters: it is what lets a reader
 later interpret the grammatical markers inside every entry's "french" field.
 
 If this page is a table of contents, list every line of it in "table_of_contents"
-exactly as written, in order — do not summarize or skip lines. Leave "entries": []
+exactly as written, in order - do not summarize or skip lines. Leave "entries": []
 on such a page; do not invent entries. If this page is a cover or title page with
 no table of contents, no abbreviations, and no entries, leave those lists empty
 but still fill in "title", "author", or "intro" if visible. Always report

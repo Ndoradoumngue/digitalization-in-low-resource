@@ -2,22 +2,22 @@
 FastAPI backend for the SDAI Digitalization app.
 
 Auth endpoints:
-  POST /api/auth/login               — issue JWT, set httpOnly cookie
-  POST /api/auth/logout              — clear cookie
-  GET  /api/auth/me                  — return current user (or 401)
+  POST /api/auth/login               - issue JWT, set httpOnly cookie
+  POST /api/auth/logout              - clear cookie
+  GET  /api/auth/me                  - return current user (or 401)
 
 OCR endpoints (require auth):
-  GET /api/documents                 — document list with OCR availability flag
-  GET /api/documents/{filename}      — per-document OCR result (raw + preprocessed)
-  GET /api/results                   — full _all_results.json
+  GET /api/documents                 - document list with OCR availability flag
+  GET /api/documents/{filename}      - per-document OCR result (raw + preprocessed)
+  GET /api/results                   - full _all_results.json
 
 VLM endpoints (require auth):
-  GET /api/vlm/documents             — document list with VLM availability flag
-  GET /api/vlm/documents/{filename}  — per-document VLM extraction result
-  GET /api/vlm/results               — full VLM results JSON
+  GET /api/vlm/documents             - document list with VLM availability flag
+  GET /api/vlm/documents/{filename}  - per-document VLM extraction result
+  GET /api/vlm/results               - full VLM results JSON
 
 Image endpoints (require auth):
-  GET /images/raw/{filename}         — original document image
+  GET /images/raw/{filename}         - original document image
   GET /images/preprocessed/{filename}
 
 Run locally:
@@ -32,51 +32,53 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
-
-import redis.asyncio as aioredis
 
 logger = logging.getLogger(__name__)
 
+import bcrypt as _bcrypt
+from audit import client_ip, log_action
+from auth import (
+    CurrentUser,
+    get_current_user,
+)
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from jose import JWTError, jwt
-import bcrypt as _bcrypt
+from i18n import resolve_locale, t
+from jose import jwt
 from pydantic import BaseModel
-from sqlalchemy import text
-
+from rate_limit import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-
-from audit import client_ip, log_action
-from auth import CurrentUser, get_current_user  # noqa: F401 — re-exported for Depends() callers
-from i18n import resolve_locale, t
-from rate_limit import limiter
+from sqlalchemy import text
 
 # ── Config from environment ───────────────────────────────────────────────────
 
-SECRET_KEY     = os.getenv("AUTH_SECRET_KEY", "dev-secret-key-change-in-production")
-ALGORITHM      = "HS256"
+SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-secret-key-change-in-production")
+ALGORITHM = "HS256"
 TOKEN_EXPIRE_H = int(os.getenv("AUTH_TOKEN_EXPIRE_HOURS", "8"))
 SECURE_COOKIES = os.getenv("AUTH_SECURE_COOKIES", "false").lower() == "true"
 
 # apps/api → apps → project root  (two levels up from this file)
 # In Docker, PROJECT_ROOT is set to /app so volume mounts resolve correctly.
-_HERE         = Path(__file__).parent
+_HERE = Path(__file__).parent
 _PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", str(_HERE.parent.parent)))
 
-DOCS_DIR         = Path(os.getenv("DOCS_DIR",        str(_PROJECT_ROOT / "documents" / "anonymized_docs")))
-JSON_DIR         = Path(os.getenv("JSON_DIR",        str(_PROJECT_ROOT / "documents" / "ocr_results" / "json")))
-PREPROCESS_DIR   = Path(os.getenv("PREPROCESS_DIR",  str(_PROJECT_ROOT / "documents" / "ocr_results" / "preprocessed")))
+DOCS_DIR = Path(os.getenv("DOCS_DIR", str(_PROJECT_ROOT / "documents" / "anonymized_docs")))
+JSON_DIR = Path(os.getenv("JSON_DIR", str(_PROJECT_ROOT / "documents" / "ocr_results" / "json")))
+PREPROCESS_DIR = Path(
+    os.getenv("PREPROCESS_DIR", str(_PROJECT_ROOT / "documents" / "ocr_results" / "preprocessed"))
+)
 VLM_RESULTS_FILE = Path(os.getenv("VLM_RESULTS_FILE", str(JSON_DIR / "vlm_qwen25_results.json")))
 
 # ── App + CORS ────────────────────────────────────────────────────────────────
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from ingest_router import startup, shutdown
     from cache import init_cache
+    from ingest_router import shutdown, startup
+
     await startup()
     await init_cache()
     yield
@@ -91,7 +93,7 @@ if _cors_env:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_env.split(","),
-        allow_credentials=True,          # required for httpOnly cookie exchange
+        allow_credentials=True,  # required for httpOnly cookie exchange
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
@@ -128,8 +130,8 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONR
         headers={"Retry-After": str(retry_after)},
     )
 
-# ── Auth helpers ──────────────────────────────────────────────────────────────
 
+# ── Auth helpers ──────────────────────────────────────────────────────────────
 
 
 def _create_token(user_id: str, jti: str) -> str:
@@ -154,8 +156,9 @@ def _set_auth_cookie(response: Response, token: str) -> None:
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
+
 class LoginRequest(BaseModel):
-    email:    str
+    email: str
     password: str
 
 
@@ -172,7 +175,7 @@ async def login(
     On success, sets an httpOnly `access_token` cookie containing a signed JWT.
     The cookie is required for all subsequent authenticated requests.
     """
-    from ingest_router import _engine  # lazy — engine not ready at import time
+    from ingest_router import _engine  # lazy - engine not ready at import time
 
     async with _engine().connect() as conn:
         row = await conn.execute(
@@ -189,12 +192,14 @@ async def login(
         user = row.one_or_none()
 
     if (
-        user is None or not user[5] or not user[8]
+        user is None
+        or not user[5]
+        or not user[8]
         or not _bcrypt.checkpw(body.password.encode(), user[4].encode())
     ):
         raise HTTPException(status_code=401, detail=t("auth.incorrect_credentials", locale))
 
-    jti   = str(uuid.uuid4())
+    jti = str(uuid.uuid4())
     token = _create_token(str(user[0]), jti)
     _set_auth_cookie(response, token)
 
@@ -206,30 +211,35 @@ async def login(
     )
 
     return {
-        "id": str(user[0]), "email": user[1], "full_name": user[2], "role": user[3],
-        "tenant_slug": user[6], "tenant_name": user[7], "can_manage_access": user[9],
+        "id": str(user[0]),
+        "email": user[1],
+        "full_name": user[2],
+        "role": user[3],
+        "tenant_slug": user[6],
+        "tenant_name": user[7],
+        "can_manage_access": user[9],
         "can_edit_extraction": user[10],
     }
 
 
 @app.post("/api/auth/logout", tags=["auth"], summary="Log out")
 async def logout(
-    request:      Request,
-    response:     Response,
-    access_token: Optional[str] = Cookie(default=None),
+    request: Request,
+    response: Response,
+    access_token: str | None = Cookie(default=None),
 ):
     """Blocklist the current JWT and clear the auth cookie."""
     user_id = None
-    user_email: Optional[str] = None
+    user_email: str | None = None
 
     if access_token:
         try:
             from ingest_router import _engine  # lazy import
 
-            token   = access_token.removeprefix("Bearer ")
+            token = access_token.removeprefix("Bearer ")
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            jti     = payload.get("jti")
-            exp     = payload.get("exp")
+            jti = payload.get("jti")
+            exp = payload.get("exp")
             user_id = payload.get("sub")
             if jti and exp:
                 expired_at = datetime.fromtimestamp(exp, tz=timezone.utc)
@@ -259,10 +269,10 @@ async def logout(
 async def me(current_user: CurrentUser = Depends(get_current_user)):
     """Return the profile of the currently authenticated user, or 401 if not logged in."""
     return {
-        "id":          current_user.id,
-        "email":       current_user.email,
-        "full_name":   current_user.full_name,
-        "role":        current_user.role,
+        "id": current_user.id,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
         "tenant_slug": current_user.tenant_slug,
         "tenant_name": current_user.tenant_name,
         "can_manage_access": current_user.can_manage_access,
@@ -271,6 +281,7 @@ async def me(current_user: CurrentUser = Depends(get_current_user)):
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
+
 
 def _stem(filename: str) -> str:
     return Path(filename).stem
@@ -281,10 +292,7 @@ def _list_images(dir_path: Path) -> list[str]:
     (e.g. no documents have been ingested)."""
     if not dir_path.is_dir():
         return []
-    return sorted(
-        f for f in os.listdir(dir_path)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    )
+    return sorted(f for f in os.listdir(dir_path) if f.lower().endswith((".png", ".jpg", ".jpeg")))
 
 
 def _load_vlm_all(locale: str = "en") -> dict:
@@ -297,6 +305,7 @@ def _load_vlm_all(locale: str = "en") -> dict:
 
 
 # ── OCR endpoints ─────────────────────────────────────────────────────────────
+
 
 @app.get("/api/documents", tags=["ocr"], summary="List documents (OCR)")
 def list_documents(current_user: str = Depends(get_current_user)):
@@ -324,7 +333,9 @@ def get_document_result(filename: str, current_user: str = Depends(get_current_u
     """
     json_path = JSON_DIR / f"{_stem(filename)}_results.json"
     if not json_path.exists():
-        raise HTTPException(status_code=404, detail=t("benchmarks.no_ocr_result", current_user.locale))
+        raise HTTPException(
+            status_code=404, detail=t("benchmarks.no_ocr_result", current_user.locale)
+        )
     return json.loads(json_path.read_text(encoding="utf-8"))
 
 
@@ -333,11 +344,14 @@ def get_all_ocr_results(current_user: str = Depends(get_current_user)):
     """Return the combined _all_results.json file containing OCR results for every document."""
     all_path = JSON_DIR / "_all_results.json"
     if not all_path.exists():
-        raise HTTPException(status_code=404, detail=t("benchmarks.all_results_not_found", current_user.locale))
+        raise HTTPException(
+            status_code=404, detail=t("benchmarks.all_results_not_found", current_user.locale)
+        )
     return json.loads(all_path.read_text(encoding="utf-8"))
 
 
 # ── VLM endpoints ─────────────────────────────────────────────────────────────
+
 
 @app.get("/api/vlm/documents", tags=["vlm"], summary="List documents (VLM)")
 def list_vlm_documents(current_user: str = Depends(get_current_user)):
@@ -359,7 +373,9 @@ def get_vlm_result(filename: str, current_user: str = Depends(get_current_user))
     """
     all_results = _load_vlm_all(current_user.locale)
     if filename not in all_results:
-        raise HTTPException(status_code=404, detail=t("benchmarks.no_vlm_result", current_user.locale))
+        raise HTTPException(
+            status_code=404, detail=t("benchmarks.no_vlm_result", current_user.locale)
+        )
     return all_results[filename]
 
 
@@ -370,6 +386,7 @@ def get_all_vlm_results(current_user: str = Depends(get_current_user)):
 
 
 # ── Image endpoints ───────────────────────────────────────────────────────────
+
 
 @app.get("/images/raw/{filename}", tags=["images"], summary="Original document image")
 def serve_raw_image(filename: str, current_user: str = Depends(get_current_user)):
@@ -387,26 +404,32 @@ def serve_preprocessed_image(filename: str, current_user: str = Depends(get_curr
     ext = Path(filename).suffix
     path = PREPROCESS_DIR / f"{stem}_preprocessed{ext}"
     if not path.exists():
-        raise HTTPException(status_code=404, detail=t("images.preprocessed_not_found", current_user.locale))
+        raise HTTPException(
+            status_code=404, detail=t("images.preprocessed_not_found", current_user.locale)
+        )
     return FileResponse(path)
 
 
 # ── Ingest router ─────────────────────────────────────────────────────────────
 
-from ingest_router import router as ingest_router  # noqa: E402
+from ingest_router import router as ingest_router
+
 app.include_router(ingest_router)
 
 # ── Documents DB router ───────────────────────────────────────────────────────
 
-from documents_router import router as documents_router  # noqa: E402
+from documents_router import router as documents_router
+
 app.include_router(documents_router)
 
 # ── Review queue router ───────────────────────────────────────────────────────
 
-from review_router import router as review_router  # noqa: E402
+from review_router import router as review_router
+
 app.include_router(review_router)
 
 # ── Admin router ──────────────────────────────────────────────────────────────
 
-from admin_router import router as admin_router  # noqa: E402
+from admin_router import router as admin_router
+
 app.include_router(admin_router)

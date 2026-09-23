@@ -22,11 +22,10 @@ export default function ImageViewer({ filename }: Props) {
           <button
             key={v}
             onClick={() => { setVariant(v); setError(false); }}
-            className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-              variant === v
+            className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${variant === v
                 ? "bg-indigo-600 text-white"
                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
+              }`}
           >
             {v === "raw" ? t("imageViewer.raw") : t("imageViewer.preprocessed")}
           </button>
@@ -42,7 +41,7 @@ export default function ImageViewer({ filename }: Props) {
           <img
             key={src}
             src={src}
-            alt={`${filename} — ${variant}`}
+            alt={`${filename} - ${variant}`}
             className="max-w-full max-h-[600px] object-contain"
             onError={() => setError(true)}
           />

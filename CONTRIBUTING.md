@@ -56,7 +56,7 @@ pre-commit install
 # Start the FastAPI server (port 8000)
 cd apps/api && uvicorn api_server:app --reload --port 8000
 
-# Start the React dev server (port 5173) — from repo root
+# Start the React dev server (port 5173) - from repo root
 pnpm dev
 ```
 
@@ -71,10 +71,10 @@ docker compose up --build
 ## Project layout
 
 ```
-apps/api/         — FastAPI backend (Python)
-apps/frontend/    — React + Vite frontend (TypeScript)
-packages/types/   — Zod schemas shared by frontend and api-client
-packages/api-client/ — typed fetch wrapper used by the frontend
+apps/api/         - FastAPI backend (Python)
+apps/frontend/    - React + Vite frontend (TypeScript)
+packages/types/   - Zod schemas shared by frontend and api-client
+packages/api-client/ - typed fetch wrapper used by the frontend
 ```
 
 See [AGENTS.md](./AGENTS.md) for the detailed architecture reference and [CONTEXT.md](./CONTEXT.md) for current project state.
@@ -128,14 +128,14 @@ pre-commit run --all-files
 
 - All data routes **must** use `Depends(get_current_user)`. Admin-only routes additionally use `Depends(require_admin)`.
 - Never use `allow_origins=["*"]` with `allow_credentials=True`.
-- Import `_engine` and `_session` from `ingest_router` **lazily** (inside function bodies) in `auth.py` and `audit.py` — this avoids a circular import.
-- `log_action()` must never propagate exceptions — it swallows them by design.
-- Use `bcrypt` directly for password hashing — `passlib` is not a dependency of this project.
+- Import `_engine` and `_session` from `ingest_router` **lazily** (inside function bodies) in `auth.py` and `audit.py` - this avoids a circular import.
+- `log_action()` must never propagate exceptions - it swallows them by design.
+- Use `bcrypt` directly for password hashing - `passlib` is not a dependency of this project.
 - Schemas (Zod) live in `packages/types`; fetch functions live in `packages/api-client`. Do not duplicate them.
 
 ### TypeScript (React)
 
-- `moduleResolution: "bundler"` — packages export `./src/index.ts` directly (no build step).
+- `moduleResolution: "bundler"` - packages export `./src/index.ts` directly (no build step).
 - Do **not** add `rootDir` to `packages/api-client/tsconfig.json`.
 - All fetch calls use `credentials: "include"` for cookie-based auth.
 - New pages go in `apps/frontend/src/pages/` and are registered in `App.tsx` inside `<ProtectedRoute>` (or `<AdminRoute>` for admin-only pages).
@@ -147,8 +147,8 @@ pre-commit run --all-files
 
 ### General
 
-- Do not bake `documents/` into Docker images — always mount as a volume.
-- Default to writing no comments. Add one only when the *why* is non-obvious — a hidden constraint, a workaround for a specific bug, a subtle invariant.
+- Do not bake `documents/` into Docker images - always mount as a volume.
+- Default to writing no comments. Add one only when the *why* is non-obvious - a hidden constraint, a workaround for a specific bug, a subtle invariant.
 - Don't add error handling or validation for scenarios that cannot happen. Only validate at system boundaries (user input, external APIs).
 
 ---
@@ -172,7 +172,7 @@ venv311/bin/pytest -m "not benchmark" -v
 venv311/bin/pytest -m benchmark -v
 ```
 
-Benchmarks are excluded from the standard run by design — they are slow and not suitable for CI. Mark new benchmark tests with `@pytest.mark.benchmark` and document latency budgets with `time.perf_counter()` assertions (do **not** use `benchmark.stats.mean` — it is broken in pytest-benchmark 4.x).
+Benchmarks are excluded from the standard run by design - they are slow and not suitable for CI. Mark new benchmark tests with `@pytest.mark.benchmark` and document latency budgets with `time.perf_counter()` assertions (do **not** use `benchmark.stats.mean` - it is broken in pytest-benchmark 4.x).
 
 ### Writing tests
 
@@ -197,16 +197,16 @@ pnpm test                         # all packages
 2. Make sure `pre-commit run --all-files` passes cleanly.
 3. Make sure the full test suite passes: `pnpm test && pnpm test:api`.
 4. Open a pull request against `main` with a clear description of *what* changed and *why*.
-5. Keep PRs focused — one feature or fix per PR. Large refactors should be discussed in an issue first.
+5. Keep PRs focused - one feature or fix per PR. Large refactors should be discussed in an issue first.
 
 ---
 
 ## What not to do
 
 - Do not skip `Depends(get_current_user)` on any data route.
-- Do not commit files from `documents/`, `venv/`, or `venv311/` — they are in `.gitignore`.
+- Do not commit files from `documents/`, `venv/`, or `venv311/` - they are in `.gitignore`.
 - Do not add `rootDir` to `packages/api-client/tsconfig.json`.
-- Do not use `passlib` — use `bcrypt` directly.
+- Do not use `passlib` - use `bcrypt` directly.
 - Do not use `allow_origins=["*"]` with `allow_credentials=True`.
 - Do not commit `.env` files or any file containing secrets.
 - Do not amend published commits or force-push to `main`.

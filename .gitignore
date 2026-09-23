@@ -1,10 +1,10 @@
-# Government documents — never commit
+# Government documents - never commit
 documents/
 
-# TLS certificates and private keys — never commit
+# TLS certificates and private keys - never commit
 certs/
 
-# Database and file backups — never commit
+# Database and file backups - never commit
 backups/
 
 # Dependencies
@@ -30,3 +30,7 @@ dist/
 # Build outputs
 apps/*/dist/
 packages/*/dist/
+
+# Claude Code local permission cache - personal, not shared config
+.claude/settings.json
+.claude/settings.local.json

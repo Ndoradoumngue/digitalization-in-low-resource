@@ -1,13 +1,12 @@
 """Tests for /api/db/* endpoints and _sanitize helper."""
 
-import pytest
 from unittest.mock import AsyncMock
 
 import documents_router
 from conftest import ADMIN, REVIEWER, make_result
 
-
 # ── _sanitize unit tests ──────────────────────────────────────────────────────
+
 
 def test_sanitize_lowercases():
     assert documents_router._sanitize("OrderDeMission") == "orderdemission"
@@ -44,10 +43,14 @@ def test_sanitize_truncates_to_63_chars():
 # searchable/extra; document_type is searchable but never in extra_fields
 # (it gets its own dedicated projected column instead).
 
+
 def test_searchable_cols_excludes_base_and_non_text():
     cols = {
-        "id": "uuid", "source_image_path": "text", "confidence": "text",
-        "reference_number": "text", "person_names": "jsonb",
+        "id": "uuid",
+        "source_image_path": "text",
+        "confidence": "text",
+        "reference_number": "text",
+        "person_names": "jsonb",
     }
     assert documents_router._searchable_cols(cols) == ["reference_number"]
 
@@ -64,25 +67,42 @@ def test_searchable_cols_empty_when_no_text_fields():
 
 def test_extra_cols_excludes_base_and_document_type():
     cols = {
-        "id": "uuid", "source_image_path": "text", "confidence": "text",
-        "document_type": "text", "reference_number": "text", "person_names": "jsonb",
+        "id": "uuid",
+        "source_image_path": "text",
+        "confidence": "text",
+        "document_type": "text",
+        "reference_number": "text",
+        "person_names": "jsonb",
     }
     assert set(documents_router._extra_cols(cols)) == {"reference_number", "person_names"}
 
 
 # ── _per_table_select generalized-search SQL ──────────────────────────────────
 
+
 def test_per_table_select_builds_extra_fields_from_actual_columns():
     """A non-admin-document schema (e.g. a lexicon table with no
     reference_number/organisation/etc.) must still be projectable and, if
-    it has any TEXT field, searchable — this was the concrete gap the
+    it has any TEXT field, searchable - this was the concrete gap the
     hardcoded field list left before generalized search."""
-    cols = {"id": "uuid", "source_image_path": "text", "confidence": "text",
-            "review_status": "text", "ingested_at": "timestamp with time zone",
-            "kabalay": "text", "french": "text", "entries": "jsonb"}
+    cols = {
+        "id": "uuid",
+        "source_image_path": "text",
+        "confidence": "text",
+        "review_status": "text",
+        "ingested_at": "timestamp with time zone",
+        "kabalay": "text",
+        "french": "text",
+        "entries": "jsonb",
+    }
     sql = documents_router._per_table_select(
-        "t_default_lexique", cols,
-        q="mot", confidence=None, review_status=None, date_from=None, date_to=None,
+        "t_default_lexique",
+        cols,
+        q="mot",
+        confidence=None,
+        review_status=None,
+        date_from=None,
+        date_to=None,
         current_user=REVIEWER,
     )
     assert sql is not None
@@ -96,8 +116,13 @@ def test_per_table_select_builds_extra_fields_from_actual_columns():
 def test_per_table_select_excludes_table_with_no_text_cols_when_searching():
     cols = {"id": "uuid", "source_image_path": "text", "entries": "jsonb"}
     sql = documents_router._per_table_select(
-        "t_default_all_jsonb", cols,
-        q="mot", confidence=None, review_status=None, date_from=None, date_to=None,
+        "t_default_all_jsonb",
+        cols,
+        q="mot",
+        confidence=None,
+        review_status=None,
+        date_from=None,
+        date_to=None,
         current_user=REVIEWER,
     )
     assert sql is None
@@ -106,9 +131,15 @@ def test_per_table_select_excludes_table_with_no_text_cols_when_searching():
 def test_per_table_select_reviewed_by_filter():
     cols = {"id": "uuid", "source_image_path": "text", "reviewed_by": "uuid"}
     sql = documents_router._per_table_select(
-        "t_default_arrete", cols,
-        q=None, confidence=None, review_status=None, date_from=None, date_to=None,
-        reviewed_by="some-user-id", current_user=REVIEWER,
+        "t_default_arrete",
+        cols,
+        q=None,
+        confidence=None,
+        review_status=None,
+        date_from=None,
+        date_to=None,
+        reviewed_by="some-user-id",
+        current_user=REVIEWER,
     )
     assert sql is not None
     assert "reviewed_by = CAST(:reviewed_by AS uuid)" in sql
@@ -117,12 +148,18 @@ def test_per_table_select_reviewed_by_filter():
 def test_per_table_select_excludes_table_without_reviewed_by_column():
     """A table that has never had a document reviewed (no reviewed_by
     column yet, per patch_review's lazy ALTER) can't match a reviewed_by
-    filter — it must be excluded from the UNION, not error."""
+    filter - it must be excluded from the UNION, not error."""
     cols = {"id": "uuid", "source_image_path": "text"}
     sql = documents_router._per_table_select(
-        "t_default_never_reviewed", cols,
-        q=None, confidence=None, review_status=None, date_from=None, date_to=None,
-        reviewed_by="some-user-id", current_user=REVIEWER,
+        "t_default_never_reviewed",
+        cols,
+        q=None,
+        confidence=None,
+        review_status=None,
+        date_from=None,
+        date_to=None,
+        reviewed_by="some-user-id",
+        current_user=REVIEWER,
     )
     assert sql is None
 
@@ -130,9 +167,15 @@ def test_per_table_select_excludes_table_without_reviewed_by_column():
 def test_per_table_select_series_filter():
     cols = {"id": "uuid", "source_image_path": "text", "series_id": "uuid"}
     sql = documents_router._per_table_select(
-        "t_default_arrete", cols,
-        q=None, confidence=None, review_status=None, date_from=None, date_to=None,
-        series="some-series-id", current_user=REVIEWER,
+        "t_default_arrete",
+        cols,
+        q=None,
+        confidence=None,
+        review_status=None,
+        date_from=None,
+        date_to=None,
+        series="some-series-id",
+        current_user=REVIEWER,
     )
     assert sql is not None
     assert "series_id = CAST(:series AS uuid)" in sql
@@ -141,8 +184,9 @@ def test_per_table_select_series_filter():
 
 # ── _access_where_clause / document-level access control ─────────────────────
 
+
 def test_access_where_clause_empty_for_admin():
-    """Admins get no filter at all — see everything, no matter what
+    """Admins get no filter at all - see everything, no matter what
     sdai_document_access says."""
     assert documents_router._access_where_clause("t_default_arrete", ADMIN) == ""
 
@@ -157,8 +201,13 @@ def test_access_where_clause_present_for_reviewer():
 def test_per_table_select_includes_access_clause_for_non_admin():
     cols = {"id": "uuid", "source_image_path": "text", "reference_number": "text"}
     sql = documents_router._per_table_select(
-        "t_default_arrete", cols,
-        q=None, confidence=None, review_status=None, date_from=None, date_to=None,
+        "t_default_arrete",
+        cols,
+        q=None,
+        confidence=None,
+        review_status=None,
+        date_from=None,
+        date_to=None,
         current_user=REVIEWER,
     )
     assert "sdai_document_access" in sql
@@ -167,14 +216,20 @@ def test_per_table_select_includes_access_clause_for_non_admin():
 def test_per_table_select_omits_access_clause_for_admin():
     cols = {"id": "uuid", "source_image_path": "text"}
     sql = documents_router._per_table_select(
-        "t_default_arrete", cols,
-        q=None, confidence=None, review_status=None, date_from=None, date_to=None,
+        "t_default_arrete",
+        cols,
+        q=None,
+        confidence=None,
+        review_status=None,
+        date_from=None,
+        date_to=None,
         current_user=ADMIN,
     )
     assert "sdai_document_access" not in sql
 
 
 # ── Auth guards ───────────────────────────────────────────────────────────────
+
 
 def test_list_types_requires_auth(client):
     assert client.get("/api/db/types").status_code == 401
@@ -198,17 +253,20 @@ def test_serve_image_requires_auth(client):
 
 # ── list_types ────────────────────────────────────────────────────────────────
 
+
 def test_list_types_empty_db(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={}))
+    monkeypatch.setattr(documents_router, "_get_tables_columns", AsyncMock(return_value={}))
     resp = auth_client.get("/api/db/types")
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 def test_list_types_returns_table_info(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"ordre_de_mission": {"id": "uuid", "source_image_path": "text"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"ordre_de_mission": {"id": "uuid", "source_image_path": "text"}}),
+    )
     mock_db.execute.return_value = make_result(one=(5, None, "ordre_de_mission"))
 
     resp = auth_client.get("/api/db/types")
@@ -221,25 +279,34 @@ def test_list_types_returns_table_info(auth_client, mock_db, monkeypatch):
 
 # ── list_reviewers ────────────────────────────────────────────────────────────
 
+
 def test_list_reviewers_empty_when_no_reviewed_tables(auth_client, mock_db, monkeypatch):
     """A table that has never had a document approved/rejected has no
-    reviewed_by column yet (patch_review adds it lazily) — it must not be
+    reviewed_by column yet (patch_review adds it lazily) - it must not be
     queried for reviewer ids at all."""
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     resp = auth_client.get("/api/db/reviewers")
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 def test_list_reviewers_returns_resolved_names(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={
-                            "my_table": {"id": "uuid", "reviewed_by": "uuid"},
-                        }))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(
+            return_value={
+                "my_table": {"id": "uuid", "reviewed_by": "uuid"},
+            }
+        ),
+    )
     reviewer_id = "11111111-1111-1111-1111-111111111111"
     mock_db.execute.side_effect = [
-        make_result(rows=[(reviewer_id,)]),                          # id union
+        make_result(rows=[(reviewer_id,)]),  # id union
         make_result(rows=[(reviewer_id, "r@example.com", "Rita")]),  # user resolve
     ]
     resp = auth_client.get("/api/db/reviewers")
@@ -253,9 +320,9 @@ def test_list_reviewers_returns_resolved_names(auth_client, mock_db, monkeypatch
 
 # ── list_documents ────────────────────────────────────────────────────────────
 
+
 def test_list_documents_empty_db(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={}))
+    monkeypatch.setattr(documents_router, "_get_tables_columns", AsyncMock(return_value={}))
     resp = auth_client.get("/api/db/documents")
     assert resp.status_code == 200
     body = resp.json()
@@ -264,14 +331,21 @@ def test_list_documents_empty_db(auth_client, mock_db, monkeypatch):
 
 
 def test_list_documents_returns_results(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={
-                            "my_table": {
-                                "id": "uuid", "source_image_path": "text",
-                                "ingested_at": "timestamp with time zone",
-                                "confidence": "text", "review_status": "text",
-                            }
-                        }))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(
+            return_value={
+                "my_table": {
+                    "id": "uuid",
+                    "source_image_path": "text",
+                    "ingested_at": "timestamp with time zone",
+                    "confidence": "text",
+                    "review_status": "text",
+                }
+            }
+        ),
+    )
     doc = {
         "id": "doc-uuid-1",
         "table_name": "my_table",
@@ -293,8 +367,11 @@ def test_list_documents_returns_results(auth_client, mock_db, monkeypatch):
 
 
 def test_list_documents_unknown_type_returns_empty(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"known_table": {"id": "uuid"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"known_table": {"id": "uuid"}}),
+    )
     resp = auth_client.get("/api/db/documents?document_type=nonexistent")
     assert resp.status_code == 200
     assert resp.json()["total"] == 0
@@ -302,16 +379,19 @@ def test_list_documents_unknown_type_returns_empty(auth_client, mock_db, monkeyp
 
 # ── get_document_detail ───────────────────────────────────────────────────────
 
+
 def test_get_document_detail_table_not_found(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={}))
+    monkeypatch.setattr(documents_router, "_get_tables_columns", AsyncMock(return_value={}))
     resp = auth_client.get("/api/db/documents/unknown_table/some-id")
     assert resp.status_code == 404
 
 
 def test_get_document_detail_doc_not_found(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid", "source_image_path": "text"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid", "source_image_path": "text"}}),
+    )
     mock_db.execute.return_value = make_result(one_or_none=None)
 
     resp = auth_client.get("/api/db/documents/my_table/nonexistent-id")
@@ -319,8 +399,11 @@ def test_get_document_detail_doc_not_found(auth_client, mock_db, monkeypatch):
 
 
 def test_get_document_detail_success(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}),
+    )
     row = {"id": "doc-uuid-1", "reference_number": "REF-001"}
     mock_db.execute.return_value = make_result(one_or_none=row)
 
@@ -331,9 +414,10 @@ def test_get_document_detail_success(auth_client, mock_db, monkeypatch):
 
 # ── update_document_fields ────────────────────────────────────────────────────
 
+
 def test_update_document_fields_requires_extraction_editor(auth_client):
     """A plain reviewer (no can_edit_extraction) can't edit a document's
-    fields at all — not even one already visible to them, and not even
+    fields at all - not even one already visible to them, and not even
     at the auth-check stage before table/visibility lookups run."""
     resp = auth_client.patch(
         "/api/db/documents/my_table/doc-1/fields",
@@ -343,8 +427,7 @@ def test_update_document_fields_requires_extraction_editor(auth_client):
 
 
 def test_update_document_fields_table_not_found(extraction_editor_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={}))
+    monkeypatch.setattr(documents_router, "_get_tables_columns", AsyncMock(return_value={}))
     resp = extraction_editor_client.patch(
         "/api/db/documents/missing_table/doc-1/fields",
         json={"fields": {"reference_number": "REF-002"}},
@@ -353,8 +436,11 @@ def test_update_document_fields_table_not_found(extraction_editor_client, mock_d
 
 
 def test_update_document_fields_requires_visibility(extraction_editor_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}),
+    )
     mock_db.execute.return_value = make_result(one_or_none=None)  # not visible
     resp = extraction_editor_client.patch(
         "/api/db/documents/my_table/doc-1/fields",
@@ -363,9 +449,14 @@ def test_update_document_fields_requires_visibility(extraction_editor_client, mo
     assert resp.status_code == 404
 
 
-def test_update_document_fields_no_editable_fields_returns_422(extraction_editor_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+def test_update_document_fields_no_editable_fields_returns_422(
+    extraction_editor_client, mock_db, monkeypatch
+):
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}),
+    )
     mock_db.execute.return_value = make_result(one_or_none=(1,))  # _document_visible
     resp = extraction_editor_client.patch(
         "/api/db/documents/my_table/doc-1/fields",
@@ -375,13 +466,16 @@ def test_update_document_fields_no_editable_fields_returns_422(extraction_editor
 
 
 def test_update_document_fields_success(extraction_editor_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}),
+    )
     updated_row = {"id": "doc-1", "reference_number": "REF-002"}
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),           # _document_visible
-        make_result(one_or_none=updated_row),    # UPDATE ... RETURNING *
-        make_result(),                           # log_action
+        make_result(one_or_none=(1,)),  # _document_visible
+        make_result(one_or_none=updated_row),  # UPDATE ... RETURNING *
+        make_result(),  # log_action
     ]
     resp = extraction_editor_client.patch(
         "/api/db/documents/my_table/doc-1/fields",
@@ -393,8 +487,11 @@ def test_update_document_fields_success(extraction_editor_client, mock_db, monke
 
 def test_update_document_fields_success_as_admin(admin_client, mock_db, monkeypatch):
     """Admins can always edit extraction data, no delegated flag needed."""
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}),
+    )
     updated_row = {"id": "doc-1", "reference_number": "REF-003"}
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),
@@ -410,30 +507,43 @@ def test_update_document_fields_success_as_admin(admin_client, mock_db, monkeypa
 
 # ── document links ────────────────────────────────────────────────────────────
 
+
 def test_get_document_links_table_not_found(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={}))
+    monkeypatch.setattr(documents_router, "_get_tables_columns", AsyncMock(return_value={}))
     resp = auth_client.get("/api/db/documents/my_table/doc-1/links")
     assert resp.status_code == 404
 
 
 def test_get_document_links_returns_enriched(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={
-                            "my_table":    {"id": "uuid", "source_image_path": "text"},
-                            "other_table": {"id": "uuid", "reference_number": "text"},
-                        }))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(
+            return_value={
+                "my_table": {"id": "uuid", "source_image_path": "text"},
+                "other_table": {"id": "uuid", "reference_number": "text"},
+            }
+        ),
+    )
     link_row = {
-        "id": "link-1", "from_table": "my_table", "from_id": "doc-1",
-        "to_table": "other_table", "to_id": "doc-2", "relation": "concerns",
-        "note": None, "created_by": None, "created_at": None,
+        "id": "link-1",
+        "from_table": "my_table",
+        "from_id": "doc-1",
+        "to_table": "other_table",
+        "to_id": "doc-2",
+        "relation": "concerns",
+        "note": None,
+        "created_by": None,
+        "created_at": None,
     }
     other_row = {
-        "id": "doc-2", "document_type": "titre_foncier",
-        "source_image_path": "/img.png", "display": "REF-99",
+        "id": "doc-2",
+        "document_type": "titre_foncier",
+        "source_image_path": "/img.png",
+        "display": "REF-99",
     }
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),    # _document_visible(my_table, doc-1)
+        make_result(one_or_none=(1,)),  # _document_visible(my_table, doc-1)
         make_result(rows=[link_row]),
         make_result(rows=[other_row]),
     ]
@@ -457,8 +567,11 @@ def test_create_document_link_self_link_rejected(auth_client, mock_db, monkeypat
 
 
 def test_create_document_link_unknown_target_table_rejected(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     resp = auth_client.post(
         "/api/db/documents/my_table/doc-1/links",
         json={"to_table": "other_tenants_table", "to_id": "doc-2", "relation": "concerns"},
@@ -467,16 +580,21 @@ def test_create_document_link_unknown_target_table_rejected(auth_client, mock_db
 
 
 def test_create_document_link_success(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={
-                            "my_table":    {"id": "uuid"},
-                            "other_table": {"id": "uuid"},
-                        }))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(
+            return_value={
+                "my_table": {"id": "uuid"},
+                "other_table": {"id": "uuid"},
+            }
+        ),
+    )
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),      # from doc exists
-        make_result(one_or_none=(1,)),      # to doc exists
+        make_result(one_or_none=(1,)),  # from doc exists
+        make_result(one_or_none=(1,)),  # to doc exists
         make_result(scalar="link-uuid-1"),  # INSERT ... RETURNING id
-        make_result(),                      # log_action
+        make_result(),  # log_action
     ]
 
     resp = auth_client.post(
@@ -490,17 +608,22 @@ def test_create_document_link_success(auth_client, mock_db, monkeypatch):
 def test_create_document_link_duplicate_returns_existing(auth_client, mock_db, monkeypatch):
     """Concurrent/duplicate identical link requests converge to the same
     row (ON CONFLICT DO NOTHING + fallback SELECT) instead of erroring."""
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={
-                            "my_table":    {"id": "uuid"},
-                            "other_table": {"id": "uuid"},
-                        }))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(
+            return_value={
+                "my_table": {"id": "uuid"},
+                "other_table": {"id": "uuid"},
+            }
+        ),
+    )
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),           # from doc exists
-        make_result(one_or_none=(1,)),           # to doc exists
-        make_result(scalar=None),                # INSERT ... ON CONFLICT DO NOTHING -> no row
+        make_result(one_or_none=(1,)),  # from doc exists
+        make_result(one_or_none=(1,)),  # to doc exists
+        make_result(scalar=None),  # INSERT ... ON CONFLICT DO NOTHING -> no row
         make_result(scalar="existing-link-id"),  # fallback SELECT
-        make_result(),                           # log_action
+        make_result(),  # log_action
     ]
 
     resp = auth_client.post(
@@ -519,15 +642,20 @@ def test_delete_document_link_not_found(auth_client, mock_db, monkeypatch):
 
 def test_delete_document_link_success(auth_client, mock_db, monkeypatch):
     link_row = {
-        "from_table": "my_table", "from_id": "doc-1",
-        "to_table": "other_table", "to_id": "doc-2", "relation": "concerns",
+        "from_table": "my_table",
+        "from_id": "doc-1",
+        "to_table": "other_table",
+        "to_id": "doc-2",
+        "relation": "concerns",
     }
     mock_db.execute.side_effect = [
-        make_result(one_or_none=link_row),   # SELECT the link
-        make_result(one_or_none=(1,)),       # _document_visible(from) — both checks always run (no short-circuit)
-        make_result(one_or_none=(1,)),       # _document_visible(to)
-        make_result(one_or_none=link_row),   # DELETE ... RETURNING
-        make_result(),                       # log_action
+        make_result(one_or_none=link_row),  # SELECT the link
+        make_result(
+            one_or_none=(1,)
+        ),  # _document_visible(from) - both checks always run (no short-circuit)
+        make_result(one_or_none=(1,)),  # _document_visible(to)
+        make_result(one_or_none=link_row),  # DELETE ... RETURNING
+        make_result(),  # log_action
     ]
     resp = auth_client.delete("/api/db/links/link-1")
     assert resp.status_code == 200
@@ -535,6 +663,7 @@ def test_delete_document_link_success(auth_client, mock_db, monkeypatch):
 
 
 # ── grantees (groups/users available to tag a document with) ─────────────────
+
 
 def test_list_grantees_requires_access_manager(auth_client):
     """A plain reviewer (not admin, not can_manage_access) can't tag
@@ -569,9 +698,13 @@ def test_list_grantees_returns_groups_and_users_for_admin(admin_client, mock_db)
 
 # ── document access grants ────────────────────────────────────────────────────
 
+
 def test_get_document_access_requires_visibility(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     mock_db.execute.return_value = make_result(one_or_none=None)  # not visible
     resp = auth_client.get("/api/db/documents/my_table/doc-1/access")
     assert resp.status_code == 404
@@ -579,16 +712,23 @@ def test_get_document_access_requires_visibility(auth_client, mock_db, monkeypat
 
 def test_get_document_access_returns_grants(auth_client, mock_db, monkeypatch):
     import datetime as _dt
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     grant_row = {
-        "id": "grant-1", "grantee_type": "group", "grantee_id": "group-1",
-        "granted_by": None, "granted_at": _dt.datetime(2026, 1, 1),
+        "id": "grant-1",
+        "grantee_type": "group",
+        "grantee_id": "group-1",
+        "granted_by": None,
+        "granted_at": _dt.datetime(2026, 1, 1),
     }
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),                     # _document_visible
-        make_result(rows=[grant_row]),                     # SELECT grants
-        make_result(rows=[("group-1", "HR")]),              # resolve group names
+        make_result(one_or_none=(1,)),  # _document_visible
+        make_result(rows=[grant_row]),  # SELECT grants
+        make_result(rows=[("group-1", "HR")]),  # resolve group names
     ]
     resp = auth_client.get("/api/db/documents/my_table/doc-1/access")
     assert resp.status_code == 200
@@ -599,7 +739,7 @@ def test_get_document_access_returns_grants(auth_client, mock_db, monkeypatch):
 
 
 def test_create_document_access_requires_access_manager(auth_client, mock_db, monkeypatch):
-    """A plain reviewer (not admin, not can_manage_access) is rejected —
+    """A plain reviewer (not admin, not can_manage_access) is rejected -
     tagging a document with an access grant is the delegated permission."""
     resp = auth_client.post(
         "/api/db/documents/my_table/doc-1/access",
@@ -608,14 +748,19 @@ def test_create_document_access_requires_access_manager(auth_client, mock_db, mo
     assert resp.status_code == 403
 
 
-def test_create_document_access_success_as_access_manager(access_manager_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+def test_create_document_access_success_as_access_manager(
+    access_manager_client, mock_db, monkeypatch
+):
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),          # _document_visible
-        make_result(one_or_none=(1,)),          # grantee (group) exists
-        make_result(scalar="grant-uuid-1"),     # INSERT ... RETURNING id
-        make_result(),                          # log_action
+        make_result(one_or_none=(1,)),  # _document_visible
+        make_result(one_or_none=(1,)),  # grantee (group) exists
+        make_result(scalar="grant-uuid-1"),  # INSERT ... RETURNING id
+        make_result(),  # log_action
     ]
     resp = access_manager_client.post(
         "/api/db/documents/my_table/doc-1/access",
@@ -638,12 +783,14 @@ def test_delete_document_access_not_found(access_manager_client, mock_db):
 
 def test_delete_document_access_success(access_manager_client, mock_db):
     deleted_row = {
-        "table_name": "my_table", "document_id": "doc-1",
-        "grantee_type": "group", "grantee_id": "group-1",
+        "table_name": "my_table",
+        "document_id": "doc-1",
+        "grantee_type": "group",
+        "grantee_id": "group-1",
     }
     mock_db.execute.side_effect = [
         make_result(one_or_none=deleted_row),  # DELETE ... RETURNING
-        make_result(),                         # log_action
+        make_result(),  # log_action
     ]
     resp = access_manager_client.delete("/api/db/access/grant-1")
     assert resp.status_code == 200
@@ -652,8 +799,10 @@ def test_delete_document_access_success(access_manager_client, mock_db):
 
 # ── fonds/series hierarchy ─────────────────────────────────────────────────────
 
+
 def test_list_series_returns_items(auth_client, mock_db):
     import datetime as _dt
+
     rows = [("series-1", "Land Deeds", "1990-2000", _dt.datetime(2026, 1, 1))]
     mock_db.execute.return_value = make_result(rows=rows)
     resp = auth_client.get("/api/db/series")
@@ -671,7 +820,7 @@ def test_create_series_requires_admin(auth_client):
 def test_create_series_success(admin_client, mock_db):
     mock_db.execute.side_effect = [
         make_result(scalar="series-uuid-1"),  # INSERT ... RETURNING id
-        make_result(),                        # log_action
+        make_result(),  # log_action
     ]
     resp = admin_client.post("/api/db/series", json={"name": "Land Deeds"})
     assert resp.status_code == 200
@@ -703,8 +852,7 @@ def test_delete_series_success(admin_client, mock_db):
 
 
 def test_assign_document_series_table_not_found(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={}))
+    monkeypatch.setattr(documents_router, "_get_tables_columns", AsyncMock(return_value={}))
     resp = auth_client.patch(
         "/api/db/documents/missing_table/doc-1/series", json={"series_id": "series-1"}
     )
@@ -712,8 +860,11 @@ def test_assign_document_series_table_not_found(auth_client, mock_db, monkeypatc
 
 
 def test_assign_document_series_requires_visibility(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     mock_db.execute.return_value = make_result(one_or_none=None)  # not visible
     resp = auth_client.patch(
         "/api/db/documents/my_table/doc-1/series", json={"series_id": "series-1"}
@@ -722,11 +873,14 @@ def test_assign_document_series_requires_visibility(auth_client, mock_db, monkey
 
 
 def test_assign_document_series_unknown_series_rejected(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),    # _document_visible
-        make_result(one_or_none=None),    # series lookup — not found
+        make_result(one_or_none=(1,)),  # _document_visible
+        make_result(one_or_none=None),  # series lookup - not found
     ]
     resp = auth_client.patch(
         "/api/db/documents/my_table/doc-1/series", json={"series_id": "missing-series"}
@@ -735,13 +889,16 @@ def test_assign_document_series_unknown_series_rejected(auth_client, mock_db, mo
 
 
 def test_assign_document_series_success(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),  # _document_visible
-        make_result(one_or_none=(1,)),  # series lookup — found
-        make_result(),                  # UPDATE
-        make_result(),                  # log_action
+        make_result(one_or_none=(1,)),  # series lookup - found
+        make_result(),  # UPDATE
+        make_result(),  # log_action
     ]
     resp = auth_client.patch(
         "/api/db/documents/my_table/doc-1/series", json={"series_id": "series-1"}
@@ -751,37 +908,41 @@ def test_assign_document_series_success(auth_client, mock_db, monkeypatch):
 
 
 def test_unassign_document_series_success(auth_client, mock_db, monkeypatch):
-    """series_id: null clears the assignment — no series lookup needed."""
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid"}}))
+    """series_id: null clears the assignment - no series lookup needed."""
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid"}}),
+    )
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),  # _document_visible
-        make_result(),                  # UPDATE
-        make_result(),                  # log_action
+        make_result(),  # UPDATE
+        make_result(),  # log_action
     ]
-    resp = auth_client.patch(
-        "/api/db/documents/my_table/doc-1/series", json={"series_id": None}
-    )
+    resp = auth_client.patch("/api/db/documents/my_table/doc-1/series", json={"series_id": None})
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
 
 
 # ── get_schema ────────────────────────────────────────────────────────────────
 
+
 def test_get_schema_empty_db(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={}))
+    monkeypatch.setattr(documents_router, "_get_tables_columns", AsyncMock(return_value={}))
     resp = auth_client.get("/api/db/schema")
     assert resp.status_code == 200
     assert resp.json() == {"tables": []}
 
 
 def test_get_schema_returns_table_metadata(auth_client, mock_db, monkeypatch):
-    monkeypatch.setattr(documents_router, "_get_tables_columns",
-                        AsyncMock(return_value={"my_table": {"id": "uuid", "source_image_path": "text"}}))
+    monkeypatch.setattr(
+        documents_router,
+        "_get_tables_columns",
+        AsyncMock(return_value={"my_table": {"id": "uuid", "source_image_path": "text"}}),
+    )
 
     col_rows = [("my_table", "id", "uuid", "NO"), ("my_table", "source_image_path", "text", "YES")]
-    fk_rows  = []
+    fk_rows = []
     stat_one = (3, None, "my_document_type")
 
     mock_db.execute.side_effect = [
@@ -801,8 +962,10 @@ def test_get_schema_returns_table_metadata(auth_client, mock_db, monkeypatch):
 
 # ── serve_processed_image: path traversal protection ─────────────────────────
 
+
 def test_serve_image_path_traversal_denied(auth_client, tmp_path, monkeypatch):
     import documents_router as dr
+
     monkeypatch.setattr(dr, "DATA_DIR", tmp_path)
 
     resp = auth_client.get("/api/db/image?path=../../etc/passwd")
@@ -811,6 +974,7 @@ def test_serve_image_path_traversal_denied(auth_client, tmp_path, monkeypatch):
 
 def test_serve_image_not_found(auth_client, tmp_path, monkeypatch):
     import documents_router as dr
+
     monkeypatch.setattr(dr, "DATA_DIR", tmp_path)
     (tmp_path / "images").mkdir()
 

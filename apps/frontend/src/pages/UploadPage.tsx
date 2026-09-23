@@ -11,11 +11,15 @@ import {
   useReloadPage,
   useManualEnterPage,
   useSkipPage,
+  useCancelPage,
+  usePauseDocument,
   useResumeDocument,
   useDeleteIngestedDocument,
+  useDeleteBatch,
 } from "../hooks/useIngest";
 import NavSidebar from "../components/NavSidebar";
 import { useAuth } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
 import { dbImageUrl } from "@sdai/api-client";
 import type { DocumentStatus, BatchSummary, Page } from "@sdai/types";
 
@@ -261,6 +265,37 @@ function SkippedPageRow({ page }: { page: Page }) {
   );
 }
 
+function PlayIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path d="M6.3 3.8a1 1 0 0 1 1.02-.03l9 5.5a1 1 0 0 1 0 1.7l-9 5.5A1 1 0 0 1 6 15.7V4.3a1 1 0 0 1 .3-.5Z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path d="M6 4a1 1 0 0 0-1 1v10a1 1 0 1 0 2 0V5a1 1 0 0 0-1-1Zm8 0a1 1 0 0 0-1 1v10a1 1 0 1 0 2 0V5a1 1 0 0 0-1-1Z" />
+    </svg>
+  );
+}
+
+function CancelButton({ pageId, batchDocumentId }: { pageId: string; batchDocumentId: string }) {
+  const { t } = useTranslation();
+  const cancelMutation = useCancelPage(batchDocumentId);
+  return (
+    <button
+      onClick={() => cancelMutation.mutate(pageId)}
+      disabled={cancelMutation.isPending}
+      title={t("upload.cancelButton.title")}
+      className="px-2.5 py-1 rounded-md text-xs font-medium border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50 transition-colors"
+    >
+      {cancelMutation.isPending ? t("upload.cancelButton.cancelling") : t("upload.cancelButton.cancel")}
+    </button>
+  );
+}
+
 function PendingPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId: string }) {
   const { t } = useTranslation();
   return (
@@ -280,6 +315,12 @@ function PendingPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId
           <SkipButton pageId={page.id} batchDocumentId={batchDocumentId} />
         </div>
       )}
+      {page.status === "processing" && (
+        <div className="flex items-center flex-wrap gap-2 flex-shrink-0">
+          <ViewImageLink imagePath={page.image_path} />
+          <CancelButton pageId={page.id} batchDocumentId={batchDocumentId} />
+        </div>
+      )}
     </div>
   );
 }
@@ -288,13 +329,23 @@ function DocumentPageProgress({ batchDocumentId }: { batchDocumentId: string }) 
   const { t } = useTranslation();
   const { data } = usePageStatus(batchDocumentId);
   const resumeMutation = useResumeDocument();
+  const pauseMutation = usePauseDocument();
 
   // Only worth showing for genuinely multi-page documents.
   if (!data || data.total <= 1) return null;
 
   const done = data.completed + data.failed + data.manual + data.skipped;
   const sortedPages = [...data.pages].sort((a, b) => a.page_number - b.page_number);
-  const canResume = data.pending > 0;
+  // Includes failed pages, not just pending ones, so a paused document
+  // (its cancelled page left "failed") still offers a way to restart in
+  // bulk instead of only via one-by-one page retries.
+  const resumableCount = data.pending + data.failed;
+  const canPause = data.processing > 0;
+  // Mutually exclusive with Pause: while something is actively processing,
+  // a resume pass is already running (or about to be), so clicking Resume
+  // would just hit the duplicate-dispatch guard and silently no-op - only
+  // offer it once there's genuinely nothing in flight to resume into.
+  const canResume = !canPause && resumableCount > 0;
 
   return (
     <div className="px-4 py-3 bg-gray-50/70 space-y-2">
@@ -305,19 +356,34 @@ function DocumentPageProgress({ batchDocumentId }: { batchDocumentId: string }) 
           {data.skipped > 0 ? t("upload.pageProgress.skippedSuffix", { count: data.skipped }) : ""}
         </span>
         <div className="flex items-center gap-2">
+          {canPause && (
+            <button
+              onClick={() => pauseMutation.mutate(batchDocumentId)}
+              disabled={pauseMutation.isPending}
+              title={t("upload.pageProgress.pauseTitle")}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 transition-colors"
+            >
+              <PauseIcon />
+              {pauseMutation.isPending ? t("upload.pageProgress.pausing") : t("upload.pageProgress.pause")}
+            </button>
+          )}
           {canResume && (
             <button
               onClick={() => resumeMutation.mutate(batchDocumentId)}
               disabled={resumeMutation.isPending}
               title={t("upload.pageProgress.resumeTitle")}
-              className="px-2 py-0.5 rounded-md text-xs font-medium border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
             >
-              {resumeMutation.isPending ? t("upload.pageProgress.resuming") : t("upload.pageProgress.resumeRemaining", { count: data.pending })}
+              <PlayIcon />
+              {resumeMutation.isPending ? t("upload.pageProgress.resuming") : t("upload.pageProgress.resumeRemaining", { count: resumableCount })}
             </button>
           )}
           <span>{data.total ? Math.round((done / data.total) * 100) : 0}%</span>
         </div>
       </div>
+      {pauseMutation.isError && (
+        <p className="text-xs text-red-500">{(pauseMutation.error as Error).message}</p>
+      )}
       {resumeMutation.isError && (
         <p className="text-xs text-red-500">{(resumeMutation.error as Error).message}</p>
       )}
@@ -345,26 +411,31 @@ function DocumentPageProgress({ batchDocumentId }: { batchDocumentId: string }) 
   );
 }
 
-function DeleteDocumentButton({ batchDocumentId }: { batchDocumentId: string }) {
+function DeleteDocumentButton({ batchDocumentId, inProgress }: { batchDocumentId: string; inProgress: boolean }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const { user } = useAuth();
   const deleteMutation = useDeleteIngestedDocument();
 
   if (user?.role !== "admin") return null;
 
+  const confirmText = inProgress ? t("upload.deleteDocument.confirmInProgress") : t("upload.deleteDocument.confirm");
+  const titleText = inProgress ? t("upload.deleteDocument.titleInProgress") : t("upload.deleteDocument.title");
+  const label = inProgress ? t("upload.deleteDocument.cancelAndRemove") : t("upload.deleteDocument.delete");
+
   return (
     <div className="inline-flex flex-col items-end gap-1">
       <button
-        onClick={() => {
-          if (window.confirm(t("upload.deleteDocument.confirm"))) {
+        onClick={async () => {
+          if (await confirm({ message: confirmText, danger: true })) {
             deleteMutation.mutate(batchDocumentId);
           }
         }}
         disabled={deleteMutation.isPending || deleteMutation.isSuccess}
-        title={t("upload.deleteDocument.title")}
+        title={titleText}
         className="px-2.5 py-1 rounded-md text-xs font-medium border border-red-300 text-red-700 hover:bg-red-50 disabled:opacity-50 transition-colors"
       >
-        {deleteMutation.isPending ? t("upload.deleteDocument.deleting") : deleteMutation.isSuccess ? t("upload.deleteDocument.deleted") : t("upload.deleteDocument.delete")}
+        {deleteMutation.isPending ? t("upload.deleteDocument.deleting") : deleteMutation.isSuccess ? t("upload.deleteDocument.deleted") : label}
       </button>
       {deleteMutation.isError && (
         <span className="text-xs text-red-500">{(deleteMutation.error as Error).message}</span>
@@ -462,26 +533,29 @@ function ProgressTable({ batchId }: { batchId: string }) {
                     <StatusBadge status={doc.status} />
                   </td>
                   <td className="px-4 py-2.5 text-gray-600">
-                    {doc.document_type ?? <span className="text-gray-300">—</span>}
+                    {doc.document_type ?? <span className="text-gray-300">-</span>}
                   </td>
                   <td className="px-4 py-2.5 text-gray-600 capitalize">
-                    {doc.confidence ?? <span className="text-gray-300">—</span>}
+                    {doc.confidence ?? <span className="text-gray-300">-</span>}
                   </td>
                   <td className="px-4 py-2.5 text-right text-gray-500">
                     {doc.processing_time != null
                       ? doc.processing_time.toFixed(1)
-                      : <span className="text-gray-300">—</span>}
+                      : <span className="text-gray-300">-</span>}
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    {["completed", "review_required", "crashed"].includes(doc.status) && (
-                      <DeleteDocumentButton batchDocumentId={doc.id} />
+                    {["completed", "review_required", "crashed", "pending", "processing"].includes(doc.status) && (
+                      <DeleteDocumentButton
+                        batchDocumentId={doc.id}
+                        inProgress={doc.status === "pending" || doc.status === "processing"}
+                      />
                     )}
                   </td>
                 </tr>
                 <tr>
                   {/* width: 0 keeps this cell's expandable content (which can
                       contain long unbroken text like a JSON dump) from
-                      inflating the table's auto layout — it wraps to
+                      inflating the table's auto layout - it wraps to
                       whatever width the other, normal rows establish
                       instead of growing the whole table horizontally. */}
                   <td colSpan={6} className="p-0" style={{ width: 0 }}>
@@ -507,6 +581,32 @@ function timeAgo(iso: string, t: (key: string, opts?: Record<string, unknown>) =
   return t("upload.timeAgo.days", { count: Math.floor(seconds / 86400) });
 }
 
+function RecentBatchRemoveButton({ batchId }: { batchId: string }) {
+  const { t } = useTranslation();
+  const confirm = useConfirm();
+  const { user } = useAuth();
+  const deleteMutation = useDeleteBatch();
+
+  if (user?.role !== "admin") return null;
+
+  return (
+    <button
+      onClick={async (e) => {
+        e.stopPropagation();
+        if (await confirm({ message: t("upload.recentUploads.confirmRemove"), danger: true })) {
+          deleteMutation.mutate(batchId);
+        }
+      }}
+      disabled={deleteMutation.isPending}
+      title={t("upload.recentUploads.removeTitle")}
+      className="flex-shrink-0 text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors"
+      aria-label={t("upload.recentUploads.removeTitle")}
+    >
+      {deleteMutation.isPending ? "…" : "✕"}
+    </button>
+  );
+}
+
 function RecentBatches({ onSelect }: { onSelect: (batchId: string) => void }) {
   const { t } = useTranslation();
   const { data, isLoading } = useRecentBatches();
@@ -521,30 +621,35 @@ function RecentBatches({ onSelect }: { onSelect: (batchId: string) => void }) {
           const done = b.completed + b.crashed + b.review_required + b.out_of_scope + b.duplicates_skipped;
           const inProgress = b.pending > 0;
           return (
-            <button
+            <div
               key={b.batch_id}
-              onClick={() => onSelect(b.batch_id)}
-              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40 text-left transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40 transition-colors"
             >
-              {inProgress ? (
-                <span className="flex-shrink-0 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" title={t("upload.recentUploads.inProgress")} />
-              ) : (
-                <span className="flex-shrink-0 w-2 h-2 rounded-full bg-gray-300" title={t("upload.recentUploads.finished")} />
-              )}
-              <span className="text-xs font-mono text-gray-500 flex-shrink-0">
-                {b.batch_id.slice(0, 8)}
-              </span>
-              <span className="text-xs text-gray-400 flex-shrink-0 capitalize">
-                {b.source_type.replace(/_/g, " ")}
-              </span>
-              <span className="text-xs text-gray-600 flex-1">
-                {inProgress ? t("upload.recentUploads.processed", { done, total: b.total }) : t("upload.recentUploads.documentCount", { count: b.total })}
-              </span>
-              {b.crashed > 0 && (
-                <span className="text-xs text-red-500 flex-shrink-0">{t("upload.recentUploads.crashed", { count: b.crashed })}</span>
-              )}
-              <span className="text-xs text-gray-400 flex-shrink-0">{timeAgo(b.created_at, t)}</span>
-            </button>
+              <button
+                onClick={() => onSelect(b.batch_id)}
+                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+              >
+                {inProgress ? (
+                  <span className="flex-shrink-0 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" title={t("upload.recentUploads.inProgress")} />
+                ) : (
+                  <span className="flex-shrink-0 w-2 h-2 rounded-full bg-gray-300" title={t("upload.recentUploads.finished")} />
+                )}
+                <span className="text-xs font-mono text-gray-500 flex-shrink-0">
+                  {b.batch_id.slice(0, 8)}
+                </span>
+                <span className="text-xs text-gray-400 flex-shrink-0 capitalize">
+                  {b.source_type.replace(/_/g, " ")}
+                </span>
+                <span className="text-xs text-gray-600 flex-1">
+                  {inProgress ? t("upload.recentUploads.processed", { done, total: b.total }) : t("upload.recentUploads.documentCount", { count: b.total })}
+                </span>
+                {b.crashed > 0 && (
+                  <span className="text-xs text-red-500 flex-shrink-0">{t("upload.recentUploads.crashed", { count: b.crashed })}</span>
+                )}
+                <span className="text-xs text-gray-400 flex-shrink-0">{timeAgo(b.created_at, t)}</span>
+              </button>
+              <RecentBatchRemoveButton batchId={b.batch_id} />
+            </div>
           );
         })}
       </div>

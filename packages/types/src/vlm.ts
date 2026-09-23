@@ -16,7 +16,7 @@ export const KNOWN_QUALITY_ISSUES = [
 ] as const;
 export type KnownQualityIssue = (typeof KNOWN_QUALITY_ISSUES)[number];
 
-// ── Shared document fields (all nullable — real VLM output is unpredictable) ──
+// ── Shared document fields (all nullable - real VLM output is unpredictable) ──
 export const DocumentFieldsSchema = z.object({
   document_type: z.string().nullable(),
   reference_number: z.string().nullable(),
@@ -27,7 +27,7 @@ export const DocumentFieldsSchema = z.object({
   organisation: z.string().nullable(),
   signatory: z.string().nullable(),
   budget_line: z.string().nullable(),
-  // Language comes back as "FR", "fr", "ar", "bilingual" — kept as string
+  // Language comes back as "FR", "fr", "ar", "bilingual" - kept as string
   language: z.string().nullable(),
   bilingual_layout: z
     .enum(["parallel_columns", "sequential", "french_only", "arabic_only"])
@@ -37,7 +37,7 @@ export const DocumentFieldsSchema = z.object({
 export type DocumentFields = z.infer<typeof DocumentFieldsSchema>;
 
 // High-confidence fields: document_type and quality_issues must be present.
-// Extending constrains only those two — the rest remain nullable.
+// Extending constrains only those two - the rest remain nullable.
 export const HighDocumentFieldsSchema = DocumentFieldsSchema.extend({
   document_type: z.string(),
   quality_issues: z.array(z.string()),

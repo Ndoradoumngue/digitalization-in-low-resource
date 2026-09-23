@@ -1,11 +1,11 @@
-# SDAI Digitalisation — Docker Compose
+# SDAI Digitalisation - Docker Compose
 #
 # Services:
-#   redis     — Redis 7            (internal; caches schema / types / review count)
-#   db        — PostgreSQL 15      (port 5432 — exposed for local tooling)
-#   ollama    — Ollama VLM server  (internal port 11434, exposed optionally)
-#   api       — FastAPI backend    (internal port 8000, proxied via nginx)
-#   frontend  — React + Nginx      (public ports 80 → redirect, 443 → HTTPS)
+#   redis     - Redis 7            (internal; caches schema / types / review count)
+#   db        - PostgreSQL 15      (port 5432 - exposed for local tooling)
+#   ollama    - Ollama VLM server  (internal port 11434, exposed optionally)
+#   api       - FastAPI backend    (internal port 8000, proxied via nginx)
+#   frontend  - React + Nginx      (public ports 80 → redirect, 443 → HTTPS)
 #
 # Quick start:
 #   cp .env.example .env                               # edit AUTH_SECRET_KEY at minimum
@@ -13,8 +13,8 @@
 #   docker compose exec api python create_admin.py --email admin@example.com --password secret --tenant default
 #
 # HTTPS modes (set HTTPS_MODE in .env):
-#   self_signed  — default; self-signed cert baked in at build time; no config needed.
-#   letsencrypt  — certbot with the nginx plugin; requires LETSENCRYPT_DOMAIN + email.
+#   self_signed  - default; self-signed cert baked in at build time; no config needed.
+#   letsencrypt  - certbot with the nginx plugin; requires LETSENCRYPT_DOMAIN + email.
 #                  See README § HTTPS for the one-time certbot command.
 #
 # Offline deployment (no internet on the target server):
@@ -29,7 +29,7 @@ services:
       - redis_data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -37,16 +37,16 @@ services:
   db:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER:     ${POSTGRES_USER:-sdai}
+      POSTGRES_USER: ${POSTGRES_USER:-sdai}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB:       ${POSTGRES_DB:-sdai}
+      POSTGRES_DB: ${POSTGRES_DB:-sdai}
     volumes:
       - pgdata:/var/lib/postgresql/data
     # Port 5432 is NOT exposed to the host in production.
     # Use: docker compose exec db psql -U sdai sdai
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sdai}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sdai}" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -54,7 +54,7 @@ services:
   ollama:
     image: ollama/ollama
     volumes:
-      # Persistent model storage — survives container restarts
+      # Persistent model storage - survives container restarts
       - ollama_data:/root/.ollama
       # Offline model archive produced by setup.sh (read-only at runtime)
       - ./models:/models:ro
@@ -62,15 +62,23 @@ services:
       # Expose for direct host access (curl http://localhost:11434); safe to remove
       - "11434:11434"
     environment:
-      # Allow up to 2 concurrent VLM requests (Stage 2 is single-worker but
-      # allows slight overlap between the outgoing request and response parsing).
-      OLLAMA_NUM_PARALLEL: 2
+      # 1 concurrent VLM request at a time. Was 2 ("Stage 2 is single-worker
+      # but allows slight overlap between the outgoing request and response
+      # parsing") but on memory-constrained hosts (<16 GiB total for the
+      # whole Docker Desktop VM, shared with Postgres/Redis/the API), two
+      # concurrent qwen2.5vl:7b contexts pushed peak memory past what's
+      # available and the OS OOM-killed the model process mid-generation
+      # ("signal: killed" in `docker compose logs ollama`) - a 500 from
+      # Ollama that no VLM_PAGE_TIMEOUT_SECONDS value fixes, since the
+      # process dies outright rather than running out of time. Raise back
+      # to 2 once the host has comfortable headroom above 16 GiB.
+      OLLAMA_NUM_PARALLEL: 1
       # Keep only one model loaded; qwen2.5vl:7b fills most of GPU/RAM already.
       OLLAMA_MAX_LOADED_MODELS: 1
     restart: unless-stopped
     # Override the default entrypoint so we can run a shell script that
     # restores the offline bundle before starting the server.
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: [ "/bin/sh", "-c" ]
     command:
       - |
         MEM_KB=$$(awk '/MemTotal/ {print $$2}' /proc/meminfo)
@@ -81,7 +89,7 @@ services:
           echo "size (weights + KV cache + inference overhead), on top of"
           echo "Postgres/Redis/the API/nginx sharing the same Docker VM."
           echo "Below ~16 GiB, ingestion will likely crash with a 500 error from"
-          echo "Ollama and 'signal: killed' in this log — that means the OS"
+          echo "Ollama and 'signal: killed' in this log - that means the OS"
           echo "killed the model process for lack of memory, not a bug."
           echo "Fix: Docker Desktop > Settings > Resources > Memory, raise to"
           echo "16 GiB+, apply, and restart Docker Desktop."
@@ -102,11 +110,11 @@ services:
         fi
         wait $$OLLAMA_PID
     healthcheck:
-      test: ["CMD", "/bin/ollama", "list"]
+      test: [ "CMD", "/bin/ollama", "list" ]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s   # allow time for model extraction on first boot
+      start_period: 120s # allow time for model extraction on first boot
 
   api:
     build:
@@ -120,24 +128,26 @@ services:
     environment:
       # In Docker, nginx proxies /api/* internally so CORS is not required.
       - CORS_ORIGINS=
-      # JWT auth — run create_admin.py after first boot to seed the first user
+      # JWT auth - run create_admin.py after first boot to seed the first user
       - AUTH_SECRET_KEY=${AUTH_SECRET_KEY}
       - AUTH_SECURE_COOKIES=${AUTH_SECURE_COOKIES:-false}
       # PostgreSQL (asyncpg driver)
       - DATABASE_URL=${DATABASE_URL}
-      # Ollama — use the containerised service (override with host.docker.internal:11434
+      # Ollama - use the containerised service (override with host.docker.internal:11434
       # if you prefer to use a host-installed Ollama instead)
       - OLLAMA_HOST=http://ollama:11434
       # Directory for processed images and file uploads
       - DATA_DIR=/data
       - REDIS_URL=${REDIS_URL}
-      # Optional — customize the VLM extraction schema for your document
+      # Optional - customize the VLM extraction schema for your document
       # corpus without a rebuild. See README.md "Customizing the extraction
       # schema" and .env.example for details.
       - VLM_PROMPT_FILE=${VLM_PROMPT_FILE:-}
       - VLM_LIST_FIELDS=${VLM_LIST_FIELDS:-}
       - VLM_PAGE_TIMEOUT_SECONDS=${VLM_PAGE_TIMEOUT_SECONDS:-}
+      - VLM_NUM_CTX=${VLM_NUM_CTX:-}
       - SPLIT_PAGE_COLUMNS=${SPLIT_PAGE_COLUMNS:-}
+      - SPLIT_FROM_PAGE=${SPLIT_FROM_PAGE:-}
     depends_on:
       db:
         condition: service_healthy
@@ -158,7 +168,7 @@ services:
       - "8080:80"
       - "8443:443"
     volumes:
-      # Let's Encrypt certificates — persists across restarts and rebuilds.
+      # Let's Encrypt certificates - persists across restarts and rebuilds.
       # Empty in self_signed mode (cert is baked into the image).
       - letsencrypt_data:/etc/letsencrypt
     environment:

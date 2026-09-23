@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  cancelPage,
+  deleteBatch,
   deleteIngestedDocument,
   fetchBatchStatus,
   fetchPageStatus,
   fetchRecentBatches,
   ingestFromPath,
   manualEnterPage,
+  pauseDocument,
   reloadPage,
   resumeDocument,
   retryPage,
@@ -78,7 +81,7 @@ function isPageListDone(list: PageList): boolean {
   return list.pending === 0 && list.processing === 0;
 }
 
-// Per-page progress for one document — powers the page-level progress bar
+// Per-page progress for one document - powers the page-level progress bar
 // and failed-pages list on multi-page documents.
 export function usePageStatus(batchDocumentId: string | null) {
   return useQuery({
@@ -86,7 +89,7 @@ export function usePageStatus(batchDocumentId: string | null) {
     queryFn: () => fetchPageStatus(batchDocumentId!),
     enabled: !!batchDocumentId,
     // A 404 right after upload usually just means Stage 1 hasn't created
-    // the page rows yet (a large PDF can take a while to preprocess) —
+    // the page rows yet (a large PDF can take a while to preprocess) -
     // keep retrying rather than giving up after one check, which
     // previously required a manual page refresh to recover. Only stop
     // outright on an auth failure, which won't resolve by retrying.
@@ -144,7 +147,17 @@ export function useSkipPage(batchDocumentId: string | null) {
   });
 }
 
-// Resume every pending/failed page of a document — e.g. after an
+export function useCancelPage(batchDocumentId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (pageId: string) => cancelPage(pageId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ingest-pages", batchDocumentId] });
+    },
+  });
+}
+
+// Resume every pending/failed page of a document - e.g. after an
 // interrupted run. Processing happens in the background; invalidating
 // here just lets the existing per-page polling pick up the "processing"
 // transition immediately instead of waiting for its next tick.
@@ -152,6 +165,19 @@ export function useResumeDocument() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (batchDocumentId: string) => resumeDocument(batchDocumentId),
+    onSuccess: (_data, batchDocumentId) => {
+      queryClient.invalidateQueries({ queryKey: ["ingest-pages", batchDocumentId] });
+    },
+  });
+}
+
+// Pause an in-progress document - cancels whatever page is being extracted
+// right now and stops any further page of this document from being
+// dispatched until "Resume remaining" is clicked again.
+export function usePauseDocument() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (batchDocumentId: string) => pauseDocument(batchDocumentId),
     onSuccess: (_data, batchDocumentId) => {
       queryClient.invalidateQueries({ queryKey: ["ingest-pages", batchDocumentId] });
     },
@@ -167,6 +193,16 @@ export function useDeleteIngestedDocument() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ingest-batches"] });
       queryClient.invalidateQueries({ queryKey: ["ingest-status"] });
+    },
+  });
+}
+
+export function useDeleteBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (batchId: string) => deleteBatch(batchId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ingest-batches"] });
     },
   });
 }

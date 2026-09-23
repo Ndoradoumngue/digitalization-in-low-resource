@@ -6,7 +6,7 @@ Usage:
   python create_admin.py --email admin@example.com --password secret --full-name "Alice" --tenant default
   python create_admin.py --email reviewer@example.com --password secret --tenant land --role reviewer
 
-The tenant must already exist — create it first with create_tenant.py.
+The tenant must already exist - create it first with create_tenant.py.
 Upserts by email: running the script again updates the password, role,
 tenant, and re-activates the account.
 """
@@ -20,9 +20,7 @@ import bcrypt as _bcrypt
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql+asyncpg://sdai:sdai@localhost:5432/sdai"
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://sdai:sdai@localhost:5432/sdai")
 
 
 async def main(email: str, password: str, full_name: str, tenant_slug: str, role: str) -> None:
@@ -37,8 +35,8 @@ async def main(email: str, password: str, full_name: str, tenant_slug: str, role
         tenant = tenant_row.one_or_none()
         if tenant is None:
             print(
-                f"Error: tenant '{tenant_slug}' not found — create it first with"
-                f" create_tenant.py --slug {tenant_slug} --name \"...\"",
+                f"Error: tenant '{tenant_slug}' not found - create it first with"
+                f' create_tenant.py --slug {tenant_slug} --name "..."',
                 file=sys.stderr,
             )
             await engine.dispose()
@@ -57,24 +55,31 @@ async def main(email: str, password: str, full_name: str, tenant_slug: str, role
                 RETURNING id, email, role
             """),
             {
-                "email": email, "hashed": hashed, "full_name": full_name,
-                "role": role, "tenant_id": tenant[0],
+                "email": email,
+                "hashed": hashed,
+                "full_name": full_name,
+                "role": role,
+                "tenant_id": tenant[0],
             },
         )
         row = result.one()
 
-    print(f"User ready — id={row[0]}  email={row[1]}  role={row[2]}  tenant={tenant_slug}")
+    print(f"User ready - id={row[0]}  email={row[1]}  role={row[2]}  tenant={tenant_slug}")
     await engine.dispose()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Create or update an SDAI user")
-    parser.add_argument("--email",     required=True,  help="Login email address")
-    parser.add_argument("--password",  required=True,  help="Initial password")
-    parser.add_argument("--full-name", default="",     help="Display name (optional)")
-    parser.add_argument("--tenant",    required=True,  help="Tenant slug the user belongs to (must already exist)")
+    parser.add_argument("--email", required=True, help="Login email address")
+    parser.add_argument("--password", required=True, help="Initial password")
+    parser.add_argument("--full-name", default="", help="Display name (optional)")
     parser.add_argument(
-        "--role", default="admin", choices=["admin", "reviewer"],
+        "--tenant", required=True, help="Tenant slug the user belongs to (must already exist)"
+    )
+    parser.add_argument(
+        "--role",
+        default="admin",
+        choices=["admin", "reviewer"],
         help="Role within the tenant (default: admin, preserving this script's original behavior)",
     )
     args = parser.parse_args()

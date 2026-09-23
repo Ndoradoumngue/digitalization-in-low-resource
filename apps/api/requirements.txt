@@ -24,6 +24,6 @@ slowapi==0.1.9
 # Redis caching
 fastapi-cache2[redis]==0.2.2
 
-# Google Drive (optional — only needed if using Drive ingestion)
+# Google Drive (optional - only needed if using Drive ingestion)
 google-auth==2.37.0
 google-api-python-client==2.155.0

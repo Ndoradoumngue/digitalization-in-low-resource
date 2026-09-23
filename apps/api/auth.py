@@ -1,39 +1,45 @@
 """
-Shared JWT auth dependency — PostgreSQL-backed user lookup with role support.
+Shared JWT auth dependency - PostgreSQL-backed user lookup with role support.
 
 Provides:
-  get_current_user  — FastAPI dependency; returns CurrentUser or raises 401
-  require_admin     — FastAPI dependency; returns CurrentUser or raises 403
+  get_current_user  - FastAPI dependency; returns CurrentUser or raises 401
+  require_admin     - FastAPI dependency; returns CurrentUser or raises 403
 """
 
+import hashlib
 import os
 from dataclasses import dataclass
-from typing import Optional
+from datetime import datetime, timezone
 
-from fastapi import Cookie, Depends, HTTPException
-from jose import JWTError, jwt
-
+from fastapi import Cookie, Depends, Header, HTTPException
 from i18n import resolve_locale, t
+from jose import JWTError, jwt
 
 SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError("AUTH_SECRET_KEY environment variable is not set")
 ALGORITHM = "HS256"
 
+# Prefix on every minted API key (see create_api_key.py) - lets
+# get_current_user tell an external API key apart from any other bearer
+# value a caller might put in the Authorization header without a DB round
+# trip, and lets an admin recognize a key's purpose at a glance.
+API_KEY_PREFIX = "sdai_"
+
 
 @dataclass
 class CurrentUser:
-    id:                str
-    email:             str
-    full_name:         Optional[str]
-    role:              str
-    tenant_id:         str
-    tenant_slug:       str
-    tenant_name:       str
+    id: str
+    email: str
+    full_name: str | None
+    role: str
+    tenant_id: str
+    tenant_slug: str
+    tenant_name: str
     can_manage_access: bool
     can_edit_extraction: bool
-    group_ids:         list[str]
-    locale:            str
+    group_ids: list[str]
+    locale: str
 
     @property
     def can_manage_document_access(self) -> bool:
@@ -46,32 +52,43 @@ class CurrentUser:
         """Admins can always edit extracted field data (manual entry for a
         crashed page, field corrections on approve, or correcting an
         already-filed document); a reviewer needs the delegated
-        can_edit_extraction flag. Distinct from can_manage_access — one
+        can_edit_extraction flag. Distinct from can_manage_access - one
         governs who can see a document, the other who can change its
         content."""
         return self.role == "admin" or self.can_edit_extraction
 
 
 async def get_current_user(
-    access_token: Optional[str] = Cookie(default=None),
-    locale:       str           = Depends(resolve_locale),
+    access_token: str | None = Cookie(default=None),
+    authorization: str | None = Header(default=None),
+    locale: str = Depends(resolve_locale),
 ) -> CurrentUser:
-    """FastAPI dependency — raises 401 if the JWT cookie is missing, invalid, or revoked."""
+    """FastAPI dependency - raises 401 if the caller is neither a valid JWT
+    cookie session nor a valid API key.
+
+    An `Authorization: Bearer sdai_...` header is treated as an external API
+    key (see create_api_key.py) rather than falling through to the cookie -
+    a browser session never sends that header, so this is purely additive.
+    Every other Authorization value (or none) is ignored here and the
+    normal cookie flow runs unchanged."""
+    if authorization and authorization.removeprefix("Bearer ").startswith(API_KEY_PREFIX):
+        return await _get_current_user_from_api_key(authorization.removeprefix("Bearer "), locale)
+
     if not access_token:
         raise HTTPException(status_code=401, detail=t("auth.not_authenticated", locale))
 
     try:
-        token   = access_token.removeprefix("Bearer ")
+        token = access_token.removeprefix("Bearer ")
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: Optional[str] = payload.get("sub")
-        jti:     Optional[str] = payload.get("jti")
+        user_id: str | None = payload.get("sub")
+        jti: str | None = payload.get("jti")
         if not user_id:
             raise HTTPException(status_code=401, detail=t("auth.invalid_token", locale))
     except JWTError:
         raise HTTPException(status_code=401, detail=t("auth.invalid_or_expired_token", locale))
 
     # Lazy import avoids circular dependency (ingest_router imports auth at module level).
-    from ingest_router import _engine  # noqa: PLC0415
+    from ingest_router import _engine
     from sqlalchemy import text
 
     async with _engine().connect() as conn:
@@ -99,7 +116,9 @@ async def get_current_user(
         user = row.one_or_none()
 
         if user is None or not user[4] or not user[8]:
-            raise HTTPException(status_code=401, detail=t("auth.user_not_found_or_deactivated", locale))
+            raise HTTPException(
+                status_code=401, detail=t("auth.user_not_found_or_deactivated", locale)
+            )
 
         group_rows = await conn.execute(
             text("SELECT group_id FROM sdai_user_groups WHERE user_id = CAST(:id AS uuid)"),
@@ -122,10 +141,64 @@ async def get_current_user(
     )
 
 
+async def _get_current_user_from_api_key(api_key: str, locale: str) -> CurrentUser:
+    """Resolves an external API key (see create_api_key.py) to a
+    CurrentUser scoped to that key's tenant. Only a hash of the key is ever
+    stored, so lookup is by exact hash match - same reasoning as
+    sdai_users.hashed_password, except a high-entropy generated secret
+    (unlike a human-chosen password) doesn't need a slow salted hash to
+    resist brute-forcing.
+
+    role='api_key' deliberately never satisfies require_admin,
+    require_access_manager, or require_extraction_editor (all check for
+    'admin' or a delegated flag this synthetic user never has) - an API key
+    can only ever reach plain Depends(get_current_user) endpoints
+    (upload + status polling), never admin/review actions."""
+    hashed_key = hashlib.sha256(api_key.encode()).hexdigest()
+
+    # Lazy import - same circular-dependency reasoning as get_current_user's
+    # own `from ingest_router import _engine` above.
+    from ingest_router import _engine
+    from sqlalchemy import text
+
+    async with _engine().connect() as conn:
+        row = await conn.execute(
+            text(
+                "SELECT k.id, k.name, k.is_active, k.expires_at,"
+                "       t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,"
+                "       t.is_active AS tenant_is_active"
+                " FROM sdai_api_keys k"
+                " JOIN sdai_tenants t ON t.id = k.tenant_id"
+                " WHERE k.hashed_key = :hashed_key"
+            ),
+            {"hashed_key": hashed_key},
+        )
+        key_row = row.one_or_none()
+
+    if key_row is None or not key_row[2] or not key_row[7]:
+        raise HTTPException(status_code=401, detail=t("auth.invalid_api_key", locale))
+    if key_row[3] is not None and key_row[3] < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail=t("auth.invalid_api_key", locale))
+
+    return CurrentUser(
+        id=str(key_row[0]),
+        email=f"api-key:{key_row[1]}",
+        full_name=None,
+        role="api_key",
+        tenant_id=str(key_row[4]),
+        tenant_slug=key_row[5],
+        tenant_name=key_row[6],
+        can_manage_access=False,
+        can_edit_extraction=False,
+        group_ids=[],
+        locale=locale,
+    )
+
+
 async def require_admin(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
-    """FastAPI dependency — raises 403 unless the authenticated user has role='admin'."""
+    """FastAPI dependency - raises 403 unless the authenticated user has role='admin'."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail=t("auth.admin_required", current_user.locale))
     return current_user
@@ -134,22 +207,26 @@ async def require_admin(
 async def require_access_manager(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
-    """FastAPI dependency — raises 403 unless the user can tag documents
+    """FastAPI dependency - raises 403 unless the user can tag documents
     with access grants (admin, or a reviewer delegated can_manage_access).
     Creating/managing groups themselves stays admin-only (require_admin)."""
     if not current_user.can_manage_document_access:
-        raise HTTPException(status_code=403, detail=t("auth.access_manager_required", current_user.locale))
+        raise HTTPException(
+            status_code=403, detail=t("auth.access_manager_required", current_user.locale)
+        )
     return current_user
 
 
 async def require_extraction_editor(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> CurrentUser:
-    """FastAPI dependency — raises 403 unless the user can edit extracted
+    """FastAPI dependency - raises 403 unless the user can edit extracted
     field data (admin, or a reviewer delegated can_edit_extraction).
     Covers manual entry for a crashed page, field corrections made while
     approving a review_required document, and editing an already-filed
-    document's fields — everywhere extraction content can be changed."""
+    document's fields - everywhere extraction content can be changed."""
     if not current_user.can_edit_extraction_data:
-        raise HTTPException(status_code=403, detail=t("auth.extraction_editor_required", current_user.locale))
+        raise HTTPException(
+            status_code=403, detail=t("auth.extraction_editor_required", current_user.locale)
+        )
     return current_user

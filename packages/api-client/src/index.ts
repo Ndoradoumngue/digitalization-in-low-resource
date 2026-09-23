@@ -63,13 +63,13 @@ import {
 // request. Accept-Language carries the user's chosen UI language (set by the
 // language switcher, stored under the same localStorage key i18next's
 // browser-language-detector uses) so the backend can localize error/response
-// text — see apps/api/i18n.py.
+// text - see apps/api/i18n.py.
 
 function currentLocale(): string {
   try {
     return localStorage.getItem("sdai_lang") || "en";
   } catch {
-    // localStorage can throw (private browsing, disabled storage) — English
+    // localStorage can throw (private browsing, disabled storage) - English
     // is the backend's own default, so falling back to it here is a no-op.
     return "en";
   }
@@ -124,7 +124,7 @@ export async function getMe(): Promise<User | null> {
     return UserSchema.parse(await res.json());
   } catch (e) {
     // A stale tab open across a deploy that changed this shape would
-    // otherwise throw here uncaught — AuthContext's getMe().then(setUser)
+    // otherwise throw here uncaught - AuthContext's getMe().then(setUser)
     // would never fire, silently stranding the app in its initial
     // logged-out state instead of falling back cleanly like the 401 case.
     console.error("getMe(): /api/auth/me response failed schema validation", e);
@@ -216,6 +216,16 @@ export async function fetchRecentBatches(limit = 20): Promise<BatchSummary[]> {
   return fetchJson(`/api/ingest/batches?limit=${limit}`, z.array(BatchSummarySchema));
 }
 
+export async function deleteBatch(batchId: string): Promise<void> {
+  const res = await fetch(`/api/ingest/batches/${encodeURIComponent(batchId)}`, withAuth({
+    method: "DELETE",
+  }));
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function fetchPageStatus(batchDocumentId: string): Promise<PageList> {
   return fetchJson(`/api/ingest/pages/${encodeURIComponent(batchDocumentId)}`, PageListSchema);
 }
@@ -262,7 +272,31 @@ export async function skipPage(pageId: string): Promise<void> {
   }
 }
 
-export async function resumeDocument(batchDocumentId: string): Promise<{ queued: number }> {
+export async function cancelPage(pageId: string): Promise<{ cancelled: boolean }> {
+  const res = await fetch(`/api/ingest/pages/${encodeURIComponent(pageId)}/cancel`, withAuth({
+    method: "POST",
+  }));
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function pauseDocument(batchDocumentId: string): Promise<{ cancelled: boolean }> {
+  const res = await fetch(`/api/ingest/documents/${encodeURIComponent(batchDocumentId)}/pause`, withAuth({
+    method: "POST",
+  }));
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function resumeDocument(
+  batchDocumentId: string
+): Promise<{ queued: number; already_running: boolean }> {
   const res = await fetch(`/api/ingest/pages/resume/${encodeURIComponent(batchDocumentId)}`, withAuth({
     method: "POST",
   }));
@@ -324,9 +358,9 @@ export async function updateDocumentFields(
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/fields`,
     withAuth({
-      method:  "PATCH",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ fields }),
+      body: JSON.stringify({ fields }),
     }),
   );
   if (!res.ok) {
@@ -352,9 +386,9 @@ export async function fetchDbSchema(): Promise<DbSchema> {
 
 export interface CreateLinkBody {
   to_table: string;
-  to_id:    string;
+  to_id: string;
   relation: string;
-  note?:    string;
+  note?: string;
 }
 
 export async function fetchDocumentLinks(
@@ -375,9 +409,9 @@ export async function createDocumentLink(
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/links`,
     withAuth({
-      method:  "POST",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(body),
+      body: JSON.stringify(body),
     }),
   );
   if (!res.ok) {
@@ -415,7 +449,7 @@ export async function fetchDocumentAccess(
 
 export interface CreateAccessGrantBody {
   grantee_type: "group" | "user";
-  grantee_id:   string;
+  grantee_id: string;
 }
 
 export async function createDocumentAccess(
@@ -426,9 +460,9 @@ export async function createDocumentAccess(
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/access`,
     withAuth({
-      method:  "POST",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(body),
+      body: JSON.stringify(body),
     }),
   );
   if (!res.ok) {
@@ -459,9 +493,9 @@ export async function createSeries(
   description?: string,
 ): Promise<{ id: string; name: string }> {
   const res = await fetch("/api/db/series", withAuth({
-    method:  "POST",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ name, description }),
+    body: JSON.stringify({ name, description }),
   }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -488,9 +522,9 @@ export async function assignDocumentSeries(
   const res = await fetch(
     `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/series`,
     withAuth({
-      method:  "PATCH",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ series_id: seriesId }),
+      body: JSON.stringify({ series_id: seriesId }),
     }),
   );
   if (!res.ok) {
@@ -502,8 +536,8 @@ export async function assignDocumentSeries(
 // ── Review queue endpoints ────────────────────────────────────────────────────
 
 export interface ReviewQueueParams {
-  page?:          number;
-  page_size?:     number;
+  page?: number;
+  page_size?: number;
   document_type?: string;
 }
 
@@ -532,9 +566,9 @@ export async function patchReview(
   const res = await fetch(
     `/api/review/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`,
     withAuth({
-      method:  "PATCH",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(body),
+      body: JSON.stringify(body),
     }),
   );
   if (!res.ok) {
@@ -582,12 +616,12 @@ export function dbImageUrl(sourcePath: string): string {
 // ── Admin endpoints ───────────────────────────────────────────────────────────
 
 export interface AuditLogParams {
-  page?:      number;
+  page?: number;
   page_size?: number;
-  user_id?:   string;
-  action?:    string;
+  user_id?: string;
+  action?: string;
   date_from?: string;
-  date_to?:   string;
+  date_to?: string;
 }
 
 export async function fetchAuditLog(params: AuditLogParams = {}): Promise<AuditLogPage> {
@@ -606,9 +640,9 @@ export async function fetchGroups(): Promise<Group[]> {
 
 export async function createGroup(name: string): Promise<{ id: string; name: string }> {
   const res = await fetch("/api/admin/groups", withAuth({
-    method:  "POST",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ name }),
+    body: JSON.stringify({ name }),
   }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -638,9 +672,9 @@ export async function updateUserAccessManager(
   canManageAccess: boolean,
 ): Promise<void> {
   const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, withAuth({
-    method:  "PATCH",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ can_manage_access: canManageAccess }),
+    body: JSON.stringify({ can_manage_access: canManageAccess }),
   }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -653,9 +687,9 @@ export async function updateUserExtractionEditor(
   canEditExtraction: boolean,
 ): Promise<void> {
   const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, withAuth({
-    method:  "PATCH",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ can_edit_extraction: canEditExtraction }),
+    body: JSON.stringify({ can_edit_extraction: canEditExtraction }),
   }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -665,9 +699,9 @@ export async function updateUserExtractionEditor(
 
 export async function addUserToGroup(userId: string, groupId: string): Promise<void> {
   const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/groups`, withAuth({
-    method:  "POST",
+    method: "POST",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ group_id: groupId }),
+    body: JSON.stringify({ group_id: groupId }),
   }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
@@ -702,7 +736,7 @@ export async function runIntegrityCheck(): Promise<IntegrityCheckResult> {
 // ── Admin: archive export ────────────────────────────────────────────────────
 
 export interface ArchiveExportResult {
-  blob:     Blob;
+  blob: Blob;
   filename: string;
 }
 
@@ -715,7 +749,7 @@ export async function exportArchive(format: "json" | "sql"): Promise<ArchiveExpo
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   const disposition = res.headers.get("content-disposition") ?? "";
-  const match        = disposition.match(/filename="?([^"]+)"?/);
-  const filename      = match?.[1] ?? `archive_export_${format}.zip`;
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] ?? `archive_export_${format}.zip`;
   return { blob: await res.blob(), filename };
 }

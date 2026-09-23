@@ -2,18 +2,18 @@
 Admin-only endpoints.
 
 Endpoints:
-  GET    /api/admin/audit-log            — paginated audit trail
-  GET    /api/admin/groups               — list this tenant's groups
-  POST   /api/admin/groups               — create a group
-  DELETE /api/admin/groups/{group_id}    — delete a group
-  GET    /api/admin/users                — list this tenant's users, with group membership
-  PATCH  /api/admin/users/{user_id}      — toggle can_manage_access / can_edit_extraction
-  POST   /api/admin/users/{user_id}/groups              — add a user to a group
-  DELETE /api/admin/users/{user_id}/groups/{group_id}   — remove a user from a group
-  POST   /api/admin/integrity-check      — on-demand fixity check for this tenant
-  GET    /api/admin/export               — full archive export (data + source files) as a zip
+  GET    /api/admin/audit-log            - paginated audit trail
+  GET    /api/admin/groups               - list this tenant's groups
+  POST   /api/admin/groups               - create a group
+  DELETE /api/admin/groups/{group_id}    - delete a group
+  GET    /api/admin/users                - list this tenant's users, with group membership
+  PATCH  /api/admin/users/{user_id}      - toggle can_manage_access / can_edit_extraction
+  POST   /api/admin/users/{user_id}/groups              - add a user to a group
+  DELETE /api/admin/users/{user_id}/groups/{group_id}   - remove a user from a group
+  POST   /api/admin/integrity-check      - on-demand fixity check for this tenant
+  GET    /api/admin/export               - full archive export (data + source files) as a zip
 
-All admin role required — group/membership management stays admin-only
+All admin role required - group/membership management stays admin-only
 even though *tagging a document* with an existing group/person (see
 documents_router's /access endpoints) can be delegated via can_manage_access.
 """
@@ -23,19 +23,17 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
+from audit import log_action
+from auth import CurrentUser, require_admin
+from documents_router import _SAFE_FILE_ROOTS, _get_tables_columns
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
+from i18n import t
+from ingest_router import _engine, _run_integrity_check
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from starlette.background import BackgroundTask
-
-from auth import CurrentUser, require_admin
-from documents_router import _get_tables_columns, _SAFE_FILE_ROOTS
-from i18n import t
-from ingest_router import _engine, _run_integrity_check
-from audit import log_action
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -45,7 +43,7 @@ def _serial(v):
         return None
     if hasattr(v, "isoformat"):
         return v.isoformat()
-    if hasattr(v, "hex"):           # UUID object from asyncpg
+    if hasattr(v, "hex"):  # UUID object from asyncpg
         return str(v)
     if isinstance(v, (dict, list)):
         return v
@@ -56,7 +54,7 @@ def _serial(v):
 
 def _sql_literal(v) -> str:
     """Render one Python value (as returned by asyncpg for a row column)
-    as a SQL literal, for the .sql export format. Not parameterized SQL —
+    as a SQL literal, for the .sql export format. Not parameterized SQL -
     this produces a standalone text file meant to be read or replayed
     later, not executed by this process, so the values must be inlined
     safely rather than bound."""
@@ -77,28 +75,28 @@ def _sql_literal(v) -> str:
 
 @router.get("/audit-log", summary="Audit log")
 async def get_audit_log(
-    page:      int           = Query(1,  ge=1),
-    page_size: int           = Query(50, ge=1, le=200),
-    user_id:   Optional[str] = None,
-    action:    Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to:   Optional[str] = None,
-    _:         CurrentUser   = Depends(require_admin),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    user_id: str | None = None,
+    action: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    _: CurrentUser = Depends(require_admin),
 ):
     """
     Return a paginated, filterable list of audit log entries, newest first.
     Requires admin role.
 
     Query parameters:
-      page / page_size  — pagination
-      user_id           — filter by user UUID
-      action            — exact action name (e.g. 'document_approved')
-      date_from / date_to — ISO-8601 timestamps (inclusive)
+      page / page_size  - pagination
+      user_id           - filter by user UUID
+      action            - exact action name (e.g. 'document_approved')
+      date_from / date_to - ISO-8601 timestamps (inclusive)
     """
     where: list[str] = []
     params: dict = {
         "page_size": page_size,
-        "offset":    (page - 1) * page_size,
+        "offset": (page - 1) * page_size,
     }
 
     if user_id:
@@ -129,18 +127,16 @@ async def get_audit_log(
 
     async with _engine().connect() as conn:
         result = await conn.execute(text(sql), params)
-        rows   = result.mappings().all()
+        rows = result.mappings().all()
 
     total = int(rows[0]["total_count"]) if rows else 0
-    items = [
-        {k: _serial(v) for k, v in dict(r).items() if k != "total_count"}
-        for r in rows
-    ]
+    items = [{k: _serial(v) for k, v in dict(r).items() if k != "total_count"} for r in rows]
 
     return {"total": total, "page": page, "page_size": page_size, "items": items}
 
 
 # ── Groups ────────────────────────────────────────────────────────────────────
+
 
 class CreateGroupBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
@@ -161,7 +157,12 @@ async def list_groups(current_user: CurrentUser = Depends(require_admin)):
             {"tid": current_user.tenant_id},
         )
         return [
-            {"id": str(r[0]), "name": r[1], "created_at": r[2].isoformat(), "member_count": int(r[3])}
+            {
+                "id": str(r[0]),
+                "name": r[1],
+                "created_at": r[2].isoformat(),
+                "member_count": int(r[3]),
+            }
             for r in rows
         ]
 
@@ -180,7 +181,10 @@ async def create_group(body: CreateGroupBody, current_user: CurrentUser = Depend
         )
         group_id = result.scalar()
         if group_id is None:
-            raise HTTPException(status_code=409, detail=t("common.group_already_exists", current_user.locale, name=body.name))
+            raise HTTPException(
+                status_code=409,
+                detail=t("common.group_already_exists", current_user.locale, name=body.name),
+            )
     return {"id": str(group_id), "name": body.name}
 
 
@@ -192,13 +196,19 @@ async def delete_group(group_id: str, current_user: CurrentUser = Depends(requir
     polymorphic, so those rows are cleaned up explicitly below)."""
     async with _engine().begin() as conn:
         result = await conn.execute(
-            text("DELETE FROM sdai_groups WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) RETURNING id"),
+            text(
+                "DELETE FROM sdai_groups WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) RETURNING id"
+            ),
             {"id": group_id, "tid": current_user.tenant_id},
         )
         if result.one_or_none() is None:
-            raise HTTPException(status_code=404, detail=t("common.group_not_found", current_user.locale))
+            raise HTTPException(
+                status_code=404, detail=t("common.group_not_found", current_user.locale)
+            )
         await conn.execute(
-            text("DELETE FROM sdai_document_access WHERE grantee_type = 'group' AND grantee_id = CAST(:id AS uuid)"),
+            text(
+                "DELETE FROM sdai_document_access WHERE grantee_type = 'group' AND grantee_id = CAST(:id AS uuid)"
+            ),
             {"id": group_id},
         )
     return {"ok": True}
@@ -206,9 +216,10 @@ async def delete_group(group_id: str, current_user: CurrentUser = Depends(requir
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
+
 class UpdateUserBody(BaseModel):
-    can_manage_access:   Optional[bool] = None
-    can_edit_extraction: Optional[bool] = None
+    can_manage_access: bool | None = None
+    can_edit_extraction: bool | None = None
 
 
 class GroupMembershipBody(BaseModel):
@@ -218,7 +229,7 @@ class GroupMembershipBody(BaseModel):
 @router.get("/users", summary="List users")
 async def list_users(current_user: CurrentUser = Depends(require_admin)):
     """Tenant's users with role, delegated permissions, and current group
-    membership — powers the group-membership picker and the per-document
+    membership - powers the group-membership picker and the per-document
     individual-user access grant picker."""
     async with _engine().connect() as conn:
         rows = await conn.execute(
@@ -236,8 +247,12 @@ async def list_users(current_user: CurrentUser = Depends(require_admin)):
         )
         return [
             {
-                "id": str(r[0]), "email": r[1], "full_name": r[2], "role": r[3],
-                "can_manage_access": r[4], "can_edit_extraction": r[5],
+                "id": str(r[0]),
+                "email": r[1],
+                "full_name": r[2],
+                "role": r[3],
+                "can_manage_access": r[4],
+                "can_edit_extraction": r[5],
                 "group_ids": [str(g) for g in r[6]],
             }
             for r in rows
@@ -245,8 +260,10 @@ async def list_users(current_user: CurrentUser = Depends(require_admin)):
 
 
 @router.patch("/users/{user_id}", summary="Update a user's delegated permissions")
-async def update_user(user_id: str, body: UpdateUserBody, current_user: CurrentUser = Depends(require_admin)):
-    """Partial update — only the fields present in the body are changed,
+async def update_user(
+    user_id: str, body: UpdateUserBody, current_user: CurrentUser = Depends(require_admin)
+):
+    """Partial update - only the fields present in the body are changed,
     so a caller can toggle can_manage_access and can_edit_extraction
     independently of each other."""
     set_parts: list[str] = []
@@ -258,7 +275,9 @@ async def update_user(user_id: str, body: UpdateUserBody, current_user: CurrentU
         set_parts.append("can_edit_extraction = :cee")
         params["cee"] = body.can_edit_extraction
     if not set_parts:
-        raise HTTPException(status_code=422, detail=t("admin.no_fields_to_update", current_user.locale))
+        raise HTTPException(
+            status_code=422, detail=t("admin.no_fields_to_update", current_user.locale)
+        )
 
     async with _engine().begin() as conn:
         result = await conn.execute(
@@ -270,26 +289,38 @@ async def update_user(user_id: str, body: UpdateUserBody, current_user: CurrentU
             params,
         )
         if result.one_or_none() is None:
-            raise HTTPException(status_code=404, detail=t("common.user_not_found", current_user.locale))
+            raise HTTPException(
+                status_code=404, detail=t("common.user_not_found", current_user.locale)
+            )
     return {"ok": True}
 
 
 @router.post("/users/{user_id}/groups", summary="Add a user to a group")
-async def add_user_to_group(user_id: str, body: GroupMembershipBody, current_user: CurrentUser = Depends(require_admin)):
+async def add_user_to_group(
+    user_id: str, body: GroupMembershipBody, current_user: CurrentUser = Depends(require_admin)
+):
     async with _engine().begin() as conn:
         # Both rows must belong to this admin's own tenant.
         user_row = await conn.execute(
-            text("SELECT 1 FROM sdai_users WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"),
+            text(
+                "SELECT 1 FROM sdai_users WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
             {"id": user_id, "tid": current_user.tenant_id},
         )
         if user_row.one_or_none() is None:
-            raise HTTPException(status_code=404, detail=t("common.user_not_found", current_user.locale))
+            raise HTTPException(
+                status_code=404, detail=t("common.user_not_found", current_user.locale)
+            )
         group_row = await conn.execute(
-            text("SELECT 1 FROM sdai_groups WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"),
+            text(
+                "SELECT 1 FROM sdai_groups WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
             {"id": body.group_id, "tid": current_user.tenant_id},
         )
         if group_row.one_or_none() is None:
-            raise HTTPException(status_code=404, detail=t("common.group_not_found", current_user.locale))
+            raise HTTPException(
+                status_code=404, detail=t("common.group_not_found", current_user.locale)
+            )
 
         await conn.execute(
             text("""
@@ -303,7 +334,9 @@ async def add_user_to_group(user_id: str, body: GroupMembershipBody, current_use
 
 
 @router.delete("/users/{user_id}/groups/{group_id}", summary="Remove a user from a group")
-async def remove_user_from_group(user_id: str, group_id: str, current_user: CurrentUser = Depends(require_admin)):
+async def remove_user_from_group(
+    user_id: str, group_id: str, current_user: CurrentUser = Depends(require_admin)
+):
     async with _engine().begin() as conn:
         await conn.execute(
             text("""
@@ -318,10 +351,11 @@ async def remove_user_from_group(user_id: str, group_id: str, current_user: Curr
 
 # ── Fixity / integrity verification ─────────────────────────────────────────
 
+
 @router.post("/integrity-check", summary="Run a fixity check for this tenant")
 async def run_integrity_check(current_user: CurrentUser = Depends(require_admin)):
     """On-demand version of the background scan (_integrity_check_worker in
-    ingest_router) — re-hashes/verifies every document's referenced file(s)
+    ingest_router) - re-hashes/verifies every document's referenced file(s)
     for this tenant right now and returns a summary. Each failure is also
     logged as an integrity_check_failed audit entry, same as the
     background scan, so results are visible in the audit log afterward too."""
@@ -330,8 +364,9 @@ async def run_integrity_check(current_user: CurrentUser = Depends(require_admin)
 
 # ── Archive export ────────────────────────────────────────────────────────────
 
+
 def _document_files(row: dict) -> set[str]:
-    """Every source file a document row references — the primary image,
+    """Every source file a document row references - the primary image,
     the original PDF (if any), and every page image for a multi-page
     document. A set: multi-page documents whose single page is also the
     primary image would otherwise get that file twice."""
@@ -352,7 +387,7 @@ async def export_archive(
 ):
     """Every document row in this tenant, in the requested format, bundled
     into a zip alongside a documents/ folder containing every referenced
-    source file (page images, original PDFs) — a full, portable backup of
+    source file (page images, original PDFs) - a full, portable backup of
     the tenant's archive, not just its metadata. Admin-only: this bypasses
     per-document access grants entirely (a full-archive export is a
     structural/bulk action, same tier as integrity checks and schema
@@ -374,7 +409,7 @@ async def export_archive(
             with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 json_tables: dict = {}
                 sql_lines: list[str] = [
-                    f"-- SDAI archive export — tenant '{tenant_slug}' — {exported_at.isoformat()}",
+                    f"-- SDAI archive export - tenant '{tenant_slug}' - {exported_at.isoformat()}",
                 ]
 
                 for table_name, cols in sorted(tables_cols.items()):
@@ -389,9 +424,11 @@ async def export_archive(
                         }
                     else:
                         col_defs = ", ".join(f'"{c}" {t}' for c, t in cols.items())
-                        sql_lines.append(f'\nCREATE TABLE IF NOT EXISTS "{table_name}" ({col_defs});')
+                        sql_lines.append(
+                            f'\nCREATE TABLE IF NOT EXISTS "{table_name}" ({col_defs});'
+                        )
                         for row in rows:
-                            col_names  = list(row.keys())
+                            col_names = list(row.keys())
                             col_clause = ", ".join(f'"{c}"' for c in col_names)
                             val_clause = ", ".join(_sql_literal(row[c]) for c in col_names)
                             sql_lines.append(
@@ -406,13 +443,15 @@ async def export_archive(
                                 continue
                             if not file_path.exists():
                                 continue
-                            zf.write(file_path, f"documents/{table_name}/{doc_key}/{file_path.name}")
+                            zf.write(
+                                file_path, f"documents/{table_name}/{doc_key}/{file_path.name}"
+                            )
 
                 if format == "json":
                     export_doc = {
                         "exported_at": exported_at.isoformat(),
-                        "tenant":      tenant_slug,
-                        "tables":      json_tables,
+                        "tenant": tenant_slug,
+                        "tables": json_tables,
                     }
                     zf.writestr("export.json", json.dumps(export_doc, ensure_ascii=False, indent=2))
                 else:

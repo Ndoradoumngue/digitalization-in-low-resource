@@ -9,15 +9,15 @@ Key design decisions:
   loop) while different tenants never see each other's cached response. Every
   cached endpoint takes `current_user: CurrentUser = Depends(get_current_user)`,
   which FastAPI resolves and fastapi-cache2 passes through in `kwargs` before
-  this key builder runs — see fastapi_cache.decorator.cache's `inner()`.
+  this key builder runs - see fastapi_cache.decorator.cache's `inner()`.
 - Silent fallback: if Redis is unreachable at startup the app continues with an
   in-memory backend so offline deployments (no Redis) still function.
-- invalidate_cache() never raises — a failed invalidation causes a stale cache
+- invalidate_cache() never raises - a failed invalidation causes a stale cache
   read at most, not a broken write path.
 """
 
 import os
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from fastapi_cache import FastAPICache
@@ -32,8 +32,8 @@ def _path_key_builder(
     func: Callable,
     namespace: str = "",
     *,
-    request: Optional[Request] = None,
-    response: Optional[Response] = None,
+    request: Request | None = None,
+    response: Response | None = None,
     args: tuple,
     kwargs: dict,
 ) -> str:

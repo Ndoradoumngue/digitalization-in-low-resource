@@ -14,7 +14,7 @@
                           └──┬────────┬───┘
                              │        │
                      /api/*  │        │  /images/*
-                   /images/* │        │  (nginx cache — 24 h)
+                   /images/* │        │  (nginx cache - 24 h)
                              │        │
                      ┌───────▼────────▼───┐
                      │        api         │
@@ -43,7 +43,7 @@
 | Path | Route |
 |---|---|
 | `GET /` and all SPA routes | nginx serves `index.html` from the built React bundle |
-| `POST/GET /api/*` | nginx proxies to `api:8000` — no round-trip to the internet |
+| `POST/GET /api/*` | nginx proxies to `api:8000` - no round-trip to the internet |
 | `GET /images/*` | nginx proxies to `api:8000/images/*`, caching `200` responses for 24 h |
 | VLM inference | `api` calls `ollama:11434/api/chat` on the internal Docker network |
 | Database reads/writes | `api` connects to `db:5432` via asyncpg (async SQLAlchemy) |
@@ -53,36 +53,36 @@
 
 | Port | Exposed to | Service |
 |---|---|---|
-| 80 | Host | `frontend` — redirects to 443 |
-| 443 | Host | `frontend` — HTTPS (self-signed or Let's Encrypt) |
-| 5432 | Host (optional) | `db` — for local database tooling |
-| 8000 | Internal only | `api` — accessed only via nginx proxy |
-| 11434 | Internal only | `ollama` — accessed only by `api` |
-| 6379 | Internal only | `redis` — accessed only by `api` |
+| 80 | Host | `frontend` - redirects to 443 |
+| 443 | Host | `frontend` - HTTPS (self-signed or Let's Encrypt) |
+| 5432 | Host (optional) | `db` - for local database tooling |
+| 8000 | Internal only | `api` - accessed only via nginx proxy |
+| 11434 | Internal only | `ollama` - accessed only by `api` |
+| 6379 | Internal only | `redis` - accessed only by `api` |
 
 ---
 
 ## Five-stage pipeline
 
-### 1 — Preprocessing
+### 1 - Preprocessing
 
 Each incoming document image passes through a deterministic preprocessing chain before any model sees it:
 
-- **Orientation correction** — Tesseract OSD detects rotation in 90° increments and applies the inverse transform.
-- **Flag-stripe removal** — an HSV colour mask blanks out the blue/yellow/red stripes of the Chadian national flag watermark that appears on official letterheads.
-- **PDF → PNG conversion** — `pdf2image` (backed by Poppler) renders each page at 200 DPI before the image pipeline runs.
-- **Resize** — images are resized to a maximum of 1600 px on the longest axis to stay within the VLM's context budget.
+- **Orientation correction** - Tesseract OSD detects rotation in 90° increments and applies the inverse transform.
+- **Flag-stripe removal** - an HSV colour mask blanks out the blue/yellow/red stripes of the Chadian national flag watermark that appears on official letterheads.
+- **PDF → PNG conversion** - `pdf2image` (backed by Poppler) renders each page at 200 DPI before the image pipeline runs.
+- **Resize** - images are resized to a maximum of 1600 px on the longest axis to stay within the VLM's context budget.
 
-### 2 — Classifier
+### 2 - Classifier
 
 A cheap heuristic gate runs before the VLM to filter non-documents (cover sheets, blank pages, photographs):
 
 - Pixel ink-coverage is measured on a 400 px grayscale thumbnail (fraction of non-background pixels).
 - If coverage is below the threshold the page is treated as blank; if every page of a document is blank it's marked `out_of_scope` and processing stops.
-- This check is intentionally language/script-agnostic — an OCR-based check was tried first but wrongly classified real content written in a script the OCR engine couldn't recognize as blank, silently dropping most of a document.
+- This check is intentionally language/script-agnostic - an OCR-based check was tried first but wrongly classified real content written in a script the OCR engine couldn't recognize as blank, silently dropping most of a document.
 - Documents (or individual pages) that pass continue to VLM extraction.
 
-### 3 — VLM extraction
+### 3 - VLM extraction
 
 `qwen2.5vl:7b` is called via the Ollama REST API (`POST /api/chat`), once per page, with a deterministic zero-shot prompt requesting a JSON object. The **default** prompt (tailored to Chadian government administrative documents) requests:
 
@@ -92,13 +92,13 @@ destination_or_subject · organisation · signatory · budget_line
 language · quality_issues · extraction_confidence
 ```
 
-The prompt is a per-deployment extraction schema, not a fixed contract — a different document corpus (invoices, a lexicon, land titles...) needs different fields. It's configurable via `VLM_PROMPT_FILE` / `VLM_LIST_FIELDS` without a code change or rebuild; see README.md "Customizing the extraction schema".
+The prompt is a per-deployment extraction schema, not a fixed contract - a different document corpus (invoices, a lexicon, land titles...) needs different fields. It's configurable via `VLM_PROMPT_FILE` / `VLM_LIST_FIELDS` without a code change or rebuild; see README.md "Customizing the extraction schema".
 
 The model self-reports `extraction_confidence` as `high`, `medium`, or `low`. A 120-second per-page timeout guards against GGML crashes.
 
-For multi-page documents, every page is extracted independently, then reconciled into one record: scalar fields take the first non-empty value found (letterhead metadata is usually on page 1), fields listed in `VLM_LIST_FIELDS` are unioned across all pages, and `extraction_confidence` takes the *worst* tier seen across any page — so one problematic page still routes the whole document to human review instead of being masked by a confident page 1. The original source PDF and every page image are kept and linked to the record.
+For multi-page documents, every page is extracted independently, then reconciled into one record: scalar fields take the first non-empty value found (letterhead metadata is usually on page 1), fields listed in `VLM_LIST_FIELDS` are unioned across all pages, and `extraction_confidence` takes the *worst* tier seen across any page - so one problematic page still routes the whole document to human review instead of being masked by a confident page 1. The original source PDF and every page image are kept and linked to the record.
 
-### 4 — Dynamic schema inference
+### 4 - Dynamic schema inference
 
 Rather than maintaining a fixed database schema, the system creates and evolves tables at runtime based on the keys returned by the VLM:
 
@@ -106,9 +106,9 @@ Rather than maintaining a fixed database schema, the system creates and evolves 
 - `CREATE TABLE IF NOT EXISTS` creates the table on first encounter.
 - `ALTER TABLE … ADD COLUMN IF NOT EXISTS` adds columns as new field keys appear in subsequent extractions.
 - Python lists are stored as `JSONB`; all other scalar values are stored as `TEXT`.
-- Table existence is always verified against `information_schema` — table names are never taken raw from user input.
+- Table existence is always verified against `information_schema` - table names are never taken raw from user input.
 
-### 5 — Three-tier router
+### 5 - Three-tier router
 
 ```
 ┌──────────────────┬───────────────────────┬──────────────────┐
@@ -218,4 +218,4 @@ Tables are never defined in migration files. Instead, `ingest_router.py` inspect
 
 This means the database schema is a direct reflection of what the VLM actually returns, not a schema designed in advance. The `GET /api/db/schema` endpoint exposes this live schema to the frontend for the React Flow visualisation.
 
-Table discovery throughout the codebase always goes through `information_schema.columns` — checking for the presence of `source_image_path` as a sentinel — rather than maintaining any in-memory registry of known tables.
+Table discovery throughout the codebase always goes through `information_schema.columns` - checking for the presence of `source_image_path` as a sentinel - rather than maintaining any in-memory registry of known tables.

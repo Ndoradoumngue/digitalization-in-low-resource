@@ -3,12 +3,10 @@
 import logging
 import re
 
-import pytest
-
 import api_server
 
-
 # ── Header presence and format ────────────────────────────────────────────────
+
 
 def test_process_time_header_present(auth_client):
     resp = auth_client.get("/api/auth/me")
@@ -30,9 +28,10 @@ def test_process_time_header_present_on_unauthenticated_request(client):
 
 # ── Slow-request warning ──────────────────────────────────────────────────────
 
+
 def test_slow_request_logs_warning(auth_client, monkeypatch, caplog):
     # Patch time as seen by api_server so the middleware measures 3 s elapsed.
-    # Only api_server.time is replaced — other modules are unaffected.
+    # Only api_server.time is replaced - other modules are unaffected.
     from unittest.mock import MagicMock
 
     _calls = [0]

@@ -3,7 +3,7 @@ Audit logging helper.
 
 Every write action in the system calls log_action() to record who did what
 and when.  The helper opens its own transaction so audit failures never
-propagate to the caller — a logging hiccup must not reject a document review.
+propagate to the caller - a logging hiccup must not reject a document review.
 
 Actions logged:
   user_login         user_logout
@@ -20,14 +20,14 @@ Actions logged:
 import json
 import sys
 import uuid as _uuid
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import Request
 
-
 # ── IP extraction ─────────────────────────────────────────────────────────────
 
-def client_ip(request: Request) -> Optional[str]:
+
+def client_ip(request: Request) -> str | None:
     """Return the real client IP from X-Forwarded-For.
 
     nginx appends the true client IP as the *last* entry in X-Forwarded-For,
@@ -42,28 +42,29 @@ def client_ip(request: Request) -> Optional[str]:
 
 # ── Core helper ───────────────────────────────────────────────────────────────
 
+
 async def log_action(
     *,
-    action:      str,
-    user_id:     Optional[str] = None,
-    user_email:  Optional[str] = None,
-    table_name:  Optional[str] = None,
-    document_id: Optional[str] = None,
-    details:     Optional[dict[str, Any]] = None,
-    ip_address:  Optional[str] = None,
+    action: str,
+    user_id: str | None = None,
+    user_email: str | None = None,
+    table_name: str | None = None,
+    document_id: str | None = None,
+    details: dict[str, Any] | None = None,
+    ip_address: str | None = None,
 ) -> None:
     """
     Insert one audit log entry in its own transaction.
 
-    Never raises — a logging failure is printed to stderr and swallowed so
+    Never raises - a logging failure is printed to stderr and swallowed so
     that the user-facing action that triggered it is never affected.
     """
     # Lazy import avoids the circular dependency:
     # ingest_router → audit → ingest_router
-    from ingest_router import _engine  # noqa: PLC0415
-    from sqlalchemy import text        # noqa: PLC0415
+    from ingest_router import _engine
+    from sqlalchemy import text
 
-    def _to_uuid(s: Optional[str]):
+    def _to_uuid(s: str | None):
         if s is None:
             return None
         try:
@@ -83,13 +84,13 @@ async def log_action(
                          :did, CAST(:details AS jsonb), :ip)
                 """),
                 {
-                    "uid":     _to_uuid(user_id),
-                    "email":   user_email,
-                    "action":  action,
-                    "tname":   table_name,
-                    "did":     _to_uuid(document_id),
+                    "uid": _to_uuid(user_id),
+                    "email": user_email,
+                    "action": action,
+                    "tname": table_name,
+                    "did": _to_uuid(document_id),
                     "details": json.dumps(details) if details is not None else None,
-                    "ip":      ip_address,
+                    "ip": ip_address,
                 },
             )
     except Exception as exc:

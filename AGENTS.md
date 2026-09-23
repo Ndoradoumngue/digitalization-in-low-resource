@@ -1,4 +1,4 @@
-# AGENTS.md — Agentic Coding Guide
+# AGENTS.md - Agentic Coding Guide
 
 This file documents everything an AI coding agent needs to work effectively in this repository.
 
@@ -6,7 +6,7 @@ This file documents everything an AI coding agent needs to work effectively in t
 
 ## Project Overview
 
-**SDAI Digitalization** benchmarks OCR engines and Vision-Language Models (VLMs) for structured field extraction from scanned administrative documents — primarily Chadian government forms in French and Arabic. The goal is to find reliable digitalization pipelines for low-resource settings.
+**SDAI Digitalization** benchmarks OCR engines and Vision-Language Models (VLMs) for structured field extraction from scanned administrative documents - primarily Chadian government forms in French and Arabic. The goal is to find reliable digitalization pipelines for low-resource settings.
 
 ---
 
@@ -15,13 +15,13 @@ This file documents everything an AI coding agent needs to work effectively in t
 ```
 sdai_digitalization/
 ├── packages/
-│   ├── types/          # @sdai/types  — Zod schemas shared by API client & frontend
-│   └── api-client/     # @sdai/api-client — typed fetch wrapper (credentials: include)
+│   ├── types/          # @sdai/types  - Zod schemas shared by API client & frontend
+│   └── api-client/     # @sdai/api-client - typed fetch wrapper (credentials: include)
 ├── apps/
 │   ├── api/            # FastAPI backend
 │   │   ├── api_server.py        # App entry point + auth routes + X-Process-Time middleware
 │   │   ├── auth.py              # DB-backed auth: CurrentUser, get_current_user, require_admin
-│   │   ├── audit.py             # log_action() — never raises, writes to sdai_audit_log
+│   │   ├── audit.py             # log_action() - never raises, writes to sdai_audit_log
 │   │   ├── ingest_router.py     # /api/ingest/* + _engine() + DDL helpers + SHA-256 dedup
 │   │   ├── documents_router.py  # /api/db/*
 │   │   ├── review_router.py     # /api/review/*
@@ -34,17 +34,17 @@ sdai_digitalization/
 │   │       ├── test_documents.py    # /api/db/* browse, schema, image endpoints
 │   │       ├── test_ingest.py       # upload, path, status, _compute_hash, _find_duplicate, dedup
 │   │       ├── test_middleware.py   # X-Process-Time header + slow-request WARNING log
-│   │       ├── test_performance.py  # benchmark tests — opt-in with pytest -m benchmark
+│   │       ├── test_performance.py  # benchmark tests - opt-in with pytest -m benchmark
 │   │       ├── test_rate_limit.py   # SlowAPI key builder
 │   │       └── test_review.py       # approve, reject, flag, count
-│   └── frontend/       # @sdai/frontend — React 18 + Vite + Tailwind + TanStack Query
+│   └── frontend/       # @sdai/frontend - React 18 + Vite + Tailwind + TanStack Query
 ├── docker-compose.yml
 ├── Dockerfile.frontend
 ├── setup.sh            # Offline bundle preparation (internet-connected machine)
 ├── install.sh          # Offline install + docker compose up
 ├── pnpm-workspace.yaml
 ├── tsconfig.base.json
-└── documents/          # NOT in git — mounted at runtime
+└── documents/          # NOT in git - mounted at runtime
 ```
 
 ### Package dependency graph
@@ -65,7 +65,7 @@ sdai_digitalization/
 | Frontend | React 18, TypeScript 5, Vite, Tailwind CSS v3, TanStack Query v5, React Router v6 |
 | Schemas | Zod v4 (discriminated union on confidence tier) |
 | Package manager | pnpm v10 (workspace) |
-| Containerization | Docker — multi-stage frontend, nginx reverse proxy |
+| Containerization | Docker - multi-stage frontend, nginx reverse proxy |
 | Linting | ruff (Python), tsc (TypeScript), pre-commit |
 
 ---
@@ -116,9 +116,9 @@ pnpm test:api
 ```
 
 Key test patterns:
-- `mock_db` fixture — patches `ingest_router.engine`; configure with `mock_db.execute.return_value` or `mock_db.execute.side_effect`.
-- `_make_fake_session(monkeypatch, fetchall=[...])` — patches `ingest_router.SessionLocal` for status endpoint tests.
-- `asyncio.run(ingest_router._some_async_fn(...))` — call async helpers from sync test functions.
+- `mock_db` fixture - patches `ingest_router.engine`; configure with `mock_db.execute.return_value` or `mock_db.execute.side_effect`.
+- `_make_fake_session(monkeypatch, fetchall=[...])` - patches `ingest_router.SessionLocal` for status endpoint tests.
+- `asyncio.run(ingest_router._some_async_fn(...))` - call async helpers from sync test functions.
 - Benchmark tests use `benchmark(fn)` for uncached endpoints and `benchmark.pedantic(fn, setup=InMemoryBackend._store.clear, rounds=N)` for cached ones. Do **not** use `benchmark.stats.mean` (broken in pytest-benchmark 4.0.0); use `time.perf_counter()` for timing assertions.
 - Slow-request middleware test: patch `api_server.time` (not global `time`) so only `api_server.py`'s calls are affected.
 
@@ -135,11 +135,11 @@ pre-commit run --all-files  # run manually
 
 ### API (`apps/api/`)
 
-- All data routes require `Depends(get_current_user)` — never expose data without auth.
+- All data routes require `Depends(get_current_user)` - never expose data without auth.
 - Admin-only routes additionally require `Depends(require_admin)` from `auth.py`.
 - Auth uses httpOnly cookies (`access_token=Bearer <jwt>`). No Authorization headers. Users are stored in PostgreSQL (`sdai_users`); JWT `jti` blocklist in `sdai_token_blocklist`.
 - CORS is **disabled in Docker** (nginx proxies internally). Enable via `CORS_ORIGINS` env var for local dev only.
-- `log_action()` in `audit.py` is called after state-changing operations. It swallows all exceptions — never let it propagate to callers.
+- `log_action()` in `audit.py` is called after state-changing operations. It swallows all exceptions - never let it propagate to callers.
 - `ingest_router.py` owns `_engine()`. Both `auth.py` and `audit.py` import it lazily (inside function bodies) to avoid the circular import: `ingest_router → auth → ingest_router`.
 - **Deduplication**: `_compute_hash(path)` computes SHA-256 in 64 KB chunks; `_find_duplicate(hash)` queries all tables with a `content_hash` column. `_register_and_enqueue()` calls both before touching the queue. Duplicates get `status='duplicate'` in `batch_documents` and are counted in the `duplicates_skipped` field of `GET /api/ingest/status/{batch_id}`.
 - Every per-type document table has a `content_hash TEXT` column with a unique index (`idx_{table_name}_content_hash`).
@@ -156,18 +156,18 @@ pre-commit run --all-files  # run manually
 
 ### Packages (`packages/`)
 
-- TypeScript `moduleResolution: "bundler"` — packages export `./src/index.ts` directly, **no build step**.
+- TypeScript `moduleResolution: "bundler"` - packages export `./src/index.ts` directly, **no build step**.
 - Path aliases in tsconfig map `@sdai/types` and `@sdai/api-client` to their `src/index.ts`.
-- Do **not** add `rootDir` to `packages/api-client/tsconfig.json` — it breaks cross-package path resolution.
+- Do **not** add `rootDir` to `packages/api-client/tsconfig.json` - it breaks cross-package path resolution.
 - All fetch calls use `credentials: "include"` for cookie-based auth.
 
 ### Frontend (`apps/frontend/`)
 
-- `AuthContext` initialises by calling `GET /api/auth/me` on mount — sets `isLoading: true` until resolved.
+- `AuthContext` initialises by calling `GET /api/auth/me` on mount - sets `isLoading: true` until resolved.
 - `ProtectedRoute` shows a spinner during auth init, then redirects to `/login` if no user.
 - `AdminRoute` additionally redirects authenticated non-admin users to `/` (not `/login`). Use it for admin-only pages in `App.tsx`.
 - `DashboardPage` fetches both OCR and VLM document lists simultaneously; only the active tab's list is displayed.
-- Tab state lives in `DashboardPage` — switching tabs clears `selected`.
+- Tab state lives in `DashboardPage` - switching tabs clears `selected`.
 - The admin-only Audit Log link in the sidebar is rendered only when `user?.role === "admin"`.
 
 ---
@@ -198,13 +198,13 @@ pre-commit run --all-files  # run manually
 
 ## What to Avoid
 
-- Do not bake `documents/` into Docker images — always mount as a volume.
-- Do not use `allow_origins=["*"]` with `allow_credentials=True` in CORS — browsers reject it.
+- Do not bake `documents/` into Docker images - always mount as a volume.
+- Do not use `allow_origins=["*"]` with `allow_credentials=True` in CORS - browsers reject it.
 - Do not add `rootDir` to `packages/api-client/tsconfig.json`.
-- Do not run `pnpm approve-builds` interactively during Docker builds — esbuild is pre-approved via `"pnpm": { "onlyBuiltDependencies": ["esbuild"] }` in root `package.json`.
+- Do not run `pnpm approve-builds` interactively during Docker builds - esbuild is pre-approved via `"pnpm": { "onlyBuiltDependencies": ["esbuild"] }` in root `package.json`.
 - Do not skip `Depends(get_current_user)` on new data routes.
-- Do not import `_engine` from `ingest_router` at module level in `auth.py` or `audit.py` — always import lazily inside the function body to avoid circular imports.
-- Do not let `log_action()` failures propagate — the helper swallows exceptions by design.
+- Do not import `_engine` from `ingest_router` at module level in `auth.py` or `audit.py` - always import lazily inside the function body to avoid circular imports.
+- Do not let `log_action()` failures propagate - the helper swallows exceptions by design.
 - Keep schemas in `packages/types`, not duplicated in `api-client` or `frontend`.
 
 ---
@@ -213,7 +213,7 @@ pre-commit run --all-files  # run manually
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUTH_SECRET_KEY` | `change-me-in-production` | JWT signing key — **change in production** |
+| `AUTH_SECRET_KEY` | `change-me-in-production` | JWT signing key - **change in production** |
 | `AUTH_SECURE_COOKIES` | `false` | Set `true` in production (HTTPS) |
 | `AUTH_TOKEN_EXPIRE_HOURS` | `8` | JWT TTL |
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@localhost:5432/sdai` | asyncpg connection string |

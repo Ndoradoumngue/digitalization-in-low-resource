@@ -1,5 +1,5 @@
 """
-Backend response localization — English/French.
+Backend response localization - English/French.
 
 The frontend sends the user's chosen UI language on every request as the
 standard `Accept-Language` header (see packages/api-client's fetch
@@ -7,12 +7,10 @@ wrapper, which reads it from the same localStorage key the language
 switcher writes to). `resolve_locale` turns that into "en" or "fr",
 defaulting to "en" for anything else (missing header, browser default,
 an unsupported language). `t()` looks up a message by a stable key and
-formats it for that locale — this is the single source of truth for
+formats it for that locale - this is the single source of truth for
 every user-facing string an API error/response returns; call sites
 should never inline an English literal in `detail=`.
 """
-
-from typing import Optional
 
 from fastapi import Header
 
@@ -20,8 +18,8 @@ SUPPORTED_LOCALES = ("en", "fr")
 DEFAULT_LOCALE = "en"
 
 
-def resolve_locale(accept_language: Optional[str] = Header(default=None)) -> str:
-    """FastAPI dependency — reads the Accept-Language header and returns
+def resolve_locale(accept_language: str | None = Header(default=None)) -> str:
+    """FastAPI dependency - reads the Accept-Language header and returns
     a supported locale code, defaulting to English."""
     if accept_language:
         lang = accept_language.split(",")[0].split("-")[0].strip().lower()
@@ -68,7 +66,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Incorrect email or password",
         "fr": "E-mail ou mot de passe incorrect",
     },
-
+    "auth.invalid_api_key": {
+        "en": "Invalid, revoked, or expired API key",
+        "fr": "Clé API invalide, révoquée ou expirée",
+    },
     # ── shared across routers ───────────────────────────────────────────
     "common.table_not_found": {
         "en": "Table '{table}' not found",
@@ -122,13 +123,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Access denied",
         "fr": "Accès refusé",
     },
-
     # ── admin_router.py ──────────────────────────────────────────────────
     "admin.no_fields_to_update": {
         "en": "No fields to update",
         "fr": "Aucun champ à mettre à jour",
     },
-
     # ── documents_router.py ─────────────────────────────────────────────
     "documents.no_editable_fields": {
         "en": "No editable fields in request",
@@ -142,13 +141,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Target document not found",
         "fr": "Document cible introuvable",
     },
-
     # ── review_router.py ─────────────────────────────────────────────────
     "review.invalid_action": {
         "en": "action must be 'approve' or 'reject'",
         "fr": "l'action doit être 'approve' ou 'reject'",
     },
-
     # ── ingest_router.py ─────────────────────────────────────────────────
     "ingest.only_crashed_can_retry": {
         "en": "Only crashed documents (manual_entry status) can be retried.",
@@ -194,6 +191,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "{filename} does not look like a valid {ext} file (content doesn't match its extension).",
         "fr": "{filename} ne semble pas être un fichier {ext} valide (le contenu ne correspond pas à son extension).",
     },
+    "ingest.unknown_preset": {
+        "en": "Unknown prompt preset '{preset}'. Call GET /api/ingest/presets for the list of valid presets.",
+        "fr": "Préréglage de prompt inconnu « {preset} ». Appelez GET /api/ingest/presets pour la liste des préréglages valides.",
+    },
     "ingest.provide_path_or_drive": {
         "en": "Provide either 'path' or 'google_drive_folder_id'.",
         "fr": "Fournissez soit 'path', soit 'google_drive_folder_id'.",
@@ -219,10 +220,13 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Aucune page en attente ou échouée à reprendre",
     },
     "ingest.no_extracted_document": {
-        "en": "No extracted document found for this upload — it may not have finished processing yet, or was already deleted.",
-        "fr": "Aucun document extrait trouvé pour ce téléversement — il n'a peut-être pas encore fini d'être traité, ou a déjà été supprimé.",
+        "en": "No extracted document found for this upload - it may not have finished processing yet, or was already deleted.",
+        "fr": "Aucun document extrait trouvé pour ce téléversement - il n'a peut-être pas encore fini d'être traité, ou a déjà été supprimé.",
     },
-
+    "ingest.document_not_found": {
+        "en": "Document not found",
+        "fr": "Document introuvable",
+    },
     # ── api_server.py ────────────────────────────────────────────────────
     "benchmarks.vlm_results_not_found": {
         "en": "VLM results file not found. Run vlm_ollama_test.py first.",

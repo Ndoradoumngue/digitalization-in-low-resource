@@ -6,15 +6,15 @@ A full-stack document digitalization system for low-resource settings. It ingest
 
 ## What it does
 
-1. **Ingest** — accepts documents via file upload, local filesystem path, or Google Drive folder. A preprocessing pipeline corrects orientation, removes flag-stripe watermarks, converts PDFs to PNG, and resizes to 1600 px.
+1. **Ingest** - accepts documents via file upload, local filesystem path, or Google Drive folder. A preprocessing pipeline corrects orientation, removes flag-stripe watermarks, converts PDFs to PNG, and resizes to 1600 px.
 
-2. **Extract** — runs `qwen2.5vl:7b` (via Ollama) on each document to produce a structured JSON object: document type, reference number, date, organisation, signatories, and quality flags. The VLM self-reports an extraction confidence tier (`high / medium / low`).
+2. **Extract** - runs `qwen2.5vl:7b` (via Ollama) on each document to produce a structured JSON object: document type, reference number, date, organisation, signatories, and quality flags. The VLM self-reports an extraction confidence tier (`high / medium / low`).
 
-3. **Route** — a three-tier router writes results directly to the database (`auto_approved`) for high-confidence extractions, places medium- and low-confidence results in a human review queue (`review_required`), and marks crashes or parse failures for manual data entry (`manual_entry`).
+3. **Route** - a three-tier router writes results directly to the database (`auto_approved`) for high-confidence extractions, places medium- and low-confidence results in a human review queue (`review_required`), and marks crashes or parse failures for manual data entry (`manual_entry`).
 
-4. **Review** — a human review queue presents each `review_required` document side-by-side with its editable extracted fields. Reviewers can approve (with corrections), reject, flag for manual entry, or skip. The queue is ordered oldest-first and supports keyboard navigation.
+4. **Review** - a human review queue presents each `review_required` document side-by-side with its editable extracted fields. Reviewers can approve (with corrections), reject, flag for manual entry, or skip. The queue is ordered oldest-first and supports keyboard navigation.
 
-5. **Browse & visualize** — a paginated document browser queries the PostgreSQL tables with full-text search, date range, confidence, and review-status filters. A React Flow schema diagram shows all tables, columns, and foreign-key relationships, with live auto-refresh.
+5. **Browse & visualize** - a paginated document browser queries the PostgreSQL tables with full-text search, date range, confidence, and review-status filters. A React Flow schema diagram shows all tables, columns, and foreign-key relationships, with live auto-refresh.
 
 ---
 
@@ -38,41 +38,54 @@ The application layer is a FastAPI backend (`apps/api/`) consumed by a React + V
 
 ## Customizing the extraction schema
 
-The VLM extraction prompt is a **per-deployment schema**, not a fixed contract. The built-in default (used automatically whenever `VLM_PROMPT_FILE` is unset) is tailored to Chadian government administrative documents (`document_type`, `reference_number`, `signatory`, ...) — a different document corpus (invoices, a lexicon, land titles, medical records...) needs different fields entirely. There is currently no UI for this; it's a configuration step you do once per deployment, before ingesting that corpus.
+The VLM extraction prompt is a **per-deployment schema**, not a fixed contract. The built-in default (used automatically whenever `VLM_PROMPT_FILE` is unset) is tailored to Chadian government administrative documents (`document_type`, `reference_number`, `signatory`, ...) - a different document corpus (invoices, a lexicon, land titles, medical records...) needs different fields entirely. There is currently no UI for this; it's a configuration step you do once per deployment, before ingesting that corpus.
 
-**Starting point — the built-in default**: [`apps/api/prompts/examples/admin_document.txt`](./apps/api/prompts/examples/admin_document.txt) is an exact tracked copy of the prompt the pipeline uses out of the box (`_DEFAULT_VLM_PROMPT` in `apps/api/ingest_router.py`). If your corpus is reasonably close to administrative documents — a form with a handful of labeled fields, one page each, no repeating structure — copy this file, tweak the field names/descriptions for your document, and you likely don't need anything else on this page. If your corpus has a genuinely different *shape* (many repeating records per page, multi-page documents, a two-column layout, a legend of abbreviations to capture) — read on; that's exactly what the lexicon example below works through.
+**Starting point - the built-in default**: [`apps/api/prompts/examples/admin_document.txt`](./apps/api/prompts/examples/admin_document.txt) is an exact tracked copy of the prompt the pipeline uses out of the box (`_DEFAULT_VLM_PROMPT` in `apps/api/ingest_router.py`). If your corpus is reasonably close to administrative documents - a form with a handful of labeled fields, one page each, no repeating structure - copy this file, tweak the field names/descriptions for your document, and you likely don't need anything else on this page. If your corpus has a genuinely different *shape* (many repeating records per page, multi-page documents, a two-column layout, a legend of abbreviations to capture) - read on; that's exactly what the lexicon example below works through.
 
 **Set environment variables** (see `.env.example`):
 
-- `VLM_PROMPT_FILE` — path to a text file containing your full prompt. Put it under `documents/` (already volume-mounted into the API container) so it survives image rebuilds, e.g. `VLM_PROMPT_FILE=/app/documents/prompts/lexicon.txt`.
-- `VLM_LIST_FIELDS` — comma-separated names of the fields in your schema that should **accumulate across pages** rather than take the first value found (see "Multi-page reconciliation" in [ARCHITECTURE.md](./ARCHITECTURE.md)). Get this wrong and a list field silently keeps only page 1's values.
-- `VLM_PAGE_TIMEOUT_SECONDS` — per-page VLM call timeout (default 120). A schema that asks for a lot of output per page (e.g. a long list of dictionary entries) needs more generation time — raise this if pages fail with a VLM timeout.
-- `SPLIT_PAGE_COLUMNS` — set to `true` if your document is typeset in two independent side-by-side columns (e.g. a dictionary, each entry self-contained within its column — **not** parallel-text translation, which needs both columns visible together to pair correctly). Splits each page down the middle before extraction, roughly halving content — and generation time — per VLM call.
+- `VLM_PROMPT_FILE` - path to a text file containing your full prompt. Put it under `documents/` (already volume-mounted into the API container) so it survives image rebuilds, e.g. `VLM_PROMPT_FILE=/app/documents/prompts/lexicon.txt`.
+- `VLM_PAGE_TIMEOUT_SECONDS` - per-page VLM call timeout (default 120). Deliberately a deployment-wide setting, not per-prompt: how long a VLM call is allowed to run is a property of *this deployment's hardware*, not of any one document corpus. A schema that asks for a lot of output per page (e.g. a long list of dictionary entries) needs more generation time - raise this if pages fail with a VLM timeout; check real durations in `docker compose logs ollama` to size it rather than guessing.
+- `VLM_NUM_CTX` - Ollama's context window per VLM call, in tokens (default 8192). Also deployment-wide: bounded by what this deployment's Ollama instance can hold in memory, not by document content. Ollama's own default (4096) leaves too little room for a text-dense page's output once the image and prompt (~2000 tokens) are accounted for, and the response gets truncated before its JSON closes - raise this if pages fail with a JSON parse error rather than a timeout.
 
-No code change or rebuild needed — just set the vars and restart the `api` service (`docker compose up -d api`).
+No code change or rebuild needed - just set the vars and restart the `api` service (`docker compose up -d api`).
 
-**Full worked example**: [`apps/api/prompts/examples/lexicon.txt`](./apps/api/prompts/examples/lexicon.txt) is a real, battle-tested prompt for a bilingual dictionary corpus (multi-page PDF, two-column layout, dense entries) — not a toy snippet. Copy it into `documents/prompts/` (or write your own there) and point `VLM_PROMPT_FILE` at it:
+**Everything else about a corpus's schema lives inside the prompt file itself, not as env vars.** A prompt file's leading comment lines can declare:
+
+```
+# list_fields: entries, table_of_contents, abbreviations
+# split_page_columns: true
+# split_from_page: 12
+
+<your actual prompt text follows, starting after a blank line>
+```
+
+- `list_fields` - comma-separated names of the fields in your schema that should **accumulate across pages** rather than take the first value found (see "Multi-page reconciliation" in [ARCHITECTURE.md](./ARCHITECTURE.md)). Get this wrong and a list field silently keeps only page 1's values.
+- `split_page_columns: true` - this document is typeset in two independent side-by-side columns (e.g. a dictionary, each entry self-contained within its column - **not** parallel-text translation, which needs both columns visible together to pair correctly). Splits each page down the middle before extraction, roughly halving content - and generation time - per VLM call.
+- `split_from_page: N` - only pages at or after this 1-indexed scan page get split; earlier pages (cover, table of contents, introduction - front matter that's single-column even when the body isn't) are left whole. Omit it to split every page.
+
+These live in the prompt file because they describe *that corpus's schema and layout*, the same thing the rest of the prompt already describes - a reader of the prompt sees the whole picture in one place, instead of it scattered across env vars or Python constants elsewhere. `VLM_LIST_FIELDS`/`SPLIT_PAGE_COLUMNS`/`SPLIT_FROM_PAGE` still exist as deployment-wide env vars (see `.env.example`) for the built-in default prompt, which has no file to put directives in - a prompt file's own directives always win over them when both are set.
+
+**Full worked example**: [`apps/api/prompts/examples/lexicon.txt`](./apps/api/prompts/examples/lexicon.txt) is a real, battle-tested prompt for a bilingual dictionary corpus (multi-page PDF, two-column layout, dense entries) - not a toy snippet, and its own directives are real values for that specific scan, not placeholders. Copy it into `documents/prompts/` (or write your own there) and point `VLM_PROMPT_FILE` at it:
 
 ```bash
 # .env
 VLM_PROMPT_FILE=/app/documents/prompts/lexicon.txt
-VLM_LIST_FIELDS=entries,table_of_contents,abbreviations
-SPLIT_PAGE_COLUMNS=true
 ```
 
-Without every accumulating field listed in `VLM_LIST_FIELDS`, reconciliation treats it as a scalar and keeps only page 1's value — every other page's content is silently dropped, exactly like the pre-fix blank-page bug this schema is meant to avoid.
+Without every accumulating field listed in `VLM_LIST_FIELDS`, reconciliation treats it as a scalar and keeps only page 1's value - every other page's content is silently dropped, exactly like the pre-fix blank-page bug this schema is meant to avoid.
 
 **Lessons learned writing that example** (apply these to your own prompt):
 
-- **Multi-line entries need explicit merging instructions.** A dictionary/glossary-style schema where one logical entry wraps across several printed lines will get *silently split into multiple broken entries* (empty fields, truncated text) unless the prompt explicitly explains how to recognize a continuation line vs. a new entry, ideally with a worked example. See the "CRITICAL — merging multi-line entries" paragraph in the example — this was the single highest-impact fix in this schema's development.
-- **Tell the model to never emit an empty field.** An instruction like *"if you produce an entry with an empty field, that's a bug — merge it into the entry above instead"* gives the model a concrete self-check, and works far better than just describing the desired shape.
-- **Capture the document's own legend/abbreviations, not just its content.** If your corpus uses abbreviations or codes (grammatical markers, status codes, etc.), add a field for them and instruct the model to extract that legend from wherever it appears (e.g. a "Signes et Abréviations" page) — otherwise the abbreviations littered through every entry are meaningless to anyone (or any model) consuming the data later.
-- **Non-content fields shouldn't count toward a page's confidence.** A fixed field like `document_type` (repeated on every page, including blank/cover pages) shouldn't make a content-free page look like it "contributed" data — see `_NON_CONTENT_FIELDS` in `apps/api/ingest_router.py`'s `_reconcile_pages`, which excludes it from the "did this page have real content" check used for confidence aggregation across pages.
-- **`SPLIT_PAGE_COLUMNS` only fits independent-column layouts.** It's for a dictionary/glossary where each column's entries are self-contained (right column doesn't need the left column's context) — *not* parallel-text translation (e.g. two columns of the same passage in different languages, meant to be read side by side), which needs both columns visible together to pair correctly. The pipeline auto-detects a genuine whitespace gutter per page before splitting, so full-width pages (covers, TOCs) in the same document are left whole.
+- **Multi-line entries need explicit merging instructions.** A dictionary/glossary-style schema where one logical entry wraps across several printed lines will get *silently split into multiple broken entries* (empty fields, truncated text) unless the prompt explicitly explains how to recognize a continuation line vs. a new entry, ideally with a worked example. See the "CRITICAL - merging multi-line entries" paragraph in the example - this was the single highest-impact fix in this schema's development.
+- **Tell the model to never emit an empty field.** An instruction like *"if you produce an entry with an empty field, that's a bug - merge it into the entry above instead"* gives the model a concrete self-check, and works far better than just describing the desired shape.
+- **Capture the document's own legend/abbreviations, not just its content.** If your corpus uses abbreviations or codes (grammatical markers, status codes, etc.), add a field for them and instruct the model to extract that legend from wherever it appears (e.g. a "Signes et Abréviations" page) - otherwise the abbreviations littered through every entry are meaningless to anyone (or any model) consuming the data later.
+- **Non-content fields shouldn't count toward a page's confidence.** A fixed field like `document_type` (repeated on every page, including blank/cover pages) shouldn't make a content-free page look like it "contributed" data - see `_NON_CONTENT_FIELDS` in `apps/api/ingest_router.py`'s `_reconcile_pages`, which excludes it from the "did this page have real content" check used for confidence aggregation across pages.
+- **`split_page_columns` only fits independent-column layouts.** It's for a dictionary/glossary where each column's entries are self-contained (right column doesn't need the left column's context) - *not* parallel-text translation (e.g. two columns of the same passage in different languages, meant to be read side by side), which needs both columns visible together to pair correctly. The pipeline also auto-detects a genuine whitespace gutter per page before splitting, so an occasional full-width page inside the split range is left whole regardless - `split_from_page` is still worth setting for a *run* of single-column front matter, since gutter detection alone won't tell the difference between "no gutter on this page" and "haven't reached the two-column section yet."
 
-Full-text search (`/documents` search box) is **not** hardcoded to any fixed field list — every TEXT-typed field your own prompt/schema extracts is automatically indexed and searchable, whatever your schema's field names are. The GIN index is rebuilt automatically whenever a table's columns change (`_ensure_table` in `apps/api/ingest_router.py`), and a one-time startup migration (`_backfill_fts_indexes`) widens the index on any table created before this behavior existed.
+Full-text search (`/documents` search box) is **not** hardcoded to any fixed field list - every TEXT-typed field your own prompt/schema extracts is automatically indexed and searchable, whatever your schema's field names are. The GIN index is rebuilt automatically whenever a table's columns change (`_ensure_table` in `apps/api/ingest_router.py`), and a one-time startup migration (`_backfill_fts_indexes`) widens the index on any table created before this behavior existed.
 
-**Document links** — a document's detail page (`/documents/:table/:id`) has a "Related documents" section where any user can link two documents together (e.g. a sale deed "concerns" the original title deed it transfers), with a searchable picker and a free-text relation label. This builds a traceable chain of custody across otherwise-independent records — search finds one document, links let you follow it to the ones it came from or led to. Links are removed automatically when either document is permanently deleted.
+**Document links** - a document's detail page (`/documents/:table/:id`) has a "Related documents" section where any user can link two documents together (e.g. a sale deed "concerns" the original title deed it transfers), with a searchable picker and a free-text relation label. This builds a traceable chain of custody across otherwise-independent records - search finds one document, links let you follow it to the ones it came from or led to. Links are removed automatically when either document is permanently deleted.
 
 ---
 
@@ -86,7 +99,7 @@ docker compose up --build     # downloads qwen2.5vl:7b on first boot (~5 GB)
 # Create the first admin user (run once, after the stack is healthy)
 # --tenant default: every deployment auto-seeds a 'default' tenant, so a
 # standalone/single-ministry deployment (the common case) never needs to
-# think about tenants beyond this — see "Multi-tenancy" below only if you
+# think about tenants beyond this - see "Multi-tenancy" below only if you
 # plan to host more than one ministry on this instance.
 docker compose exec api python create_admin.py \
   --email admin@example.com --password yourpassword --tenant default
@@ -99,13 +112,13 @@ The dashboard is available at **http://localhost**. The API is at **http://local
 ### First steps after install
 
 1. **Log in** at `/login` with the admin account created above.
-2. **Upload a document** at `/upload` — drag and drop a file (or ingest from a local path / Google Drive folder). This runs the full pipeline: preprocessing → VLM extraction → schema inference → confidence-based routing.
-3. **Check the review queue** at `/review` — anything not auto-approved (medium/low confidence) lands here for a human to approve (with corrections), reject, or flag for manual entry.
-4. **Browse ingested documents** at `/documents` — paginated, searchable/filterable view over the PostgreSQL-backed tables. Click a row for full field detail.
-5. **Inspect the schema** at `/schema` — live diagram of every dynamically-created table, its columns, and foreign keys.
-6. **Review the audit log** (admin only) at `/admin/audit` — every login, approval, rejection, and schema change, with filters and CSV export.
+2. **Upload a document** at `/upload` - drag and drop a file (or ingest from a local path / Google Drive folder). This runs the full pipeline: preprocessing → VLM extraction → schema inference → confidence-based routing.
+3. **Check the review queue** at `/review` - anything not auto-approved (medium/low confidence) lands here for a human to approve (with corrections), reject, or flag for manual entry.
+4. **Browse ingested documents** at `/documents` - paginated, searchable/filterable view over the PostgreSQL-backed tables. Click a row for full field detail.
+5. **Inspect the schema** at `/schema` - live diagram of every dynamically-created table, its columns, and foreign keys.
+6. **Review the audit log** (admin only) at `/admin/audit` - every login, approval, rejection, and schema change, with filters and CSV export.
 
-> The default `/` dashboard (VLM Extraction / OCR Comparison tabs) is a **legacy benchmark viewer**, not part of the ingestion pipeline above — it reads static JSON files produced by the standalone scripts in [OCR benchmarking](#ocr-benchmarking-optional) and [VLM extraction scripts](#vlm-extraction-scripts-optional--the-ingestion-api-replaces-these), and will show "results not found" until those are run manually. Skip it for normal use.
+> The default `/` dashboard (VLM Extraction / OCR Comparison tabs) is a **legacy benchmark viewer**, not part of the ingestion pipeline above - it reads static JSON files produced by the standalone scripts in [OCR benchmarking](#ocr-benchmarking-optional) and [VLM extraction scripts](#vlm-extraction-scripts-optional--the-ingestion-api-replaces-these), and will show "results not found" until those are run manually. Skip it for normal use.
 
 ---
 
@@ -121,7 +134,7 @@ For ministry servers or air-gapped environments with no reliable internet connec
 | Air-gapped server, or unreliable connectivity | `setup.sh` + `install.sh` |
 | Recurring deployment to many offline servers | Run `setup.sh` once, copy `./models/` to each server |
 
-### Step 1 — Prepare on an internet-connected machine
+### Step 1 - Prepare on an internet-connected machine
 
 ```bash
 ./setup.sh
@@ -136,7 +149,7 @@ This takes 15–30 minutes and produces `./models/` (~7–10 GB total):
 | `models/wheels/` | Python wheels for `linux/amd64` (matching the API container) |
 | `models/pnpm-store/` | Node package cache for local development |
 
-### Step 2 — Transfer to the offline server
+### Step 2 - Transfer to the offline server
 
 ```bash
 rsync -av --exclude '.git' . user@ministry-server:/opt/sdai_digitalization/
@@ -150,16 +163,16 @@ scp sdai_bundle.tar.gz user@ministry-server:/opt/
 # On server: tar xzf sdai_bundle.tar.gz
 ```
 
-### Step 3 — Install on the offline server
+### Step 3 - Install on the offline server
 
 ```bash
 cd /opt/sdai_digitalization
 ./install.sh
 ```
 
-This loads the Docker images, installs local dependencies, and starts the stack. The `ollama` container automatically restores the model from `models/ollama-models.tar.gz` on first boot — no internet required.
+This loads the Docker images, installs local dependencies, and starts the stack. The `ollama` container automatically restores the model from `models/ollama-models.tar.gz` on first boot - no internet required.
 
-### Step 4 — Create the first admin user
+### Step 4 - Create the first admin user
 
 ```bash
 docker compose exec api python create_admin.py \
@@ -171,9 +184,9 @@ docker compose exec api python create_admin.py \
 The `ollama` service in `docker-compose.yml` runs a shell script at startup that:
 
 1. Checks if `./models/ollama-models.tar.gz` exists (mounted read-only at `/models`).
-2. If yes, extracts it into the Ollama model store volume (`ollama_data`) — this is fast (no download).
+2. If yes, extracts it into the Ollama model store volume (`ollama_data`) - this is fast (no download).
 3. Starts `ollama serve`.
-4. If the model is not yet in the store (e.g., the tar wasn't present), falls back to `ollama pull` — this requires internet.
+4. If the model is not yet in the store (e.g., the tar wasn't present), falls back to `ollama pull` - this requires internet.
 
 The `api` service waits for the `ollama` healthcheck to pass before starting, so processing begins only once the model is fully available.
 
@@ -188,12 +201,12 @@ The `HTTPS_MODE` environment variable in `.env` controls which certificate is us
 | `self_signed` (default) | Offline ministry servers, intranet deployments, local testing |
 | `letsencrypt` | Internet-connected servers with a public domain name |
 
-### Mode 1 — `self_signed` (default, offline and intranet)
+### Mode 1 - `self_signed` (default, offline and intranet)
 
 No configuration needed. A 10-year self-signed RSA certificate is generated once during `docker compose build` and baked into the image. The entrypoint uses it automatically.
 
 ```bash
-# .env — nothing to set; self_signed is the default
+# .env - nothing to set; self_signed is the default
 HTTPS_MODE=self_signed
 ```
 
@@ -219,11 +232,11 @@ AUTH_SECURE_COOKIES=true
 docker compose restart api
 ```
 
-### Mode 2 — `letsencrypt` (internet-connected servers)
+### Mode 2 - `letsencrypt` (internet-connected servers)
 
 Requires a public domain name that resolves to the server's IP and port 80 reachable from the internet.
 
-**Step 1 — Configure `.env`**
+**Step 1 - Configure `.env`**
 
 ```bash
 HTTPS_MODE=letsencrypt
@@ -232,7 +245,7 @@ LETSENCRYPT_EMAIL=admin@example.gov.td
 AUTH_SECURE_COOKIES=true
 ```
 
-**Step 2 — Start the stack**
+**Step 2 - Start the stack**
 
 The frontend starts HTTP-only on first boot because no certificate exists yet:
 
@@ -240,7 +253,7 @@ The frontend starts HTTP-only on first boot because no certificate exists yet:
 docker compose up -d
 ```
 
-**Step 3 — Issue the certificate (one-time)**
+**Step 3 - Issue the certificate (one-time)**
 
 ```bash
 docker compose exec frontend certbot --nginx \
@@ -252,7 +265,7 @@ docker compose exec frontend certbot --nginx \
 
 certbot completes the ACME HTTP-01 challenge through nginx, writes the certificate to the `letsencrypt_data` Docker volume, and reloads nginx with HTTPS automatically.
 
-**Step 4 — Restart to activate the full HTTPS configuration**
+**Step 4 - Restart to activate the full HTTPS configuration**
 
 ```bash
 docker compose restart frontend
@@ -280,12 +293,12 @@ Add to cron for automatic monthly renewal:
 | Dependency | Minimum version | Notes |
 |---|---|---|
 | Docker + Compose | 24 / 2.20 | Compose v2 (`docker compose`, not `docker-compose`) |
-| Memory allocated to Docker | 16 GiB+ | See note below — this is a common source of silent ingestion crashes |
-| `qwen2.5vl:7b` model | — | Downloaded automatically on first boot via the containerised Ollama service |
+| Memory allocated to Docker | 16 GiB+ | See note below - this is a common source of silent ingestion crashes |
+| `qwen2.5vl:7b` model | - | Downloaded automatically on first boot via the containerised Ollama service |
 
-Ollama runs as a Docker service — no host installation required. The model (~5 GB) is pulled automatically on first boot. For offline environments see the [Offline deployment](#offline-deployment) section.
+Ollama runs as a Docker service - no host installation required. The model (~5 GB) is pulled automatically on first boot. For offline environments see the [Offline deployment](#offline-deployment) section.
 
-> **Memory matters.** `qwen2.5vl:7b` is ~6 GB on disk and needs meaningfully more RAM than that to run (weights + KV cache + inference overhead), on top of Postgres, Redis, the API, and nginx all sharing the same Docker VM. If Docker is only given the default ~8 GiB, the OS will silently kill the model process mid-inference — documents will show `status: crashed` with an error like `Server error '500 Internal Server Error' for url 'http://ollama:11434/api/chat'`, and Ollama's own logs (`docker compose logs ollama`) will show `llama-server process has terminated: signal: killed`. That signature means **out of memory**, not a bug. On Docker Desktop: Settings → Resources → Memory, raise to at least 16 GiB, apply, and restart Docker Desktop.
+> **Memory matters.** `qwen2.5vl:7b` is ~6 GB on disk and needs meaningfully more RAM than that to run (weights + KV cache + inference overhead), on top of Postgres, Redis, the API, and nginx all sharing the same Docker VM. If Docker is only given the default ~8 GiB, the OS will silently kill the model process mid-inference - documents will show `status: crashed` with an error like `Server error '500 Internal Server Error' for url 'http://ollama:11434/api/chat'`, and Ollama's own logs (`docker compose logs ollama`) will show `llama-server process has terminated: signal: killed`. That signature means **out of memory**, not a bug. On Docker Desktop: Settings → Resources → Memory, raise to at least 16 GiB, apply, and restart Docker Desktop.
 
 ---
 
@@ -314,7 +327,7 @@ Backups are written to `./backups/`:
 
 The last 7 days of backups are kept automatically; older files are deleted on each run.
 
-**Schedule with cron** (daily at 02:00 — add with `crontab -e`):
+**Schedule with cron** (daily at 02:00 - add with `crontab -e`):
 
 ```cron
 0 2 * * * /opt/sdai_digitalization/backup.sh >> /opt/sdai_digitalization/backups/backup.log 2>&1
@@ -330,10 +343,10 @@ Copy `.env.example` to `.env` and adjust as needed. Docker Compose reads this fi
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTH_SECRET_KEY` | `change-me-in-production` | JWT signing secret — **change this** |
+| `AUTH_SECRET_KEY` | `change-me-in-production` | JWT signing secret - **change this** |
 | `AUTH_SECURE_COOKIES` | `false` | Set `true` when running behind HTTPS |
 | `AUTH_TOKEN_EXPIRE_HOURS` | `8` | JWT lifetime in hours |
-| `HTTPS_MODE` | `self_signed` | `self_signed` or `letsencrypt` — see [HTTPS](#https) |
+| `HTTPS_MODE` | `self_signed` | `self_signed` or `letsencrypt` - see [HTTPS](#https) |
 | `LETSENCRYPT_DOMAIN` | *(empty)* | Public domain name; required when `HTTPS_MODE=letsencrypt` |
 | `LETSENCRYPT_EMAIL` | *(empty)* | Email for Let's Encrypt expiry notices; required when `HTTPS_MODE=letsencrypt` |
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@localhost:5432/sdai` | asyncpg connection string; use `@db:5432` inside Docker |
@@ -352,22 +365,22 @@ Users are stored in PostgreSQL, not in environment variables. Use `create_admin.
 
 This platform supports two deployment models from the same codebase, so a ministry that needs to run fully independently and a shared instance serving several ministries are both first-class, not a fork or a different branch:
 
-- **Standalone / autonomous** — one ministry, one instance (e.g. a ministry like Defense that needs to run fully independently). This is the default: every deployment auto-seeds a single `default` tenant, so if you only ever run `create_admin.py --tenant default`, tenancy is invisible and everything behaves exactly as a single-tenant deployment always has.
-- **Shared instance** — multiple ministries on one instance (e.g. Land, Oil, Finance), each with its own documents, extraction schema, and users, fully isolated from each other. Each ministry's dynamically-created tables are **physically separated** (`t_<tenant-slug>_<document_type>`, e.g. `t_land_titre_foncier` vs. `t_oil_contrat`) rather than filtered rows in one shared table, so a bug in a query returns nothing instead of leaking another ministry's data. A ministry can log in, search its own land titles, contracts, or HR records by whatever fields its own extraction schema defines, without ever seeing another ministry's tables — this is the "automatic data schema load" idea: each tenant gets its own inferred schema from its own documents.
+- **Standalone / autonomous** - one ministry, one instance (e.g. a ministry like Defense that needs to run fully independently). This is the default: every deployment auto-seeds a single `default` tenant, so if you only ever run `create_admin.py --tenant default`, tenancy is invisible and everything behaves exactly as a single-tenant deployment always has.
+- **Shared instance** - multiple ministries on one instance (e.g. Land, Oil, Finance), each with its own documents, extraction schema, and users, fully isolated from each other. Each ministry's dynamically-created tables are **physically separated** (`t_<tenant-slug>_<document_type>`, e.g. `t_land_titre_foncier` vs. `t_oil_contrat`) rather than filtered rows in one shared table, so a bug in a query returns nothing instead of leaking another ministry's data. A ministry can log in, search its own land titles, contracts, or HR records by whatever fields its own extraction schema defines, without ever seeing another ministry's tables - this is the "automatic data schema load" idea: each tenant gets its own inferred schema from its own documents.
 
 ### Why provisioning a tenant is an engineer/ops action, not an in-app screen
 
-Creating a tenant and editing its extraction prompt are both **deliberately** CLI-only, requiring shell access to the server — there is no "add ministry" or "edit schema" button anywhere in the app, and that's intentional, not a missing feature:
+Creating a tenant and editing its extraction prompt are both **deliberately** CLI-only, requiring shell access to the server - there is no "add ministry" or "edit schema" button anywhere in the app, and that's intentional, not a missing feature:
 
-- **The prompt is the extraction schema.** A wrongly-edited prompt (a typo in the JSON shape, a dropped field, broken instructions) doesn't fail loudly — it silently degrades or breaks extraction for *every document that ministry ingests afterward*, often in ways that only show up as garbage/empty fields much later. That's not something a non-technical ministry admin should be able to trigger by editing a text box.
-- **Keeping it file- and CLI-based** means every schema change is a deliberate, reviewable, ops-executed action (edit a file, run a script) — the same trust boundary `create_admin.py` already established for user creation, just extended to tenants and their schemas.
-- Once a tenant exists, day-to-day use (uploading documents, reviewing, searching) is fully self-service for that ministry's own users — only *provisioning a tenant* and *changing its schema* require engineer-level access.
+- **The prompt is the extraction schema.** A wrongly-edited prompt (a typo in the JSON shape, a dropped field, broken instructions) doesn't fail loudly - it silently degrades or breaks extraction for *every document that ministry ingests afterward*, often in ways that only show up as garbage/empty fields much later. That's not something a non-technical ministry admin should be able to trigger by editing a text box.
+- **Keeping it file- and CLI-based** means every schema change is a deliberate, reviewable, ops-executed action (edit a file, run a script) - the same trust boundary `create_admin.py` already established for user creation, just extended to tenants and their schemas.
+- Once a tenant exists, day-to-day use (uploading documents, reviewing, searching) is fully self-service for that ministry's own users - only *provisioning a tenant* and *changing its schema* require engineer-level access.
 
 ### Onboarding a new ministry onto a shared instance
 
 ```bash
 # 1. Write the ministry's extraction prompt to a file under documents/
-#    (already volume-mounted, survives image rebuilds — same mechanism as
+#    (already volume-mounted, survives image rebuilds - same mechanism as
 #    the deployment-wide VLM_PROMPT_FILE, see "Customizing the extraction
 #    schema" above). Base it on one of the tracked examples in
 #    apps/api/prompts/examples/ (admin_document.txt or lexicon.txt).
@@ -385,24 +398,24 @@ docker compose exec api python create_admin.py \
   --email land-admin@example.com --password yourpassword --tenant land
 ```
 
-The land ministry's admin can now log in, upload documents, and everything (schema inference, search, review queue) operates only within `land`'s own tenant-prefixed tables — a second ministry can be onboarded the same way with a different `--slug` and its own prompt file, and neither will ever see the other's data.
+The land ministry's admin can now log in, upload documents, and everything (schema inference, search, review queue) operates only within `land`'s own tenant-prefixed tables - a second ministry can be onboarded the same way with a different `--slug` and its own prompt file, and neither will ever see the other's data.
 
 ### `create_tenant.py` reference
 
 | Flag | Required | Meaning |
 |---|---|---|
-| `--slug` | yes | Short lowercase identifier (`^[a-z][a-z0-9_]{0,23}$`, max 24 chars) — becomes the table-name prefix `t_<slug>_...`. `default` is reserved (auto-seeded on every install); the script refuses that slug. |
+| `--slug` | yes | Short lowercase identifier (`^[a-z][a-z0-9_]{0,23}$`, max 24 chars) - becomes the table-name prefix `t_<slug>_...`. `default` is reserved (auto-seeded on every install); the script refuses that slug. |
 | `--name` | yes | Display name, e.g. `"Ministry of Land"`. |
 | `--prompt-file` | no | Absolute path (inside the container, e.g. `/app/documents/prompts/land.txt`) to this tenant's extraction prompt. Omit to inherit the deployment-wide `VLM_PROMPT_FILE` / built-in default. |
 | `--list-fields` | no | Comma-separated field names unioned across pages for this tenant (same semantics as `VLM_LIST_FIELDS`). Omit to inherit the deployment-wide default. |
 | `--page-timeout-seconds` | no | Per-page VLM call timeout override for this tenant. Omit to inherit `VLM_PAGE_TIMEOUT_SECONDS`. |
 | `--split-page-columns` | no | Enable two-column page splitting for this tenant. Omit to inherit `SPLIT_PAGE_COLUMNS`. |
 
-The script **upserts by slug** — re-running it with the same `--slug` updates that tenant's name/config (e.g. to point at a corrected prompt file) rather than creating a duplicate.
+The script **upserts by slug** - re-running it with the same `--slug` updates that tenant's name/config (e.g. to point at a corrected prompt file) rather than creating a duplicate.
 
 ### Updating a ministry's schema later
 
-Edit the tenant's prompt file directly (or re-run `create_tenant.py` with a different `--prompt-file`/`--list-fields`) — no rebuild or `docker compose restart api` needed. Tenant config is cached in-process for 30 seconds, so a file edit takes effect for the next document that ministry uploads within half a minute at most. As with the deployment-wide prompt, test a schema change against a couple of real documents from that ministry before trusting it broadly — see "Customizing the extraction schema" above for prompt-writing guidance (multi-line merging, never-empty-field rule, etc.), which applies identically to a per-tenant prompt file.
+Edit the tenant's prompt file directly (or re-run `create_tenant.py` with a different `--prompt-file`/`--list-fields`) - no rebuild or `docker compose restart api` needed. Tenant config is cached in-process for 30 seconds, so a file edit takes effect for the next document that ministry uploads within half a minute at most. As with the deployment-wide prompt, test a schema change against a couple of real documents from that ministry before trusting it broadly - see "Customizing the extraction schema" above for prompt-writing guidance (multi-line merging, never-empty-field rule, etc.), which applies identically to a per-tenant prompt file.
 
 ### Adding a user to an existing tenant
 
@@ -412,24 +425,107 @@ docker compose exec api python create_admin.py \
   --tenant land --role reviewer
 ```
 
-`--role` defaults to `admin` if omitted. `create_admin.py` also upserts by email — re-running it for an existing user updates their password/role/tenant and re-activates the account.
+`--role` defaults to `admin` if omitted. `create_admin.py` also upserts by email - re-running it for an existing user updates their password/role/tenant and re-activates the account.
 
 ### Verifying isolation
 
 ```bash
 # As an authenticated user of tenant A, /api/db/types must list only
-# tenant A's tables (all named t_<A's slug>_...) — never tenant B's.
+# tenant A's tables (all named t_<A's slug>_...) - never tenant B's.
 curl -sk -b <tenant-A-cookies> https://<host>/api/db/types
 
 # A cross-tenant lookup by a known table/id or batch id must 404, not
-# succeed — confirms the tenant check on the ingest endpoints.
+# succeed - confirms the tenant check on the ingest endpoints.
 curl -sk -b <tenant-B-cookies> https://<host>/api/db/documents/<tenant-A-table>/<id>
 ```
 
 ### Known limitations
 
-- No in-app or CLI "deactivate/delete tenant" flow yet — `sdai_tenants.is_active` exists in the schema but nothing sets it to `false` today; retiring a tenant currently means a manual `UPDATE sdai_tenants SET is_active = false WHERE slug = '...'` (which immediately blocks login for that tenant's users) and, if you also want its tables gone, a manual `DROP TABLE` per `t_<slug>_*` table.
-- Full-text/structured search is still hardcoded to the default admin-document field names (`reference_number`, `organisation`, `destination_or_subject`, `signatory`) regardless of tenant — see the "Known limitation" note earlier in this doc. A tenant using a custom schema (e.g. a lexicon) can browse and filter its documents but not `?q=` full-text search them yet.
+- No in-app or CLI "deactivate/delete tenant" flow yet - `sdai_tenants.is_active` exists in the schema but nothing sets it to `false` today; retiring a tenant currently means a manual `UPDATE sdai_tenants SET is_active = false WHERE slug = '...'` (which immediately blocks login for that tenant's users) and, if you also want its tables gone, a manual `DROP TABLE` per `t_<slug>_*` table.
+- Full-text/structured search is still hardcoded to the default admin-document field names (`reference_number`, `organisation`, `destination_or_subject`, `signatory`) regardless of tenant - see the "Known limitation" note earlier in this doc. A tenant using a custom schema (e.g. a lexicon) can browse and filter its documents but not `?q=` full-text search them yet.
+
+---
+
+## External API access (API keys and prompt presets)
+
+Besides the interactive JWT-cookie session a browser uses after `POST /api/auth/login`, an external/programmatic caller (a partner system that needs to upload documents without a human logging in) can authenticate with a long-lived **API key** instead, sent as a bearer token:
+
+```bash
+curl -sk https://<host>/api/ingest/upload \
+  -H "Authorization: Bearer sdai_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+  -F "files=@document.pdf" \
+  -F "preset=short-form"
+```
+
+An API key is always scoped to one tenant and can **only** reach `POST /api/ingest/upload`, `GET /api/ingest/status/{batch_id}`, and `GET /api/ingest/presets` - `get_current_user` resolves it to a synthetic user with `role="api_key"`, which every admin/reviewer permission check in the app already rejects (same `require_admin` / `require_access_manager` / `require_extraction_editor` guards a human reviewer account is subject to). It can never log in, browse the review queue, or reach any admin endpoint.
+
+### Why minting a key is a CLI-only action
+
+Same reasoning as [tenant provisioning](#why-provisioning-a-tenant-is-an-engineerops-action-not-an-in-app-screen) above: an API key is a bearer credential that grants upload access to whoever holds it, so minting one is a deliberate, ops-executed action (run a script, hand the printed secret to the partner out of band) rather than a button anyone with tenant-admin access in the UI could click. Revoking a key is the exception - a `sdai_api_keys.is_active` toggle carries no such risk, and a future in-app "revoke" button for a ministry's own admins is a reasonable extension (see `create_api_key.py --revoke` for the CLI equivalent today).
+
+### Minting, listing, and revoking a key
+
+```bash
+# Mint a key for a tenant - the full secret is printed ONCE; store it in a
+# secrets manager and hand it to the external caller out of band (never
+# over email/chat in plaintext). It cannot be shown again, only revoked.
+docker compose exec api python create_api_key.py \
+  --tenant land --name "partner-x-integration"
+
+# Optional: make it stop working automatically after N days.
+docker compose exec api python create_api_key.py \
+  --tenant land --name "partner-x-integration" --expires-days 90
+
+# List a tenant's keys (shows only the id/name/prefix/status, never the secret).
+docker compose exec api python create_api_key.py --tenant land --list
+
+# Revoke a key immediately (takes the id from --list).
+docker compose exec api python create_api_key.py --revoke <key-id>
+```
+
+Only a SHA-256 hash of the key is ever stored (`sdai_api_keys.hashed_key`) - same reasoning as `sdai_users.hashed_password` - so a lost or leaked key can be revoked but never recovered; mint a new one instead.
+
+### Defining the prompt(s) an external caller can select
+
+An external caller **never supplies its own prompt text** - the "own prompt configuration" it gets is a choice among admin-defined **presets**, the same CLI-only, file-based mechanism tenant schemas already use (see "Customizing the extraction schema" and "Multi-tenancy" above), never an in-app or API-supplied prompt editor:
+
+```bash
+# 1. Write the preset's prompt to a file under documents/ (same mechanism
+#    as a tenant's own prompt_file - survives image rebuilds).
+mkdir -p documents/prompts
+cp apps/api/prompts/examples/admin_document.txt documents/prompts/land_short_form.txt
+# ... edit documents/prompts/land_short_form.txt for this preset's fields ...
+
+# 2. Register it as a preset that tenant's callers can select by key.
+docker compose exec api python create_prompt_preset.py \
+  --tenant land --key short-form --label "Short-form land record" \
+  --prompt-file /app/documents/prompts/land_short_form.txt
+
+# 3. List a tenant's presets.
+docker compose exec api python create_prompt_preset.py --tenant land --list
+
+# 4. Deactivate one (keeps it registered, stops it from being selectable).
+docker compose exec api python create_prompt_preset.py --tenant land --key short-form --deactivate
+```
+
+A caller (human or API key) then discovers the valid keys via `GET /api/ingest/presets` and selects one with the `preset` field on `POST /api/ingest/upload` (multipart form field, alongside `files`). Omitting `preset` uses the tenant's own default config, unchanged. A batch's preset is fixed at upload time and reused consistently by every retry/reload/resume path for that document, so a document never silently switches prompts mid-processing.
+
+### `create_api_key.py` / `create_prompt_preset.py` reference
+
+| Flag | Script | Meaning |
+|---|---|---|
+| `--tenant` | both | Tenant slug the key/preset belongs to. |
+| `--name` | `create_api_key.py` | Label for the key, e.g. `"partner-x-integration"`. |
+| `--expires-days` | `create_api_key.py` | Optional: the key stops authenticating after N days. Omit for a key that never expires (revoke it manually instead). |
+| `--list` | both | List the tenant's keys/presets instead of minting/creating one. |
+| `--revoke <id>` | `create_api_key.py` | Deactivate a key by id (from `--list`). |
+| `--key` | `create_prompt_preset.py` | Short lowercase identifier callers pass as `preset`, e.g. `short-form`. |
+| `--label` | `create_prompt_preset.py` | Human-readable label, e.g. `"Short-form land record"`. |
+| `--prompt-file` | `create_prompt_preset.py` | Absolute path (inside the container) to this preset's extraction prompt - same directive/precedence rules as a tenant's own `prompt_file` (see "Customizing the extraction schema" above). |
+| `--list-fields` / `--page-timeout-seconds` / `--split-page-columns` | `create_prompt_preset.py` | Same semantics as the equivalent `create_tenant.py` flags, scoped to this preset instead of the whole tenant. Omit to inherit the tenant's own default. |
+| `--deactivate` | `create_prompt_preset.py` | Deactivate `--key` by id instead of creating/updating it. |
+
+`create_prompt_preset.py` **upserts by `(tenant, key)`** - re-running it with the same `--tenant`/`--key` updates that preset's config and re-activates it, same convention as `create_tenant.py`.
 
 ---
 
@@ -444,7 +540,7 @@ curl -sk -b <tenant-B-cookies> https://<host>/api/db/documents/<tenant-A-table>/
 | pnpm | ≥ 9 (`npm install -g pnpm`) |
 | PostgreSQL | 15 (or use `docker compose up db`) |
 | Ollama | latest |
-| Tesseract | system package — `brew install tesseract tesseract-lang` on macOS |
+| Tesseract | system package - `brew install tesseract tesseract-lang` on macOS |
 
 ### Backend
 
@@ -473,7 +569,7 @@ python ocr_test.py
 # Results written to documents/ocr_results/json/
 ```
 
-### VLM extraction scripts (optional — the ingestion API replaces these)
+### VLM extraction scripts (optional - the ingestion API replaces these)
 
 ```bash
 # Via Ollama (recommended)
@@ -494,13 +590,15 @@ python vlm_local_test.py
 │   ├── api/                        ← FastAPI backend
 │   │   ├── api_server.py           ← App entry point: router registration, auth routes
 │   │   ├── auth.py                 ← DB-backed auth: CurrentUser, get_current_user, require_admin
-│   │   ├── audit.py                ← log_action() helper — fires-and-forgets to sdai_audit_log
-│   │   ├── ingest_router.py        ← POST /api/ingest/* — upload, path, Drive, status; DDL engine
-│   │   ├── documents_router.py     ← GET  /api/db/*    — browser, schema, image
-│   │   ├── review_router.py        ← /api/review/*     — queue, approve, reject, flag
+│   │   ├── audit.py                ← log_action() helper - fires-and-forgets to sdai_audit_log
+│   │   ├── ingest_router.py        ← POST /api/ingest/* - upload, path, Drive, status; DDL engine
+│   │   ├── documents_router.py     ← GET  /api/db/*    - browser, schema, image
+│   │   ├── review_router.py        ← /api/review/*     - queue, approve, reject, flag
 │   │   ├── admin_router.py         ← GET  /api/admin/audit-log (admin only)
 │   │   ├── create_admin.py         ← Seed script: python create_admin.py --email … --password … --tenant …
 │   │   ├── create_tenant.py        ← Seed script: python create_tenant.py --slug … --name … (see "Multi-tenancy")
+│   │   ├── create_api_key.py       ← Mint/list/revoke external API keys (see "External API access")
+│   │   ├── create_prompt_preset.py ← Create/list/deactivate prompt presets (see "External API access")
 │   │   ├── ocr_test.py             ← OCR benchmarking script
 │   │   ├── vlm_ollama_test.py      ← VLM extraction via Ollama
 │   │   ├── vlm_local_test.py       ← VLM extraction via HuggingFace
@@ -540,8 +638,8 @@ python vlm_local_test.py
 │               ├── useSchema.ts
 │               └── useAudit.ts
 ├── packages/
-│   ├── types/                      ← @sdai/types — Zod schemas (shared)
-│   └── api-client/                 ← @sdai/api-client — typed fetch wrappers
+│   ├── types/                      ← @sdai/types - Zod schemas (shared)
+│   └── api-client/                 ← @sdai/api-client - typed fetch wrappers
 ├── preprocessing/
 │   └── anonymize.py                ← Interactive OpenCV redaction tool
 ├── documents/                      ← Mounted as volume; never baked into images
@@ -564,7 +662,7 @@ python vlm_local_test.py
 
 ## API reference
 
-All routes require authentication via a JWT cookie set by `POST /api/auth/login`. Interactive documentation is available at **http://localhost:8000/docs** when the API is running.
+All routes require authentication, either via a JWT cookie set by `POST /api/auth/login` (interactive/browser use) or an `Authorization: Bearer <api-key>` header (external/programmatic use - see "External API access" above). Interactive documentation is available at **http://localhost:8000/docs** when the API is running.
 
 ### Response headers
 
@@ -585,11 +683,12 @@ All routes require authentication via a JWT cookie set by `POST /api/auth/login`
 
 | Method | Route | Description |
 |---|---|---|
-| `POST` | `/api/ingest/upload` | Upload one or more files (multipart/form-data) |
+| `POST` | `/api/ingest/upload` | Upload one or more files (multipart/form-data). Optional `preset` field selects an admin-defined prompt preset (see `GET /presets`); omit to use the tenant's own default. |
 | `POST` | `/api/ingest/path` | Ingest from a local filesystem path or Google Drive folder ID |
 | `GET` | `/api/ingest/status/{batch_id}` | Poll batch processing status |
+| `GET` | `/api/ingest/presets` | List this tenant's active prompt presets (`key`, `label`) - the valid values for `upload`'s `preset` field |
 
-`GET /api/ingest/status/{batch_id}` response includes `duplicates_skipped` — the count of files whose SHA-256 hash already exists in the database and were therefore skipped without VLM processing.
+`GET /api/ingest/status/{batch_id}` response includes `duplicates_skipped` - the count of files whose SHA-256 hash already exists in the database and were therefore skipped without VLM processing.
 
 ### Document database (`/api/db`)
 
@@ -612,7 +711,7 @@ All routes require authentication via a JWT cookie set by `POST /api/auth/login`
 
 ### Admin (`/api/admin`)
 
-Requires admin role — HTTP 403 for reviewer accounts.
+Requires admin role - HTTP 403 for reviewer accounts.
 
 | Method | Route | Description |
 |---|---|---|
@@ -645,9 +744,9 @@ Requires admin role — HTTP 403 for reviewer accounts.
 
 ## Testing
 
-### Python — API server tests
+### Python - API server tests
 
-Tests cover auth, ingest (including dedup helpers), document browsing, schema, review, middleware, caching, rate limiting, and auth-guard enforcement. The filesystem and database are fully mocked — no real documents, Postgres connection, or Ollama required.
+Tests cover auth, ingest (including dedup helpers), document browsing, schema, review, middleware, caching, rate limiting, and auth-guard enforcement. The filesystem and database are fully mocked - no real documents, Postgres connection, or Ollama required.
 
 ```bash
 cd apps/api
@@ -667,7 +766,7 @@ pytest tests/ -m "not benchmark" --cov=api_server --cov-report=term-missing
 pytest tests/ -m benchmark -v
 ```
 
-### TypeScript — Zod schema tests
+### TypeScript - Zod schema tests
 
 Tests cover `parseVlmResult` (all tiers, error cases, field fallbacks) and all Zod schemas in `@sdai/types`.
 
@@ -686,10 +785,10 @@ pnpm test && pnpm test:api
 
 ## Known limitations
 
-- **GGML crash on certain images** — some documents trigger a segfault in the GGML backend. A 120-second asyncio timeout is applied per document; crashed documents receive `review_status = manual_entry`.
-- **Self-reported VLM confidence** — the `high / medium / low` tier is taken from the model's own JSON output and has not been validated against human-labelled ground truth. Treat tier assignments as heuristic indicators.
-- **Evaluation sample** — benchmarking results were produced on a 27-document sample. Performance on a broader corpus may differ, particularly for handwritten annotations and Arabic-dominant layouts.
-- **Single worker** — the ingestion background worker processes one document at a time. Throughput scales with Ollama parallelism rather than with concurrency inside this application.
+- **GGML crash on certain images** - some documents trigger a segfault in the GGML backend. A 120-second asyncio timeout is applied per document; crashed documents receive `review_status = manual_entry`.
+- **Self-reported VLM confidence** - the `high / medium / low` tier is taken from the model's own JSON output and has not been validated against human-labelled ground truth. Treat tier assignments as heuristic indicators.
+- **Evaluation sample** - benchmarking results were produced on a 27-document sample. Performance on a broader corpus may differ, particularly for handwritten annotations and Arabic-dominant layouts.
+- **Single worker** - the ingestion background worker processes one document at a time. Throughput scales with Ollama parallelism rather than with concurrency inside this application.
 
 ---
 

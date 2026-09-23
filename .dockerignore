@@ -5,7 +5,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Node dependencies — reinstalled inside the build container
+# Node dependencies - reinstalled inside the build container
 node_modules/
 **/node_modules/
 

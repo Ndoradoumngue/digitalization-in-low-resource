@@ -54,7 +54,7 @@ cat backups/images_2025-06-01_02-00-00.tar.gz \
   | docker compose exec -T api tar xzf - -C /data
 ```
 
-No restart required — the API reads files on demand.
+No restart required - the API reads files on demand.
 
 ---
 

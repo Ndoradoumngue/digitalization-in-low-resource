@@ -10,7 +10,7 @@ export function labelFor(key: string): string {
  */
 function summarizeValue(v: unknown): string {
   if (Array.isArray(v)) {
-    // An array of objects (e.g. a lexicon's "entries": [{kabalay, french}]) —
+    // An array of objects (e.g. a lexicon's "entries": [{kabalay, french}]) -
     // v.join(", ") would call each object's toString(), producing the
     // literal string "[object Object]" repeated. Show a count instead; the
     // full structured content is available on the document detail page.
@@ -25,9 +25,9 @@ function summarizeValue(v: unknown): string {
 export function summarizeExtra(extra: Record<string, unknown>, max = 3): string {
   const entries = Object.entries(extra).filter(
     ([, v]) => v !== null && v !== undefined && v !== ""
-              && !(Array.isArray(v) && v.length === 0)
+      && !(Array.isArray(v) && v.length === 0)
   );
-  if (entries.length === 0) return "—";
+  if (entries.length === 0) return "-";
   return entries
     .slice(0, max)
     .map(([k, v]) => `${labelFor(k)}: ${summarizeValue(v)}`)

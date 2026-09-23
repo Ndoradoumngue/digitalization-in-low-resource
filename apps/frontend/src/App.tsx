@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { ConfirmProvider } from "./context/ConfirmContext";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import AdminRoute from "./components/auth/AdminRoute";
 import LoginPage from "./pages/LoginPage";
@@ -18,6 +19,7 @@ import AccessAdminPage from "./pages/AccessAdminPage";
 export default function App() {
   return (
     <AuthProvider>
+      <ConfirmProvider>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
 
@@ -122,6 +124,7 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </ConfirmProvider>
     </AuthProvider>
   );
 }

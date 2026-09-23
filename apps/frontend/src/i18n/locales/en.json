@@ -13,7 +13,7 @@
     "previous": "Previous",
     "next": "Next",
     "loading": "Loading…",
-    "notAvailable": "—",
+    "notAvailable": "-",
     "backArrow": "← {{label}}",
     "forwardArrow": "{{label}} →"
   },
@@ -53,7 +53,7 @@
     "reviewTitle": "Review queue →",
     "reviewDescriptionPending_one": "{{count}} document waiting for review.",
     "reviewDescriptionPending_other": "{{count}} documents waiting for review.",
-    "reviewDescriptionEmpty": "Nothing pending — all caught up.",
+    "reviewDescriptionEmpty": "Nothing pending - all caught up.",
     "browseTitle": "Browse documents →",
     "browseDescription": "Search and filter everything that's been ingested."
   },
@@ -71,7 +71,7 @@
     "noResults": "No documents found.",
     "reviewedBy": "Reviewed by {{name}}",
     "notYetReviewed": "Not yet reviewed",
-    "pagination": "Page {{page}} of {{totalPages}} — {{total}} total",
+    "pagination": "Page {{page}} of {{totalPages}} - {{total}} total",
     "previous": "Previous",
     "next": "Next"
   },
@@ -142,7 +142,7 @@
     "restrictTo": "+ Restrict to…",
     "loading": "Loading…",
     "openToAll": "Visible to everyone in your organization. No restrictions applied.",
-    "restrictedNote": "Restricted — visible only to admins and:"
+    "restrictedNote": "Restricted - visible only to admins and:"
   },
   "upload": {
     "status": {
@@ -162,14 +162,19 @@
     },
     "viewPage": "View page ↗",
     "skipButton": {
-      "title": "Mark as not relevant (cover page, blank, out of scope) — excluded from the extracted result",
+      "title": "Mark as not relevant (cover page, blank, out of scope) - excluded from the extracted result",
       "skipping": "Skipping…",
       "skip": "Skip"
     },
     "reloadButton": {
-      "title": "Re-derive this page from the original document from scratch (re-runs page extraction and layout detection, e.g. column splitting) — unlike Retry/Re-run, which reuses the already-processed image",
+      "title": "Re-derive this page from the original document from scratch (re-runs page extraction and layout detection, e.g. column splitting) - unlike Retry/Re-run, which reuses the already-processed image",
       "reloading": "Reloading…",
       "reload": "Reload from source"
+    },
+    "cancelButton": {
+      "title": "Stop this page's extraction right now instead of waiting for it to finish or time out",
+      "cancelling": "Cancelling…",
+      "cancel": "Cancel"
     },
     "failedPage": {
       "page": "Page {{n}}",
@@ -184,29 +189,35 @@
       "manual": "(manual)",
       "hideData": "Hide data",
       "viewData": "View data",
-      "rerunTitle": "Re-run extraction on this page's stored image (e.g. to pick up a prompt change) and merge the new result in, replacing what's there now. Uses the same stored image — won't re-evaluate page layout/splitting.",
+      "rerunTitle": "Re-run extraction on this page's stored image (e.g. to pick up a prompt change) and merge the new result in, replacing what's there now. Uses the same stored image - won't re-evaluate page layout/splitting.",
       "rerunning": "Re-running…",
       "rerun": "Re-run"
     },
-    "skippedPage": "Page {{n}} — skipped (not relevant)",
+    "skippedPage": "Page {{n}} - skipped (not relevant)",
     "pendingPage": {
-      "processing": "Page {{n}} — processing…",
-      "pending": "Page {{n}} — pending"
+      "processing": "Page {{n}} - processing…",
+      "pending": "Page {{n}} - pending"
     },
     "pageProgress": {
       "summary": "Pages: {{done}} / {{total}} processed",
       "failedSuffix": " · {{count}} failed",
       "skippedSuffix": " · {{count}} skipped",
-      "resumeTitle": "Process every page that hasn't been attempted yet — use this if the run was interrupted (e.g. a server restart) and hasn't moved in a while",
+      "resumeTitle": "Process every page that hasn't been attempted yet - use this if the run was interrupted (e.g. a server restart) and hasn't moved in a while",
       "resuming": "Resuming…",
-      "resumeRemaining": "Resume remaining ({{count}})"
+      "resumeRemaining": "Resume remaining ({{count}})",
+      "pauseTitle": "Stop the page currently being extracted right away and hold off on the rest - use Resume remaining to continue later",
+      "pausing": "Pausing…",
+      "pause": "Pause"
     },
     "deleteDocument": {
       "confirm": "Delete the extracted document for this upload? This lets you re-upload the same file without it being blocked as a duplicate. This cannot be undone.",
+      "confirmInProgress": "Cancel and remove this document? Any page currently being processed is stopped immediately. This lets you re-upload the same file without it being blocked as a duplicate. This cannot be undone.",
       "title": "Delete so this file can be re-uploaded without hitting the duplicate check",
+      "titleInProgress": "Stop processing and remove this document so the file can be re-uploaded",
       "deleting": "Deleting…",
       "deleted": "Deleted",
-      "delete": "Delete"
+      "delete": "Delete",
+      "cancelAndRemove": "Cancel & remove"
     },
     "progressTable": {
       "loadingBatch": "Loading batch status…",
@@ -240,7 +251,9 @@
       "processed": "{{done}} / {{total}} processed",
       "documentCount_one": "{{count}} document",
       "documentCount_other": "{{count}} documents",
-      "crashed": "{{count}} crashed"
+      "crashed": "{{count}} crashed",
+      "removeTitle": "Remove this batch and everything it produced",
+      "confirmRemove": "Remove this batch completely? Any document still processing is stopped, and any document already extracted from it is deleted too - not just this list entry. This cannot be undone."
     },
     "modeTabs": {
       "files": "File upload",
@@ -284,12 +297,12 @@
     "permissionNote": "You can approve or reject this document, but correcting its fields needs the extraction-editing permission.",
     "noEditableFields": "No editable fields.",
     "commaSeparated": "(comma-separated)",
-    "fieldPlaceholder": "Not found — fill if visible",
+    "fieldPlaceholder": "Not found - fill if visible",
     "header": "Review Queue",
     "waiting_one": "document waiting",
     "waiting_other": "documents waiting",
     "oldestSuffix": " · oldest {{time}}",
-    "emptyQueue": "Review queue is empty — all documents processed",
+    "emptyQueue": "Review queue is empty - all documents processed",
     "uploadMore": "Upload more documents",
     "navPrevious": "← Previous",
     "navNext": "Next →",
@@ -320,15 +333,15 @@
     "subtitle": "Manage groups, series, and who can restrict documents to a group or a specific person.",
     "export": {
       "heading": "Export archive",
-      "descriptionPrefix": "Downloads every document in this tenant — all extracted fields plus a ",
-      "descriptionSuffix": " folder with every source image and PDF — bundled into one zip file.",
+      "descriptionPrefix": "Downloads every document in this tenant - all extracted fields plus a ",
+      "descriptionSuffix": " folder with every source image and PDF - bundled into one zip file.",
       "preparing": "Preparing export…",
       "download": "Download export",
       "started": "Download started."
     },
     "integrity": {
       "heading": "Fixity / integrity check",
-      "description": "Verifies every document's file(s) still exist on disk, and re-verifies content hashes where an unmodified original is available. Runs automatically on a weekly schedule — use this to run it on demand.",
+      "description": "Verifies every document's file(s) still exist on disk, and re-verifies content hashes where an unmodified original is available. Runs automatically on a weekly schedule - use this to run it on demand.",
       "running": "Running…",
       "run": "Run integrity check",
       "checked": "Checked",
@@ -463,7 +476,7 @@
     "colConfidence": "Confidence",
     "colReviewStatus": "Review status",
     "colIngested": "Ingested",
-    "pagination": "Page {{page}} of {{totalPages}} — {{total}} total",
+    "pagination": "Page {{page}} of {{totalPages}} - {{total}} total",
     "previous": "Previous",
     "next": "Next"
   },
@@ -487,7 +500,7 @@
   },
   "benchmarks": {
     "header": "OCR/VLM Benchmarks",
-    "subtitle": "Standalone comparison tool — not part of the ingestion pipeline.",
+    "subtitle": "Standalone comparison tool - not part of the ingestion pipeline.",
     "tabVlm": "VLM Extraction",
     "tabOcr": "OCR Comparison",
     "vlmNotFound": "VLM results not found. Run vlm_ollama_test.py first.",
@@ -520,7 +533,7 @@
   },
   "panZoom": {
     "alt": "Document",
-    "overlay": "{{pct}}% — scroll to zoom · drag to pan · dbl-click to reset"
+    "overlay": "{{pct}}% - scroll to zoom · drag to pan · dbl-click to reset"
   },
   "vlm": {
     "fields": {
@@ -544,5 +557,9 @@
   },
   "languageSwitcher": {
     "label": "Language"
+  },
+  "confirmDialog": {
+    "confirm": "Confirm",
+    "cancel": "Cancel"
   }
 }

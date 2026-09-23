@@ -1,16 +1,17 @@
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
-import torch
 import json
-import re
 import os
+import re
 import time
-from PIL import Image
 from collections import Counter
+
+import torch
+from PIL import Image
+from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
 # ── CONFIG ────────────────────────────────────────────────────────────────
 INPUT_FOLDER = "documents/anonymized_docs"
-OUTPUT_FILE  = "documents/ocr_results/json/vlm_local_results.json"
+OUTPUT_FILE = "documents/ocr_results/json/vlm_local_results.json"
 os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
 # ── DEVICE ────────────────────────────────────────────────────────────────
@@ -19,14 +20,14 @@ device = "CPU"
 print(f"Using device: {device}")
 
 # ── LOAD MODEL ────────────────────────────────────────────────────────────
-MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct" # Qwen/Qwen2-VL-2B-Instruct 2B parameter model — runs on CPU with 8GB RAM For more accurate, needs 16GB RAM and use model "Qwen/Qwen2-VL-7B-Instruct"
+MODEL_ID = "Qwen/Qwen2-VL-2B-Instruct"  # Qwen/Qwen2-VL-2B-Instruct 2B parameter model - runs on CPU with 8GB RAM For more accurate, needs 16GB RAM and use model "Qwen/Qwen2-VL-7B-Instruct"
 print(f"Loading {MODEL_ID}...")
 print("First run downloads ~15GB. Subsequent runs load from cache.\n")
 
 model = Qwen2VLForConditionalGeneration.from_pretrained(
     MODEL_ID,
-    torch_dtype=torch.float32, # float16 works on MPS, saves memory. float32 for CPU
-    device_map="cpu" # device
+    torch_dtype=torch.float32,  # float16 works on MPS, saves memory. float32 for CPU
+    device_map="cpu",  # device
 )
 
 processor = AutoProcessor.from_pretrained(MODEL_ID)
@@ -56,30 +57,24 @@ Use null for any field that is absent or illegible:
 
 Return ONLY the JSON. No explanation. No markdown fences."""
 
+
 # ── EXTRACTION FUNCTION ───────────────────────────────────────────────────
 def extract_with_qwen(img_path):
     start = time.time()
     try:
         image = Image.open(img_path).convert("RGB")
 
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text",  "text": PROMPT}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "image", "image": image}, {"type": "text", "text": PROMPT}],
+            }
+        ]
 
-        text = processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt"
+            text=[text], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt"
         )
 
         # Move to device
@@ -93,30 +88,27 @@ def extract_with_qwen(img_path):
                 do_sample=False,
                 temperature=None,
                 top_p=None,
-                top_k=None
+                top_k=None,
             )
 
         generated_ids_trimmed = [
-            out_ids[len(in_ids):]
-            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
         response = processor.batch_decode(
-            generated_ids_trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )[0].strip()
 
         duration = round(time.time() - start, 2)
 
         # Clean markdown fences if present
-        response = re.sub(r'^```json\s*', '', response)
-        response = re.sub(r'^```\s*',     '', response)
-        response = re.sub(r'\s*```$',     '', response)
+        response = re.sub(r"^```json\s*", "", response)
+        response = re.sub(r"^```\s*", "", response)
+        response = re.sub(r"\s*```$", "", response)
 
         try:
             result = json.loads(response)
         except json.JSONDecodeError:
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 try:
                     result = json.loads(json_match.group())
@@ -126,20 +118,20 @@ def extract_with_qwen(img_path):
                 result = {"_raw": response, "_parse_error": True}
 
         result["_filename"] = os.path.basename(img_path)
-        result["_time"]     = duration
+        result["_time"] = duration
         return result
 
     except Exception as e:
         return {
             "_filename": os.path.basename(img_path),
-            "_time":     round(time.time() - start, 2),
-            "_error":    str(e)
+            "_time": round(time.time() - start, 2),
+            "_error": str(e),
         }
+
 
 # ── MAIN LOOP ─────────────────────────────────────────────────────────────
 images = [
-    f for f in sorted(os.listdir(INPUT_FOLDER))
-    if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+    f for f in sorted(os.listdir(INPUT_FOLDER)) if f.lower().endswith((".png", ".jpg", ".jpeg"))
 ]
 
 print(f"Found {len(images)} documents\n")
@@ -155,7 +147,7 @@ for i, fname in enumerate(images):
     if result.get("_error"):
         print(f"  ERROR: {result['_error']}")
     elif result.get("_parse_error"):
-        print(f"  PARSE ERROR — raw response:")
+        print("  PARSE ERROR - raw response:")
         print(f"  {result.get('_raw', '')[:200]}")
     else:
         print(f"  Type       : {result.get('document_type', 'unknown')}")
@@ -174,27 +166,27 @@ print(f"\nDone. All results saved to {OUTPUT_FILE}")
 
 # ── SUMMARY ───────────────────────────────────────────────────────────────
 print("\n=== SUMMARY ===")
-valid  = [r for r in all_results.values() if not r.get('_error') and not r.get('_parse_error')]
-errors = [r for r in all_results.values() if r.get('_error') or r.get('_parse_error')]
+valid = [r for r in all_results.values() if not r.get("_error") and not r.get("_parse_error")]
+errors = [r for r in all_results.values() if r.get("_error") or r.get("_parse_error")]
 
 print(f"Successfully extracted : {len(valid)}/{len(all_results)} documents")
 print(f"Errors / parse failures: {len(errors)}/{len(all_results)} documents")
 
-confs = [r.get('extraction_confidence', 'unknown') for r in valid]
+confs = [r.get("extraction_confidence", "unknown") for r in valid]
 print("\nExtraction confidence:")
-for level in ['high', 'medium', 'low', 'unknown']:
+for level in ["high", "medium", "low", "unknown"]:
     count = confs.count(level)
-    pct   = round(count / len(valid) * 100) if valid else 0
+    pct = round(count / len(valid) * 100) if valid else 0
     print(f"  {level.capitalize():8}: {count}/{len(valid)} ({pct}%)")
 
 all_issues = []
 for r in valid:
-    all_issues.extend(r.get('quality_issues', []))
+    all_issues.extend(r.get("quality_issues", []))
 if all_issues:
     print("\nQuality issues identified by model:")
     for issue, count in Counter(all_issues).most_common():
         print(f"  {issue}: {count} documents")
 
-avg_time = sum(r.get('_time', 0) for r in all_results.values()) / len(all_results)
+avg_time = sum(r.get("_time", 0) for r in all_results.values()) / len(all_results)
 print(f"\nAverage processing time: {avg_time:.1f}s per document")
 print(f"Estimated time for 50,000 documents: {50000 * avg_time / 3600:.1f} hours")

@@ -34,7 +34,7 @@ function FieldRow({ label, value }: { label: string; value: string | string[] | 
     return (
       <tr>
         <td className="py-1.5 pr-4 text-xs font-medium text-gray-500 whitespace-nowrap">{label}</td>
-        <td className="py-1.5 text-xs text-gray-300 italic">—</td>
+        <td className="py-1.5 text-xs text-gray-300 italic">-</td>
       </tr>
     );
   }
@@ -127,7 +127,7 @@ function FailedView({ result }: { result: FailedResult }) {
 }
 
 export default function VlmPanel({ result }: Props) {
-  // Discriminated union narrowing — each branch has a distinct type
+  // Discriminated union narrowing - each branch has a distinct type
   if (result.tier === "failed") {
     return <FailedView result={result} />;
   }

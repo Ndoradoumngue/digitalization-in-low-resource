@@ -1,7 +1,7 @@
 #!/bin/bash
-# SDAI Digitalisation — Offline Installation Script
+# SDAI Digitalisation - Offline Installation Script
 #
-# Run this on the target server — no internet connection required
+# Run this on the target server - no internet connection required
 # (as long as setup.sh was run first and ./models/ was transferred).
 #
 # Requirements (on the offline server):
@@ -42,7 +42,7 @@ if [ -d "$MODELS_DIR/wheels" ] && [ -n "$(ls -A "$MODELS_DIR/wheels" 2>/dev/null
     -r apps/api/requirements.txt
   ok "Python deps installed from $MODELS_DIR/wheels/"
 else
-  warn "No wheel cache found — skipping (Docker image already includes all deps)"
+  warn "No wheel cache found - skipping (Docker image already includes all deps)"
 fi
 
 # ── 3. Node packages (local development outside Docker) ───────────────────────
@@ -52,7 +52,7 @@ if [ -d "$MODELS_DIR/pnpm-store" ]; then
   pnpm --store-dir "$MODELS_DIR/pnpm-store" install --offline
   ok "Node packages installed from $MODELS_DIR/pnpm-store/"
 else
-  warn "No pnpm offline store found — skipping (not needed for Docker-only deployment)"
+  warn "No pnpm offline store found - skipping (not needed for Docker-only deployment)"
 fi
 
 # ── 4. Start the stack ────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ step 4 "Starting services (Docker Compose)…"
 
 if [ ! -f ".env" ]; then
   cp .env.example .env
-  warn ".env created from .env.example — edit AUTH_SECRET_KEY before production use"
+  warn ".env created from .env.example - edit AUTH_SECRET_KEY before production use"
 fi
 
 # Build any services that need local source (api, frontend).
@@ -75,7 +75,7 @@ echo ""
 echo -e "${BOLD}=== Installation complete ===${RESET}"
 echo ""
 echo "The Ollama model will load from the bundled archive on first start."
-echo "This takes about 30–60 seconds — check progress with:"
+echo "This takes about 30–60 seconds - check progress with:"
 echo "  docker compose logs -f ollama"
 echo ""
 echo "Once the stack is healthy, create the first admin user:"

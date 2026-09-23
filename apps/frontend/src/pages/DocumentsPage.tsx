@@ -8,43 +8,43 @@ import type { DbListParams } from "@sdai/api-client";
 import { summarizeExtra } from "../utils/format";
 
 // The real document-browsing experience: categories, reviewer, keyword
-// search — no confidence/review_status/table-name plumbing shown (that's
+// search - no confidence/review_status/table-name plumbing shown (that's
 // what DataBrowserPage.tsx, under Ops, is for). Both pages share the same
 // document detail route (/documents/:tableName/:id).
 
 const PAGE_SIZE = 24;
 
 function fmtDate(iso: string | null) {
-  if (!iso) return "—";
+  if (!iso) return "-";
   try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
 }
 
 export default function DocumentsPage() {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { data: types }     = useDbTypes();
+  const { data: types } = useDbTypes();
   const { data: reviewers } = useDbReviewers();
-  const { data: series }    = useSeries();
+  const { data: series } = useSeries();
 
-  const [page, setPage]             = useState(1);
-  const [category, setCategory]     = useState("");
+  const [page, setPage] = useState(1);
+  const [category, setCategory] = useState("");
   const [reviewedBy, setReviewedBy] = useState("");
-  const [seriesId, setSeriesId]     = useState("");
-  const [dateFrom, setDateFrom]     = useState("");
-  const [dateTo, setDateTo]         = useState("");
-  const [q, setQ]                   = useState("");
-  const [inputQ, setInputQ]         = useState("");
+  const [seriesId, setSeriesId] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [q, setQ] = useState("");
+  const [inputQ, setInputQ] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const params: DbListParams = {
     page,
     page_size: PAGE_SIZE,
-    ...(category    && { document_type: category }),
-    ...(reviewedBy  && { reviewed_by:   reviewedBy }),
-    ...(seriesId    && { series:        seriesId }),
-    ...(dateFrom    && { date_from:     dateFrom }),
-    ...(dateTo      && { date_to:       dateTo }),
-    ...(q           && { q }),
+    ...(category && { document_type: category }),
+    ...(reviewedBy && { reviewed_by: reviewedBy }),
+    ...(seriesId && { series: seriesId }),
+    ...(dateFrom && { date_from: dateFrom }),
+    ...(dateTo && { date_to: dateTo }),
+    ...(q && { q }),
   };
 
   const { data, isLoading, error } = useDbDocuments(params);
@@ -75,8 +75,8 @@ export default function DocumentsPage() {
     setPage(1);
   }
 
-  const rows       = data?.results ?? [];
-  const total      = data?.total ?? 0;
+  const rows = data?.results ?? [];
+  const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters = category || reviewedBy || seriesId || dateFrom || dateTo || q;
 
@@ -159,18 +159,17 @@ export default function DocumentsPage() {
           )}
         </div>
 
-        {/* Category chips — "browse by folder" */}
+        {/* Category chips - "browse by folder" */}
         {types && types.length > 0 && (
           <div className="bg-white border-b border-gray-200 px-6 py-3 flex flex-wrap gap-2 flex-shrink-0">
             {types.map((t) => (
               <button
                 key={t.table_name}
                 onClick={() => selectCategory(t.table_name)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                  category === t.table_name
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${category === t.table_name
                     ? "bg-indigo-600 border-indigo-600 text-white"
                     : "bg-white border-gray-300 text-gray-700 hover:bg-indigo-50"
-                }`}
+                  }`}
               >
                 {t.document_type}
                 <span className={category === t.table_name ? "text-indigo-100" : "text-gray-400"}>
@@ -228,7 +227,7 @@ export default function DocumentsPage() {
                   <div className="mt-auto flex items-center justify-between text-xs text-gray-400 pt-1">
                     <span>
                       {row.reviewed_by
-                        ? t("documents.reviewedBy", { name: reviewerName.get(row.reviewed_by) ?? "—" })
+                        ? t("documents.reviewedBy", { name: reviewerName.get(row.reviewed_by) ?? "-" })
                         : t("documents.notYetReviewed")}
                     </span>
                     <span>{fmtDate(row.ingested_at)}</span>

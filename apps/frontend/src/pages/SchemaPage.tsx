@@ -30,16 +30,16 @@ const BASE_COLS = new Set([
   "id", "source_image_path", "batch_id", "ingested_at", "confidence", "review_status",
 ]);
 
-const NODE_WIDTH_MIN  = 220;
+const NODE_WIDTH_MIN = 220;
 const NODE_COL_HEIGHT = 22;
-const NODE_HEADER_H   = 52;
-const NODE_FOOTER_H   = 30;
+const NODE_HEADER_H = 52;
+const NODE_FOOTER_H = 30;
 const MAX_VISIBLE_COLS = 10;
 
 // ── Custom node ───────────────────────────────────────────────────────────────
 
 interface TableNodeData {
-  table:     DbTableInfo;
+  table: DbTableInfo;
   nodeWidth: number;
   [key: string]: unknown;
 }
@@ -48,16 +48,15 @@ function TableNode({ data, selected }: NodeProps<Node<TableNodeData>>) {
   const { t } = useTranslation();
   const { table, nodeWidth } = data;
   const visibleCols = table.columns.slice(0, MAX_VISIBLE_COLS);
-  const overflow    = table.columns.length - visibleCols.length;
+  const overflow = table.columns.length - visibleCols.length;
 
   return (
     <div
-      className={`rounded-lg border bg-white shadow-sm text-xs flex flex-col overflow-hidden transition-shadow ${
-        selected ? "border-indigo-500 shadow-indigo-200 shadow-lg" : "border-gray-300 hover:border-gray-400"
-      }`}
+      className={`rounded-lg border bg-white shadow-sm text-xs flex flex-col overflow-hidden transition-shadow ${selected ? "border-indigo-500 shadow-indigo-200 shadow-lg" : "border-gray-300 hover:border-gray-400"
+        }`}
       style={{ width: nodeWidth }}
     >
-      <Handle type="target" position={Position.Left}  style={{ background: "#6366f1", width: 8, height: 8 }} />
+      <Handle type="target" position={Position.Left} style={{ background: "#6366f1", width: 8, height: 8 }} />
       <Handle type="source" position={Position.Right} style={{ background: "#6366f1", width: 8, height: 8 }} />
 
       {/* Header */}
@@ -71,9 +70,8 @@ function TableNode({ data, selected }: NodeProps<Node<TableNodeData>>) {
         {visibleCols.map((col) => (
           <div
             key={col.name}
-            className={`flex justify-between items-center px-3 py-[3px] ${
-              BASE_COLS.has(col.name) ? "text-gray-400" : "text-gray-700"
-            }`}
+            className={`flex justify-between items-center px-3 py-[3px] ${BASE_COLS.has(col.name) ? "text-gray-400" : "text-gray-700"
+              }`}
           >
             <span className="truncate mr-2 font-mono">{col.name}</span>
             <span className="text-gray-400 font-mono shrink-0 text-[10px]">
@@ -123,12 +121,12 @@ function buildLayout(tables: DbTableInfo[]): { nodes: Node[]; edges: Edge[] } {
       g.setEdge(t.name, fk.references_table);
       edges.push({
         id,
-        source:    t.name,
-        target:    fk.references_table,
-        label:     fk.column,
+        source: t.name,
+        target: fk.references_table,
+        label: fk.column,
         markerEnd: { type: MarkerType.ArrowClosed, color: "#6366f1", width: 16, height: 16 },
-        style:     { stroke: "#6366f1", strokeWidth: 1.5 },
-        labelStyle:   { fontSize: 10, fill: "#6b7280" },
+        style: { stroke: "#6366f1", strokeWidth: 1.5 },
+        labelStyle: { fontSize: 10, fill: "#6b7280" },
         labelBgStyle: { fill: "#f9fafb", fillOpacity: 0.8 },
       });
     });
@@ -140,10 +138,10 @@ function buildLayout(tables: DbTableInfo[]): { nodes: Node[]; edges: Edge[] } {
     const pos = g.node(t.name);
     const { w } = dims[t.name];
     return {
-      id:       t.name,
-      type:     "tableNode",
+      id: t.name,
+      type: "tableNode",
       position: { x: pos.x - pos.width / 2, y: pos.y - pos.height / 2 },
-      data:     { table: t, nodeWidth: w } as TableNodeData,
+      data: { table: t, nodeWidth: w } as TableNodeData,
     };
   });
 
@@ -178,7 +176,7 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
         <div>
           <div className="text-xs text-gray-500">{t("schema.lastIngested")}</div>
           <div className="text-sm font-medium text-gray-800">
-            {table.last_ingested ? new Date(table.last_ingested).toLocaleDateString() : "—"}
+            {table.last_ingested ? new Date(table.last_ingested).toLocaleDateString() : "-"}
           </div>
         </div>
       </div>
@@ -190,9 +188,8 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
         {table.columns.map((col) => (
           <div
             key={col.name}
-            className={`px-4 py-1.5 flex justify-between items-center text-xs border-b border-gray-50 ${
-              BASE_COLS.has(col.name) ? "text-gray-400" : "text-gray-700"
-            }`}
+            className={`px-4 py-1.5 flex justify-between items-center text-xs border-b border-gray-50 ${BASE_COLS.has(col.name) ? "text-gray-400" : "text-gray-700"
+              }`}
           >
             <span className="truncate mr-2 font-mono">{col.name}</span>
             <span className="text-gray-400 font-mono shrink-0 text-[10px]">
@@ -218,12 +215,12 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
 // ── Inner canvas component (needs ReactFlowProvider context) ──────────────────
 
 interface CanvasProps {
-  tables:         DbTableInfo[] | undefined;
-  loading:        boolean;
-  error:          unknown;
-  autoRefresh:    boolean;
+  tables: DbTableInfo[] | undefined;
+  loading: boolean;
+  error: unknown;
+  autoRefresh: boolean;
   setAutoRefresh: (v: boolean) => void;
-  onRefresh:      () => void;
+  onRefresh: () => void;
 }
 
 function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onRefresh }: CanvasProps) {
@@ -231,7 +228,7 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
   const { fitView } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [selected, setSelected]          = useState<DbTableInfo | null>(null);
+  const [selected, setSelected] = useState<DbTableInfo | null>(null);
   const schemaKeyRef = useRef<string>("");
 
   useEffect(() => {
@@ -258,7 +255,7 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
     if (!el) return;
     toPng(el, { backgroundColor: "#f8fafc", pixelRatio: 2 }).then((url) => {
       const a = document.createElement("a");
-      a.href     = url;
+      a.href = url;
       a.download = "schema.png";
       a.click();
     });
@@ -274,8 +271,8 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
           {loading
             ? t("schema.loading")
             : error
-            ? ""
-            : t((tables?.length ?? 0) === 1 ? "schema.tableCount_one" : "schema.tableCount_other", { count: tables?.length ?? 0 })}
+              ? ""
+              : t((tables?.length ?? 0) === 1 ? "schema.tableCount_one" : "schema.tableCount_other", { count: tables?.length ?? 0 })}
         </span>
 
         <div className="flex items-center gap-2 ml-auto">
@@ -286,14 +283,12 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
               role="switch"
               aria-checked={autoRefresh}
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-                autoRefresh ? "bg-indigo-600" : "bg-gray-300"
-              }`}
+              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${autoRefresh ? "bg-indigo-600" : "bg-gray-300"
+                }`}
             >
               <span
-                className={`inline-block h-4 w-4 rounded-full bg-white shadow ring-0 transition-transform ${
-                  autoRefresh ? "translate-x-4" : "translate-x-0"
-                }`}
+                className={`inline-block h-4 w-4 rounded-full bg-white shadow ring-0 transition-transform ${autoRefresh ? "translate-x-4" : "translate-x-0"
+                  }`}
               />
             </button>
           </label>
@@ -353,8 +348,8 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
                 nodeColor={(node) => {
                   const t = (node.data as TableNodeData).table;
                   if (t.row_count > 500) return "#4f46e5";
-                  if (t.row_count > 50)  return "#6366f1";
-                  if (t.row_count > 5)   return "#818cf8";
+                  if (t.row_count > 50) return "#6366f1";
+                  if (t.row_count > 5) return "#818cf8";
                   return "#a5b4fc";
                 }}
                 maskColor="rgba(248,250,252,0.85)"
@@ -375,30 +370,30 @@ function SchemaCanvas({ tables, loading, error, autoRefresh, setAutoRefresh, onR
 
 export default function SchemaPage() {
   const { t } = useTranslation();
-  const [autoRefresh, setAutoRefresh]          = useState(false);
-  const { data, isLoading, error, refetch }    = useDbSchema({ autoRefresh });
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const { data, isLoading, error, refetch } = useDbSchema({ autoRefresh });
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-gray-900 overflow-hidden">
       <NavSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-shrink-0">
-        <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("schema.header")}</h1>
-        {error && <span className="text-xs text-red-500">{t("schema.loadError")}</span>}
-      </header>
+        <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-shrink-0">
+          <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("schema.header")}</h1>
+          {error && <span className="text-xs text-red-500">{t("schema.loadError")}</span>}
+        </header>
 
-      <div className="flex-1 overflow-hidden">
-        <ReactFlowProvider>
-          <SchemaCanvas
-            tables={data?.tables}
-            loading={isLoading}
-            error={error}
-            autoRefresh={autoRefresh}
-            setAutoRefresh={setAutoRefresh}
-            onRefresh={() => { void refetch(); }}
-          />
-        </ReactFlowProvider>
-      </div>
+        <div className="flex-1 overflow-hidden">
+          <ReactFlowProvider>
+            <SchemaCanvas
+              tables={data?.tables}
+              loading={isLoading}
+              error={error}
+              autoRefresh={autoRefresh}
+              setAutoRefresh={setAutoRefresh}
+              onRefresh={() => { void refetch(); }}
+            />
+          </ReactFlowProvider>
+        </div>
       </div>
     </div>
   );

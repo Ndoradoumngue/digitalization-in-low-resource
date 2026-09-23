@@ -13,7 +13,7 @@ repos:
       - id: mixed-line-ending
         args: [--fix=lf]
 
-  # ── Python — ruff (lint + format) ────────────────────────────────────────
+  # ── Python - ruff (lint + format) ────────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.4
     hooks:
@@ -23,7 +23,7 @@ repos:
       - id: ruff-format
         exclude: ^(venv|venv311)/
 
-  # ── TypeScript — typecheck all workspace packages ─────────────────────────
+  # ── TypeScript - typecheck all workspace packages ─────────────────────────
   - repo: local
     hooks:
       - id: tsc

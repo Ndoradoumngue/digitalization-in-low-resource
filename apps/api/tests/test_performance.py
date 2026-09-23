@@ -19,39 +19,41 @@ import uuid
 from itertools import cycle
 from unittest.mock import AsyncMock
 
-import pytest
-
 import documents_router
+import pytest
 import review_router
 from conftest import make_result
 
-
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
-# Column set present in every ingest-created table — {col_name: data_type},
+# Column set present in every ingest-created table - {col_name: data_type},
 # matching _get_tables_columns's return shape.
 _BENCH_COLS = {
-    "id": "uuid", "source_image_path": "text", "ingested_at": "timestamp with time zone",
-    "confidence": "text", "review_status": "text",
+    "id": "uuid",
+    "source_image_path": "text",
+    "ingested_at": "timestamp with time zone",
+    "confidence": "text",
+    "review_status": "text",
 }
 
 
 def _make_doc(i: int) -> dict:
     """Return one synthetic document row dict as the router would return it."""
     return {
-        "id":                str(uuid.uuid4()),
-        "table_name":        "bench_table",
-        "document_type":     None,
-        "confidence":        "high",
-        "review_status":     "auto_approved",
-        "ingested_at":       "2024-01-01T00:00:00",
+        "id": str(uuid.uuid4()),
+        "table_name": "bench_table",
+        "document_type": None,
+        "confidence": "high",
+        "review_status": "auto_approved",
+        "ingested_at": "2024-01-01T00:00:00",
         "source_image_path": f"/data/images/doc_{i}.png",
-        "extra_fields":      {},
-        "total_count":       1000,
+        "extra_fields": {},
+        "total_count": 1000,
     }
 
 
 # ── test 1: document list ─────────────────────────────────────────────────────
+
 
 @pytest.mark.benchmark
 def test_document_list_response_time(auth_client, mock_db, monkeypatch, benchmark):
@@ -66,7 +68,8 @@ def test_document_list_response_time(auth_client, mock_db, monkeypatch, benchmar
     rows = [_make_doc(i) for i in range(1000)]
 
     monkeypatch.setattr(
-        documents_router, "_get_tables_columns",
+        documents_router,
+        "_get_tables_columns",
         AsyncMock(return_value={"bench_table": _BENCH_COLS}),
     )
     # list_documents calls execute once (UNION query); return_value is reused
@@ -78,19 +81,17 @@ def test_document_list_response_time(auth_client, mock_db, monkeypatch, benchmar
     resp = auth_client.get("/api/db/documents")
     elapsed = time.perf_counter() - t0
     assert resp.status_code == 200
-    assert elapsed < 0.500, (
-        f"GET /api/db/documents took {elapsed * 1000:.0f}ms (limit 500ms)"
-    )
+    assert elapsed < 0.500, f"GET /api/db/documents took {elapsed * 1000:.0f}ms (limit 500ms)"
 
     t0 = time.perf_counter()
     resp = auth_client.get("/api/db/documents?q=test")
     elapsed = time.perf_counter() - t0
     assert resp.status_code == 200
-    assert elapsed < 1.000, (
-        f"GET /api/db/documents?q=test took {elapsed * 1000:.0f}ms (limit 1000ms)"
-    )
+    assert (
+        elapsed < 1.000
+    ), f"GET /api/db/documents?q=test took {elapsed * 1000:.0f}ms (limit 1000ms)"
 
-    # ── formal benchmark — run many rounds, generates the timing report ───────
+    # ── formal benchmark - run many rounds, generates the timing report ───────
     benchmark(lambda: auth_client.get("/api/db/documents"))
 
 
@@ -101,10 +102,10 @@ def test_document_list_response_time(auth_client, mock_db, monkeypatch, benchmar
 #   2. Batch FK details      (iterable)
 #   3. Per-table stats       (accessed with .one())
 _SCHEMA_COL_ROWS = [
-    ("bench_table", "id",                "uuid", "NO"),
+    ("bench_table", "id", "uuid", "NO"),
     ("bench_table", "source_image_path", "text", "YES"),
 ]
-_SCHEMA_FK_ROWS  = []
+_SCHEMA_FK_ROWS = []
 _SCHEMA_STAT_ONE = (50, None, "bench_document_type")
 
 
@@ -120,18 +121,21 @@ def test_schema_endpoint_response_time(auth_client, mock_db, monkeypatch, benchm
     from fastapi_cache.backends.inmemory import InMemoryBackend
 
     monkeypatch.setattr(
-        documents_router, "_get_tables_columns",
+        documents_router,
+        "_get_tables_columns",
         AsyncMock(return_value={"bench_table": {"id": "uuid", "source_image_path": "text"}}),
     )
 
     # Cycling side_effect: col → FK → stat → col → FK → stat → …
     # Works across the manual assertions and the pedantic rounds without
     # exhausting a finite list.
-    _responses = cycle([
-        make_result(rows=list(_SCHEMA_COL_ROWS)),
-        make_result(rows=_SCHEMA_FK_ROWS),
-        make_result(one=_SCHEMA_STAT_ONE),
-    ])
+    _responses = cycle(
+        [
+            make_result(rows=list(_SCHEMA_COL_ROWS)),
+            make_result(rows=_SCHEMA_FK_ROWS),
+            make_result(one=_SCHEMA_STAT_ONE),
+        ]
+    )
     mock_db.execute.side_effect = lambda *_a, **_kw: next(_responses)
 
     # ── uncached call ─────────────────────────────────────────────────────────
@@ -140,22 +144,20 @@ def test_schema_endpoint_response_time(auth_client, mock_db, monkeypatch, benchm
     resp1 = auth_client.get("/api/db/schema")
     uncached = time.perf_counter() - t0
     assert resp1.status_code == 200
-    assert uncached < 0.200, (
-        f"Uncached GET /api/db/schema took {uncached * 1000:.0f}ms (limit 200ms)"
-    )
+    assert (
+        uncached < 0.200
+    ), f"Uncached GET /api/db/schema took {uncached * 1000:.0f}ms (limit 200ms)"
 
     # ── cached call (second hit to the same URL) ──────────────────────────────
     t0 = time.perf_counter()
     resp2 = auth_client.get("/api/db/schema")
     cached = time.perf_counter() - t0
     assert resp2.status_code == 200
-    assert cached < 0.050, (
-        f"Cached GET /api/db/schema took {cached * 1000:.0f}ms (limit 50ms)"
-    )
+    assert cached < 0.050, f"Cached GET /api/db/schema took {cached * 1000:.0f}ms (limit 50ms)"
 
     # Persist both values in the benchmark report
     benchmark.extra_info["uncached_ms"] = round(uncached * 1000, 2)
-    benchmark.extra_info["cached_ms"]   = round(cached * 1000, 2)
+    benchmark.extra_info["cached_ms"] = round(cached * 1000, 2)
 
     # Formal benchmark: clear cache before each round so we always measure
     # the uncached path. The setup callable is NOT included in the timing.
@@ -170,6 +172,7 @@ def test_schema_endpoint_response_time(auth_client, mock_db, monkeypatch, benchm
 
 # ── test 3: review count ──────────────────────────────────────────────────────
 
+
 @pytest.mark.benchmark
 def test_review_count_response_time(auth_client, mock_db, monkeypatch, benchmark):
     """
@@ -182,25 +185,24 @@ def test_review_count_response_time(auth_client, mock_db, monkeypatch, benchmark
     from fastapi_cache.backends.inmemory import InMemoryBackend
 
     monkeypatch.setattr(
-        review_router, "_get_tables_columns",
+        review_router,
+        "_get_tables_columns",
         AsyncMock(return_value={"bench_table": {"id": "uuid", "review_status": "text"}}),
     )
     # _pending_count calls execute once (UNION COUNT query); scalar=42 is
     # reused on every benchmark iteration.
     mock_db.execute.return_value = make_result(scalar=42)
 
-    # ── timing assertion — single uncached call ───────────────────────────────
+    # ── timing assertion - single uncached call ───────────────────────────────
     InMemoryBackend._store.clear()
     t0 = time.perf_counter()
     resp = auth_client.get("/api/review/count")
     elapsed = time.perf_counter() - t0
     assert resp.status_code == 200
     assert resp.json()["pending"] == 42
-    assert elapsed < 0.100, (
-        f"GET /api/review/count took {elapsed * 1000:.0f}ms (limit 100ms)"
-    )
+    assert elapsed < 0.100, f"GET /api/review/count took {elapsed * 1000:.0f}ms (limit 100ms)"
 
-    # ── formal benchmark — cache cleared before each round ────────────────────
+    # ── formal benchmark - cache cleared before each round ────────────────────
     benchmark.pedantic(
         lambda: auth_client.get("/api/review/count"),
         setup=InMemoryBackend._store.clear,

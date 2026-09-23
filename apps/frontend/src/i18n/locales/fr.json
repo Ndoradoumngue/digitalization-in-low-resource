@@ -13,7 +13,7 @@
     "previous": "Précédent",
     "next": "Suivant",
     "loading": "Chargement…",
-    "notAvailable": "—",
+    "notAvailable": "-",
     "backArrow": "← {{label}}",
     "forwardArrow": "{{label}} →"
   },
@@ -53,7 +53,7 @@
     "reviewTitle": "File de révision →",
     "reviewDescriptionPending_one": "{{count}} document en attente de révision.",
     "reviewDescriptionPending_other": "{{count}} documents en attente de révision.",
-    "reviewDescriptionEmpty": "Rien en attente — tout est à jour.",
+    "reviewDescriptionEmpty": "Rien en attente - tout est à jour.",
     "browseTitle": "Parcourir les documents →",
     "browseDescription": "Rechercher et filtrer tout ce qui a été ingéré."
   },
@@ -71,7 +71,7 @@
     "noResults": "Aucun document trouvé.",
     "reviewedBy": "Révisé par {{name}}",
     "notYetReviewed": "Pas encore révisé",
-    "pagination": "Page {{page}} sur {{totalPages}} — {{total}} au total",
+    "pagination": "Page {{page}} sur {{totalPages}} - {{total}} au total",
     "previous": "Précédent",
     "next": "Suivant"
   },
@@ -142,7 +142,7 @@
     "restrictTo": "+ Restreindre à…",
     "loading": "Chargement…",
     "openToAll": "Visible par tous dans votre organisation. Aucune restriction appliquée.",
-    "restrictedNote": "Restreint — visible uniquement par les administrateurs et :"
+    "restrictedNote": "Restreint - visible uniquement par les administrateurs et :"
   },
   "upload": {
     "status": {
@@ -162,14 +162,19 @@
     },
     "viewPage": "Voir la page ↗",
     "skipButton": {
-      "title": "Marquer comme non pertinent (page de couverture, vierge, hors périmètre) — exclu du résultat extrait",
+      "title": "Marquer comme non pertinent (page de couverture, vierge, hors périmètre) - exclu du résultat extrait",
       "skipping": "Ignoré…",
       "skip": "Ignorer"
     },
     "reloadButton": {
-      "title": "Redériver cette page à partir du document original (relance l'extraction de page et la détection de mise en page, ex. division en colonnes) — contrairement à Réessayer/Relancer, qui réutilise l'image déjà traitée",
+      "title": "Redériver cette page à partir du document original (relance l'extraction de page et la détection de mise en page, ex. division en colonnes) - contrairement à Réessayer/Relancer, qui réutilise l'image déjà traitée",
       "reloading": "Rechargement…",
       "reload": "Recharger depuis la source"
+    },
+    "cancelButton": {
+      "title": "Arrêter l'extraction de cette page maintenant, plutôt que d'attendre qu'elle se termine ou expire",
+      "cancelling": "Annulation…",
+      "cancel": "Annuler"
     },
     "failedPage": {
       "page": "Page {{n}}",
@@ -184,29 +189,35 @@
       "manual": "(manuel)",
       "hideData": "Masquer les données",
       "viewData": "Voir les données",
-      "rerunTitle": "Relancer l'extraction sur l'image stockée de cette page (ex. pour prendre en compte un changement de prompt) et fusionner le nouveau résultat, en remplaçant ce qui existe. Utilise la même image stockée — ne réévaluera pas la mise en page/découpage.",
+      "rerunTitle": "Relancer l'extraction sur l'image stockée de cette page (ex. pour prendre en compte un changement de prompt) et fusionner le nouveau résultat, en remplaçant ce qui existe. Utilise la même image stockée - ne réévaluera pas la mise en page/découpage.",
       "rerunning": "Relance…",
       "rerun": "Relancer"
     },
-    "skippedPage": "Page {{n}} — ignorée (non pertinente)",
+    "skippedPage": "Page {{n}} - ignorée (non pertinente)",
     "pendingPage": {
-      "processing": "Page {{n}} — traitement…",
-      "pending": "Page {{n}} — en attente"
+      "processing": "Page {{n}} - traitement…",
+      "pending": "Page {{n}} - en attente"
     },
     "pageProgress": {
       "summary": "Pages : {{done}} / {{total}} traitées",
       "failedSuffix": " · {{count}} échouées",
       "skippedSuffix": " · {{count}} ignorées",
-      "resumeTitle": "Traiter chaque page qui n'a pas encore été tentée — utiliser ceci si l'exécution a été interrompue (ex. redémarrage du serveur) et n'a pas avancé depuis un moment",
+      "resumeTitle": "Traiter chaque page qui n'a pas encore été tentée - utiliser ceci si l'exécution a été interrompue (ex. redémarrage du serveur) et n'a pas avancé depuis un moment",
       "resuming": "Reprise…",
-      "resumeRemaining": "Reprendre le reste ({{count}})"
+      "resumeRemaining": "Reprendre le reste ({{count}})",
+      "pauseTitle": "Arrêter immédiatement la page en cours d'extraction et suspendre le reste - utiliser Reprendre le reste pour continuer plus tard",
+      "pausing": "Mise en pause…",
+      "pause": "Pause"
     },
     "deleteDocument": {
       "confirm": "Supprimer le document extrait de ce téléversement ? Cela permet de retéléverser le même fichier sans qu'il soit bloqué comme doublon. Cette action est irréversible.",
+      "confirmInProgress": "Annuler et supprimer ce document ? Toute page en cours de traitement est arrêtée immédiatement. Cela permet de retéléverser le même fichier sans qu'il soit bloqué comme doublon. Cette action est irréversible.",
       "title": "Supprimer pour que ce fichier puisse être retéléversé sans déclencher la vérification de doublon",
+      "titleInProgress": "Arrêter le traitement et supprimer ce document pour pouvoir retéléverser le fichier",
       "deleting": "Suppression…",
       "deleted": "Supprimé",
-      "delete": "Supprimer"
+      "delete": "Supprimer",
+      "cancelAndRemove": "Annuler et supprimer"
     },
     "progressTable": {
       "loadingBatch": "Chargement du statut du lot…",
@@ -240,7 +251,9 @@
       "processed": "{{done}} / {{total}} traités",
       "documentCount_one": "{{count}} document",
       "documentCount_other": "{{count}} documents",
-      "crashed": "{{count}} échoués"
+      "crashed": "{{count}} échoués",
+      "removeTitle": "Supprimer ce lot et tout ce qu'il a produit",
+      "confirmRemove": "Supprimer complètement ce lot ? Tout document encore en traitement est arrêté, et tout document déjà extrait est également supprimé - pas seulement cette entrée de la liste. Cette action est irréversible."
     },
     "modeTabs": {
       "files": "Téléversement de fichiers",
@@ -284,12 +297,12 @@
     "permissionNote": "Vous pouvez approuver ou rejeter ce document, mais la correction de ses champs nécessite la permission de modification des extractions.",
     "noEditableFields": "Aucun champ modifiable.",
     "commaSeparated": "(séparé par des virgules)",
-    "fieldPlaceholder": "Non trouvé — remplir si visible",
+    "fieldPlaceholder": "Non trouvé - remplir si visible",
     "header": "File de révision",
     "waiting_one": "document en attente",
     "waiting_other": "documents en attente",
     "oldestSuffix": " · le plus ancien {{time}}",
-    "emptyQueue": "La file de révision est vide — tous les documents sont traités",
+    "emptyQueue": "La file de révision est vide - tous les documents sont traités",
     "uploadMore": "Téléverser plus de documents",
     "navPrevious": "← Précédent",
     "navNext": "Suivant →",
@@ -320,15 +333,15 @@
     "subtitle": "Gérez les groupes, les séries, et qui peut restreindre des documents à un groupe ou une personne spécifique.",
     "export": {
       "heading": "Exporter l'archive",
-      "descriptionPrefix": "Télécharge tous les documents de ce tenant — tous les champs extraits ainsi qu'un dossier ",
-      "descriptionSuffix": " contenant chaque image et PDF source — regroupés dans un fichier zip.",
+      "descriptionPrefix": "Télécharge tous les documents de ce tenant - tous les champs extraits ainsi qu'un dossier ",
+      "descriptionSuffix": " contenant chaque image et PDF source - regroupés dans un fichier zip.",
       "preparing": "Préparation de l'export…",
       "download": "Télécharger l'export",
       "started": "Téléchargement démarré."
     },
     "integrity": {
       "heading": "Vérification de fixité / intégrité",
-      "description": "Vérifie que le(s) fichier(s) de chaque document existe(nt) toujours sur le disque, et revérifie les empreintes de contenu lorsqu'un original non modifié est disponible. S'exécute automatiquement chaque semaine — utilisez ceci pour la lancer à la demande.",
+      "description": "Vérifie que le(s) fichier(s) de chaque document existe(nt) toujours sur le disque, et revérifie les empreintes de contenu lorsqu'un original non modifié est disponible. S'exécute automatiquement chaque semaine - utilisez ceci pour la lancer à la demande.",
       "running": "Exécution…",
       "run": "Lancer la vérification d'intégrité",
       "checked": "Vérifiés",
@@ -463,7 +476,7 @@
     "colConfidence": "Confiance",
     "colReviewStatus": "Statut de révision",
     "colIngested": "Ingéré",
-    "pagination": "Page {{page}} sur {{totalPages}} — {{total}} au total",
+    "pagination": "Page {{page}} sur {{totalPages}} - {{total}} au total",
     "previous": "Précédent",
     "next": "Suivant"
   },
@@ -487,7 +500,7 @@
   },
   "benchmarks": {
     "header": "Comparatifs OCR/VLM",
-    "subtitle": "Outil de comparaison autonome — ne fait pas partie du pipeline d'ingestion.",
+    "subtitle": "Outil de comparaison autonome - ne fait pas partie du pipeline d'ingestion.",
     "tabVlm": "Extraction VLM",
     "tabOcr": "Comparaison OCR",
     "vlmNotFound": "Résultats VLM introuvables. Exécutez d'abord vlm_ollama_test.py.",
@@ -520,7 +533,7 @@
   },
   "panZoom": {
     "alt": "Document",
-    "overlay": "{{pct}}% — molette pour zoomer · glisser pour déplacer · double-clic pour réinitialiser"
+    "overlay": "{{pct}}% - molette pour zoomer · glisser pour déplacer · double-clic pour réinitialiser"
   },
   "vlm": {
     "fields": {
@@ -544,5 +557,9 @@
   },
   "languageSwitcher": {
     "label": "Langue"
+  },
+  "confirmDialog": {
+    "confirm": "Confirmer",
+    "cancel": "Annuler"
   }
 }

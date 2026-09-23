@@ -12,7 +12,7 @@ KEEP_DAYS=7
 
 mkdir -p "$BACKUP_DIR"
 
-echo "=== SDAI Backup — $TIMESTAMP ==="
+echo "=== SDAI Backup - $TIMESTAMP ==="
 
 # 1. Database dump
 echo "Backing up PostgreSQL database..."

@@ -19,7 +19,7 @@ CONF=/etc/nginx/conf.d/default.conf
 case "$HTTPS_MODE" in
 
   self_signed)
-    echo "[entrypoint] HTTPS_MODE=self_signed — using certificate baked into image."
+    echo "[entrypoint] HTTPS_MODE=self_signed - using certificate baked into image."
     cp /etc/nginx/templates/self_signed.conf "$CONF"
     ;;
 
@@ -32,13 +32,13 @@ case "$HTTPS_MODE" in
     CERT="/etc/letsencrypt/live/${LETSENCRYPT_DOMAIN}/fullchain.pem"
 
     if [ -f "$CERT" ]; then
-      echo "[entrypoint] Certificate found for ${LETSENCRYPT_DOMAIN} — starting with HTTPS."
+      echo "[entrypoint] Certificate found for ${LETSENCRYPT_DOMAIN} - starting with HTTPS."
       LETSENCRYPT_DOMAIN="$LETSENCRYPT_DOMAIN" \
         envsubst '${LETSENCRYPT_DOMAIN}' \
         < /etc/nginx/templates/letsencrypt.conf \
         > "$CONF"
     else
-      echo "[entrypoint] No certificate yet — starting HTTP-only for ACME challenge."
+      echo "[entrypoint] No certificate yet - starting HTTP-only for ACME challenge."
       echo "[entrypoint] Once the stack is running, issue a certificate:"
       echo "[entrypoint]   docker compose exec frontend certbot --nginx \\"
       echo "[entrypoint]     -d ${LETSENCRYPT_DOMAIN} --email ${LETSENCRYPT_EMAIL:-<your-email>} \\"

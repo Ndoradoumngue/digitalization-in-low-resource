@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import NavSidebar from "../components/NavSidebar";
+import { useConfirm } from "../context/ConfirmContext";
 import {
   useGroups,
   useCreateGroup,
@@ -121,6 +122,7 @@ function IntegrityCheckPanel() {
 
 function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boolean }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const [name, setName]               = useState("");
   const [description, setDescription] = useState("");
   const createMutation = useCreateSeries();
@@ -135,8 +137,8 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
     );
   }
 
-  function remove(seriesId: string) {
-    if (!confirm(t("accessAdmin.series.confirmDelete"))) return;
+  async function remove(seriesId: string) {
+    if (!(await confirm({ message: t("accessAdmin.series.confirmDelete"), danger: true }))) return;
     setDeletingId(seriesId);
     deleteMutation.mutate(seriesId, { onSettled: () => setDeletingId(null) });
   }
@@ -205,6 +207,7 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
 
 function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolean }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const [name, setName] = useState("");
   const createMutation = useCreateGroup();
   const deleteMutation = useDeleteGroup();
@@ -215,8 +218,8 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
     createMutation.mutate(name.trim(), { onSuccess: () => setName("") });
   }
 
-  function remove(groupId: string) {
-    if (!confirm(t("accessAdmin.groups.confirmDelete"))) return;
+  async function remove(groupId: string) {
+    if (!(await confirm({ message: t("accessAdmin.groups.confirmDelete"), danger: true }))) return;
     setDeletingId(groupId);
     deleteMutation.mutate(groupId, { onSettled: () => setDeletingId(null) });
   }

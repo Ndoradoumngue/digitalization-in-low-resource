@@ -11,9 +11,9 @@ export function isClientError(error: unknown): boolean {
 
 // Narrower than isClientError: only auth failures (expired/invalid
 // session), which truly won't resolve on their own. Some 404s are
-// legitimately transient — e.g. GET /api/ingest/pages/{id} 404s until
+// legitimately transient - e.g. GET /api/ingest/pages/{id} 404s until
 // Stage 1 finishes creating page rows, which can take a while for a
-// large PDF — so a poll shouldn't give up permanently just because it
+// large PDF - so a poll shouldn't give up permanently just because it
 // checked before that finished.
 export function isAuthError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;

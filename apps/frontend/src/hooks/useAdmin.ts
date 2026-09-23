@@ -15,7 +15,7 @@ import {
 export function useGroups() {
   return useQuery({
     queryKey: ["admin-groups"],
-    queryFn:  fetchGroups,
+    queryFn: fetchGroups,
     staleTime: 30_000,
   });
 }
@@ -44,7 +44,7 @@ export function useDeleteGroup() {
 export function useAdminUsers() {
   return useQuery({
     queryKey: ["admin-users"],
-    queryFn:  fetchAdminUsers,
+    queryFn: fetchAdminUsers,
     staleTime: 30_000,
   });
 }
@@ -112,7 +112,7 @@ export function useExportArchive() {
       // The anchor must be attached to the DOM for .click() to reliably
       // trigger a download in every browser (Safari in particular ignores
       // clicks on detached elements). Revoking the object URL must also
-      // be deferred — doing it synchronously right after click() can race
+      // be deferred - doing it synchronously right after click() can race
       // with the browser actually starting the download and silently
       // kill it before any bytes are read.
       document.body.appendChild(a);

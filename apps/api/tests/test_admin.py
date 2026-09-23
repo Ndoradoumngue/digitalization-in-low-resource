@@ -5,24 +5,23 @@ import json
 import zipfile
 from unittest.mock import AsyncMock
 
-import pytest
-
 import admin_router
-from conftest import make_result, TENANT_SLUG
-
+from conftest import TENANT_SLUG, make_result
 
 # ── Auth & role guards ────────────────────────────────────────────────────────
+
 
 def test_audit_log_requires_auth(client):
     assert client.get("/api/admin/audit-log").status_code == 401
 
 
 def test_audit_log_requires_admin_role(auth_client):
-    # auth_client is a reviewer — require_admin dependency should reject with 403
+    # auth_client is a reviewer - require_admin dependency should reject with 403
     assert auth_client.get("/api/admin/audit-log").status_code == 403
 
 
 # ── Successful access (admin role) ────────────────────────────────────────────
+
 
 def test_audit_log_returns_empty(admin_client, mock_db):
     mock_db.execute.return_value = make_result(rows=[])
@@ -36,15 +35,15 @@ def test_audit_log_returns_empty(admin_client, mock_db):
 def test_audit_log_returns_items(admin_client, mock_db):
     rows = [
         {
-            "id":          "log-uuid-1",
-            "user_id":     "user-uuid-1",
-            "user_email":  "admin@example.com",
-            "action":      "document_approved",
-            "table_name":  "my_table",
+            "id": "log-uuid-1",
+            "user_id": "user-uuid-1",
+            "user_email": "admin@example.com",
+            "action": "document_approved",
+            "table_name": "my_table",
             "document_id": "doc-uuid-1",
-            "details":     {"confidence": "high"},
-            "ip_address":  "127.0.0.1",
-            "created_at":  "2024-01-01T00:00:00",
+            "details": {"confidence": "high"},
+            "ip_address": "127.0.0.1",
+            "created_at": "2024-01-01T00:00:00",
             "total_count": 1,
         }
     ]
@@ -82,12 +81,14 @@ def test_audit_log_page_size_too_large_returns_422(admin_client, mock_db):
 
 # ── Groups ────────────────────────────────────────────────────────────────────
 
+
 def test_list_groups_requires_admin(auth_client):
     assert auth_client.get("/api/admin/groups").status_code == 403
 
 
 def test_list_groups_returns_items(admin_client, mock_db):
     import datetime as _dt
+
     rows = [("group-1", "HR", _dt.datetime(2026, 1, 1), 3)]
     mock_db.execute.return_value = make_result(rows=rows)
     resp = admin_client.get("/api/admin/groups")
@@ -119,7 +120,7 @@ def test_delete_group_not_found(admin_client, mock_db):
 def test_delete_group_success(admin_client, mock_db):
     mock_db.execute.side_effect = [
         make_result(one_or_none=("group-1",)),  # DELETE sdai_groups RETURNING id
-        make_result(),                          # DELETE sdai_document_access grants
+        make_result(),  # DELETE sdai_document_access grants
     ]
     resp = admin_client.delete("/api/admin/groups/group-1")
     assert resp.status_code == 200
@@ -127,6 +128,7 @@ def test_delete_group_success(admin_client, mock_db):
 
 
 # ── Users ─────────────────────────────────────────────────────────────────────
+
 
 def test_list_users_requires_admin(auth_client):
     assert auth_client.get("/api/admin/users").status_code == 403
@@ -160,7 +162,7 @@ def test_add_user_to_group_success(admin_client, mock_db):
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),  # user exists
         make_result(one_or_none=(1,)),  # group exists
-        make_result(),                  # INSERT membership
+        make_result(),  # INSERT membership
     ]
     resp = admin_client.post("/api/admin/users/user-1/groups", json={"group_id": "group-1"})
     assert resp.status_code == 200
@@ -182,6 +184,7 @@ def test_remove_user_from_group(admin_client, mock_db):
 
 # ── Fixity / integrity check ─────────────────────────────────────────────────
 
+
 def test_integrity_check_requires_admin(auth_client):
     assert auth_client.post("/api/admin/integrity-check").status_code == 403
 
@@ -194,6 +197,7 @@ def test_integrity_check_returns_summary(admin_client, mock_db):
 
 
 # ── Archive export ────────────────────────────────────────────────────────────
+
 
 def test_export_archive_requires_admin(auth_client):
     assert auth_client.get("/api/admin/export").status_code == 403
@@ -219,12 +223,16 @@ def test_export_archive_json_empty_tenant(admin_client, mock_db, monkeypatch):
 
 def test_export_archive_sql_with_rows(admin_client, mock_db, monkeypatch):
     monkeypatch.setattr(
-        admin_router, "_get_tables_columns",
+        admin_router,
+        "_get_tables_columns",
         AsyncMock(return_value={"t_default_arrete": {"id": "uuid", "reference_number": "text"}}),
     )
     row = {
-        "id": "doc-1", "reference_number": "REF-001",
-        "source_image_path": None, "source_pdf_path": None, "page_image_paths": None,
+        "id": "doc-1",
+        "reference_number": "REF-001",
+        "source_image_path": None,
+        "source_pdf_path": None,
+        "page_image_paths": None,
     }
     mock_db.execute.return_value = make_result(rows=[row])
 
@@ -236,18 +244,22 @@ def test_export_archive_sql_with_rows(admin_client, mock_db, monkeypatch):
     assert 'CREATE TABLE IF NOT EXISTS "t_default_arrete"' in sql_text
     assert 'INSERT INTO "t_default_arrete"' in sql_text
     assert "REF-001" in sql_text
-    # No document files referenced by this row — no documents/ entries expected.
+    # No document files referenced by this row - no documents/ entries expected.
     assert not any(n.startswith("documents/") for n in zf.namelist())
 
 
 def test_export_archive_json_with_rows(admin_client, mock_db, monkeypatch):
     monkeypatch.setattr(
-        admin_router, "_get_tables_columns",
+        admin_router,
+        "_get_tables_columns",
         AsyncMock(return_value={"t_default_arrete": {"id": "uuid", "reference_number": "text"}}),
     )
     row = {
-        "id": "doc-1", "reference_number": "REF-002",
-        "source_image_path": None, "source_pdf_path": None, "page_image_paths": None,
+        "id": "doc-1",
+        "reference_number": "REF-002",
+        "source_image_path": None,
+        "source_pdf_path": None,
+        "page_image_paths": None,
     }
     mock_db.execute.return_value = make_result(rows=[row])
 
@@ -261,14 +273,17 @@ def test_export_archive_json_with_rows(admin_client, mock_db, monkeypatch):
 
 def test_export_archive_skips_missing_source_files(admin_client, mock_db, monkeypatch):
     """A row referencing a source file that no longer exists on disk must
-    not fail the export — it's just omitted from documents/."""
+    not fail the export - it's just omitted from documents/."""
     monkeypatch.setattr(
-        admin_router, "_get_tables_columns",
+        admin_router,
+        "_get_tables_columns",
         AsyncMock(return_value={"t_default_arrete": {"id": "uuid"}}),
     )
     row = {
-        "id": "doc-1", "source_image_path": "/data/images/does-not-exist/missing.png",
-        "source_pdf_path": None, "page_image_paths": None,
+        "id": "doc-1",
+        "source_image_path": "/data/images/does-not-exist/missing.png",
+        "source_pdf_path": None,
+        "page_image_paths": None,
     }
     mock_db.execute.return_value = make_result(rows=[row])
 

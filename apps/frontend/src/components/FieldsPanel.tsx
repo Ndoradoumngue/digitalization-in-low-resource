@@ -5,7 +5,7 @@ import { updateDocumentFields } from "@sdai/api-client";
 import { labelFor } from "../utils/format";
 import { renderFieldValue } from "../utils/renderField";
 
-// A field is "complex" (object, or array containing objects — e.g. a
+// A field is "complex" (object, or array containing objects - e.g. a
 // lexicon's "entries": [{kabalay, french}]) if a plain text input can't
 // represent it. Those get a raw-JSON textarea instead; everything else
 // (scalars, arrays of scalars) gets the same comma-separated text input
@@ -18,17 +18,17 @@ function isComplexValue(v: unknown): boolean {
 
 interface Props {
   tableName: string;
-  id:        string;
+  id: string;
   fieldRows: [string, unknown][];
-  canEdit:   boolean;
-  title?:    string;
+  canEdit: boolean;
+  title?: string;
 }
 
 export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title }: Props) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [editing, setEditing]       = useState(false);
-  const [form, setForm]             = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<Record<string, string>>({});
   const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
 
   const mutation = useMutation({

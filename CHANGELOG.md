@@ -7,7 +7,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [1.0.0] — 2026-05-19
+## [1.0.0] - 2026-05-19
 
 First stable release. Covers the full end-to-end digitalization pipeline from document upload through VLM extraction, review, and audit.
 
@@ -26,7 +26,7 @@ First stable release. Covers the full end-to-end digitalization pipeline from do
 
 #### Authentication & authorisation
 - JWT-based login via httpOnly cookie (`access_token=Bearer <token>`, `SameSite=Lax`)
-- PostgreSQL-backed user management: `sdai_users` table, bcrypt password hashing (using `bcrypt` directly — no `passlib` dependency)
+- PostgreSQL-backed user management: `sdai_users` table, bcrypt password hashing (using `bcrypt` directly - no `passlib` dependency)
 - JWT `jti` blocklist in `sdai_token_blocklist`; logout immediately invalidates the token
 - Two roles: `admin` and `reviewer`; `require_admin` FastAPI dependency enforces admin-only routes
 - `create_admin.py` seed script
@@ -84,7 +84,7 @@ First stable release. Covers the full end-to-end digitalization pipeline from do
 
 ## How to release a new version
 
-1. Update this file under a new `## [X.Y.Z] — YYYY-MM-DD` heading.
+1. Update this file under a new `## [X.Y.Z] - YYYY-MM-DD` heading.
 2. Commit: `git commit -m "chore: release vX.Y.Z"`.
 3. Tag: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`.
 4. Push: `git push origin main --tags`.

@@ -25,19 +25,19 @@ const READONLY = new Set([
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function tierColor(t: string | null) {
-  if (t === "high")   return "bg-emerald-100 text-emerald-800";
+  if (t === "high") return "bg-emerald-100 text-emerald-800";
   if (t === "medium") return "bg-amber-100 text-amber-800";
-  if (t === "low")    return "bg-red-100 text-red-800";
+  if (t === "low") return "bg-red-100 text-red-800";
   return "bg-gray-100 text-gray-500";
 }
 
 function timeAgo(iso: string | null | undefined, t: (key: string, opts?: Record<string, unknown>) => string): string {
   if (!iso) return t("review.timeAgo.unknown");
   const ms = Date.now() - new Date(iso).getTime();
-  const m  = Math.floor(ms / 60_000);
-  if (m < 60)   return t("review.timeAgo.minutes", { count: m });
+  const m = Math.floor(ms / 60_000);
+  if (m < 60) return t("review.timeAgo.minutes", { count: m });
   const h = Math.floor(m / 60);
-  if (h < 24)   return t("review.timeAgo.hours", { count: h });
+  if (h < 24) return t("review.timeAgo.hours", { count: h });
   return t("review.timeAgo.days", { count: Math.floor(h / 24) });
 }
 
@@ -50,8 +50,8 @@ function labelFor(key: string) {
 function PanZoomImage({ src }: { src: string }) {
   const { t } = useTranslation();
   const [scale, setScale] = useState(1);
-  const [tx, setTx]       = useState(0);
-  const [ty, setTy]       = useState(0);
+  const [tx, setTx] = useState(0);
+  const [ty, setTy] = useState(0);
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
 
   const reset = useCallback(() => { setScale(1); setTx(0); setTy(0); }, []);
@@ -99,9 +99,8 @@ function PanZoomImage({ src }: { src: string }) {
 function Toast({ message, visible }: { message: string; visible: boolean }) {
   return (
     <div
-      className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium shadow-lg transition-all duration-300 ${
-        visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 pointer-events-none"
-      }`}
+      className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium shadow-lg transition-all duration-300 ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 pointer-events-none"
+        }`}
     >
       {message}
     </div>
@@ -111,17 +110,17 @@ function Toast({ message, visible }: { message: string; visible: boolean }) {
 // ── Editable form ─────────────────────────────────────────────────────────────
 
 interface FormProps {
-  detail:      Record<string, unknown>;
-  form:        Record<string, string>;
-  initial:     Record<string, string>;
+  detail: Record<string, unknown>;
+  form: Record<string, string>;
+  initial: Record<string, string>;
   arrayFields: Set<string>;
-  onChange:    (key: string, val: string) => void;
-  canEdit:     boolean;
+  onChange: (key: string, val: string) => void;
+  canEdit: boolean;
 }
 
 function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: FormProps) {
   const { t } = useTranslation();
-  const confidence   = detail.confidence   ? String(detail.confidence)   : null;
+  const confidence = detail.confidence ? String(detail.confidence) : null;
   const documentType = detail.document_type ? String(detail.document_type) : null;
 
   const editableKeys = Object.keys(detail).filter((k) => !READONLY.has(k));
@@ -153,16 +152,15 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
           <p className="text-sm text-gray-400">{t("review.noEditableFields")}</p>
         )}
         {editableKeys.map((key) => {
-          const val     = form[key] ?? "";
+          const val = form[key] ?? "";
           const changed = val !== (initial[key] ?? "");
           const isArray = arrayFields.has(key);
 
           return (
             <div
               key={key}
-              className={`pl-3 border-l-2 transition-colors ${
-                changed ? "border-amber-400" : "border-transparent"
-              }`}
+              className={`pl-3 border-l-2 transition-colors ${changed ? "border-amber-400" : "border-transparent"
+                }`}
             >
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
                 {labelFor(key)}
@@ -189,40 +187,40 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ReviewPage() {
-  const { t }        = useTranslation();
-  const queryClient  = useQueryClient();
-  const { user }     = useAuth();
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
 
   // Load entire queue (up to 100) for navigation
   const { data: queueData, isLoading: queueLoading } = useReviewQueue({ page_size: 100 });
 
   // Local queue for optimistic removal after actions
-  const [items, setItems]  = useState<ReviewQueueItem[]>([]);
-  const [idx, setIdx]      = useState(0);
+  const [items, setItems] = useState<ReviewQueueItem[]>([]);
+  const [idx, setIdx] = useState(0);
 
   useEffect(() => {
     if (queueData?.items) setItems(queueData.items);
   }, [queueData?.items]);
 
-  const current    = items[idx] ?? null;
+  const current = items[idx] ?? null;
   const totalQueue = queueData?.total ?? items.length;
 
   // Load full detail for the current item
   const {
-    data:      detail,
+    data: detail,
     isLoading: detailLoading,
   } = useDbDocumentDetail(current?.table_name ?? "", current?.id ?? "");
 
   // Form state
-  const [form, setForm]               = useState<Record<string, string>>({});
-  const [initial, setInitial]         = useState<Record<string, string>>({});
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [initial, setInitial] = useState<Record<string, string>>({});
   const [arrayFields, setArrayFields] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!detail) return;
-    const vals:   Record<string, string> = {};
-    const arrays: Set<string>            = new Set();
+    const vals: Record<string, string> = {};
+    const arrays: Set<string> = new Set();
     for (const [k, v] of Object.entries(detail)) {
       if (READONLY.has(k)) continue;
       if (Array.isArray(v)) {
@@ -261,7 +259,7 @@ export default function ReviewPage() {
     queryClient.invalidateQueries({ queryKey: ["review-queue"] });
   }
 
-  // Build PATCH fields payload — only fields actually changed from what
+  // Build PATCH fields payload - only fields actually changed from what
   // was loaded, not every field verbatim. Approving without changes must
   // stay a plain status transition available to any reviewer; sending
   // every field back unconditionally would make every approval look like
@@ -290,20 +288,20 @@ export default function ReviewPage() {
         action: "approve",
       }),
     onSuccess: () => { showToast(t("review.toast.approved")); advanceAfterAction(); },
-    onError:   (e: Error) => showToast(t("review.toast.error", { message: e.message })),
+    onError: (e: Error) => showToast(t("review.toast.error", { message: e.message })),
   });
 
   const rejectMutation = useMutation({
     mutationFn: () =>
       patchReview(current!.table_name, current!.id, { fields: {}, action: "reject" }),
     onSuccess: () => { showToast(t("review.toast.rejected")); advanceAfterAction(); },
-    onError:   (e: Error) => showToast(t("review.toast.error", { message: e.message })),
+    onError: (e: Error) => showToast(t("review.toast.error", { message: e.message })),
   });
 
   const flagMutation = useMutation({
     mutationFn: () => flagReview(current!.table_name, current!.id),
-    onSuccess:  () => { showToast(t("review.toast.flagged")); advanceAfterAction(); },
-    onError:    (e: Error) => showToast(t("review.toast.error", { message: e.message })),
+    onSuccess: () => { showToast(t("review.toast.flagged")); advanceAfterAction(); },
+    onError: (e: Error) => showToast(t("review.toast.error", { message: e.message })),
   });
 
   const isBusy =
@@ -329,9 +327,9 @@ export default function ReviewPage() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "ArrowRight") { e.preventDefault(); handleNext(); }
-      if (e.key === "ArrowLeft")  { e.preventDefault(); handlePrev(); }
-      if (e.key === "Enter")      { e.preventDefault(); handleApprove(); }
-      if (e.key === "Escape")     { e.preventDefault(); handleSkip(); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); handlePrev(); }
+      if (e.key === "Enter") { e.preventDefault(); handleApprove(); }
+      if (e.key === "Escape") { e.preventDefault(); handleSkip(); }
     }
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -340,7 +338,7 @@ export default function ReviewPage() {
   // ── Type breakdown from loaded items ────────────────────────────────────────
   const typeCounts = items.reduce<Record<string, number>>((acc, item) => {
     const t = item.document_type ?? item.table_name;
-    acc[t]  = (acc[t] ?? 0) + 1;
+    acc[t] = (acc[t] ?? 0) + 1;
     return acc;
   }, {});
 
@@ -355,171 +353,171 @@ export default function ReviewPage() {
     <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
       <NavSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex-shrink-0">
-        <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("review.header")}</h1>
+        {/* ── Header ─────────────────────────────────────────────────────────── */}
+        <header className="bg-white border-b border-gray-200 px-6 py-3 flex-shrink-0">
+          <div className="flex items-center gap-3 mb-2">
+            <h1 className="text-base font-bold text-indigo-700 tracking-tight">{t("review.header")}</h1>
 
-          {!queueLoading && (
-            <div className="flex items-center gap-3 ml-2">
-              <span className="text-2xl font-bold text-gray-800">{totalQueue}</span>
-              <span className="text-xs text-gray-500">
-                {totalQueue === 1 ? t("review.waiting_one") : t("review.waiting_other")}
-                {oldestIngested && t("review.oldestSuffix", { time: timeAgo(oldestIngested, t) })}
-              </span>
+            {!queueLoading && (
+              <div className="flex items-center gap-3 ml-2">
+                <span className="text-2xl font-bold text-gray-800">{totalQueue}</span>
+                <span className="text-xs text-gray-500">
+                  {totalQueue === 1 ? t("review.waiting_one") : t("review.waiting_other")}
+                  {oldestIngested && t("review.oldestSuffix", { time: timeAgo(oldestIngested, t) })}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Type breakdown chips */}
+          {Object.keys(typeCounts).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(typeCounts).map(([type, count]) => (
+                <span
+                  key={type}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-indigo-50 text-indigo-700 border border-indigo-200"
+                >
+                  <span className="font-medium">{count}</span>
+                  <span className="text-indigo-500">{type.replace(/_/g, " ")}</span>
+                </span>
+              ))}
             </div>
           )}
-        </div>
+        </header>
 
-        {/* Type breakdown chips */}
-        {Object.keys(typeCounts).length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {Object.entries(typeCounts).map(([type, count]) => (
-              <span
-                key={type}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-indigo-50 text-indigo-700 border border-indigo-200"
+        {/* ── Empty state ─────────────────────────────────────────────────────── */}
+        {!queueLoading && items.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center">
+              <svg className="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+              </svg>
+            </div>
+            <p className="text-sm text-gray-600 font-medium">{t("review.emptyQueue")}</p>
+            <Link
+              to="/upload"
+              className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
+            >
+              {t("review.uploadMore")}
+            </Link>
+          </div>
+        ) : (
+          <>
+            {/* ── Navigation bar ──────────────────────────────────────────────── */}
+            <div className="bg-white border-b border-gray-200 px-6 py-2 flex items-center gap-3 flex-shrink-0">
+              <button
+                onClick={handlePrev}
+                disabled={idx <= 0 || isBusy}
+                className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
               >
-                <span className="font-medium">{count}</span>
-                <span className="text-indigo-500">{type.replace(/_/g, " ")}</span>
+                {t("review.navPrevious")}
+              </button>
+              <span className="text-xs text-gray-500 flex-1 text-center">
+                {queueLoading ? t("common.loading") : t("review.reviewingOf", { current: idx + 1, total: totalQueue })}
               </span>
-            ))}
-          </div>
-        )}
-      </header>
+              <button
+                onClick={handleNext}
+                disabled={idx >= items.length - 1 || isBusy}
+                className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
+              >
+                {t("review.navNext")}
+              </button>
+            </div>
 
-      {/* ── Empty state ─────────────────────────────────────────────────────── */}
-      {!queueLoading && items.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center">
-            <svg className="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-            </svg>
-          </div>
-          <p className="text-sm text-gray-600 font-medium">{t("review.emptyQueue")}</p>
-          <Link
-            to="/upload"
-            className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
-          >
-            {t("review.uploadMore")}
-          </Link>
-        </div>
-      ) : (
-        <>
-          {/* ── Navigation bar ──────────────────────────────────────────────── */}
-          <div className="bg-white border-b border-gray-200 px-6 py-2 flex items-center gap-3 flex-shrink-0">
-            <button
-              onClick={handlePrev}
-              disabled={idx <= 0 || isBusy}
-              className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
-            >
-              {t("review.navPrevious")}
-            </button>
-            <span className="text-xs text-gray-500 flex-1 text-center">
-              {queueLoading ? t("common.loading") : t("review.reviewingOf", { current: idx + 1, total: totalQueue })}
-            </span>
-            <button
-              onClick={handleNext}
-              disabled={idx >= items.length - 1 || isBusy}
-              className="px-3 py-1.5 rounded-md text-xs border border-gray-300 disabled:opacity-40 hover:bg-gray-50 transition-colors"
-            >
-              {t("review.navNext")}
-            </button>
-          </div>
-
-          {/* ── Two-panel layout ─────────────────────────────────────────────── */}
-          <div className="flex flex-1 overflow-hidden">
-            {/* Left 58% — image */}
-            <div className="flex flex-col border-r border-gray-200" style={{ width: "58%" }}>
-              <div className="flex-1 overflow-hidden">
-                {imgSrc ? (
-                  <PanZoomImage src={imgSrc} />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
-                    {t("review.noImage")}
+            {/* ── Two-panel layout ─────────────────────────────────────────────── */}
+            <div className="flex flex-1 overflow-hidden">
+              {/* Left 58% - image */}
+              <div className="flex flex-col border-r border-gray-200" style={{ width: "58%" }}>
+                <div className="flex-1 overflow-hidden">
+                  {imgSrc ? (
+                    <PanZoomImage src={imgSrc} />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
+                      {t("review.noImage")}
+                    </div>
+                  )}
+                </div>
+                {/* Image metadata */}
+                {current && (
+                  <div className="px-4 py-2 border-t border-gray-200 bg-white flex items-center gap-4 flex-shrink-0">
+                    <span className="text-xs text-gray-500 truncate">
+                      {current.source_image_path?.split("/").pop() ?? "-"}
+                    </span>
+                    {current.ingested_at && (
+                      <span className="text-xs text-gray-400 ml-auto shrink-0">
+                        {t("review.ingested", { time: timeAgo(current.ingested_at, t) })}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
-              {/* Image metadata */}
-              {current && (
-                <div className="px-4 py-2 border-t border-gray-200 bg-white flex items-center gap-4 flex-shrink-0">
-                  <span className="text-xs text-gray-500 truncate">
-                    {current.source_image_path?.split("/").pop() ?? "—"}
-                  </span>
-                  {current.ingested_at && (
-                    <span className="text-xs text-gray-400 ml-auto shrink-0">
-                      {t("review.ingested", { time: timeAgo(current.ingested_at, t) })}
-                    </span>
-                  )}
-                </div>
-              )}
+
+              {/* Right 42% - form + action bar */}
+              <div className="flex flex-col overflow-hidden" style={{ width: "42%" }}>
+                {detailLoading ? (
+                  <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+                    {t("review.loadingFields")}
+                  </div>
+                ) : detail ? (
+                  <ReviewForm
+                    detail={detail}
+                    form={form}
+                    initial={initial}
+                    arrayFields={arrayFields}
+                    onChange={(k, v) => setForm((f) => ({ ...f, [k]: v }))}
+                    canEdit={canEditExtraction}
+                  />
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+                    {t("review.selectDocument")}
+                  </div>
+                )}
+
+                {/* ── Pinned action bar ──────────────────────────────────────── */}
+                {current && (
+                  <div className="border-t border-gray-200 px-5 py-3 bg-white flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => approveMutation.mutate()}
+                      disabled={isBusy || !detail}
+                      className="flex-1 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                      title={t("review.approveTitle")}
+                    >
+                      {approveMutation.isPending ? t("review.approving") : t("review.approve")}
+                    </button>
+
+                    <button
+                      onClick={() => rejectMutation.mutate()}
+                      disabled={isBusy || !detail}
+                      className="flex-1 px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors"
+                    >
+                      {rejectMutation.isPending ? t("review.rejecting") : t("review.reject")}
+                    </button>
+
+                    <button
+                      onClick={() => flagMutation.mutate()}
+                      disabled={isBusy || !detail}
+                      className="px-3 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                      title={t("review.flagTitle")}
+                    >
+                      {flagMutation.isPending ? t("review.flagging") : t("review.flag")}
+                    </button>
+
+                    <button
+                      onClick={handleSkip}
+                      disabled={isBusy}
+                      className="px-3 py-2 rounded-lg border border-gray-300 text-gray-500 text-sm hover:bg-gray-50 disabled:opacity-40 transition-colors"
+                      title={t("review.skipTitle")}
+                    >
+                      {t("review.skip")}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
+          </>
+        )}
 
-            {/* Right 42% — form + action bar */}
-            <div className="flex flex-col overflow-hidden" style={{ width: "42%" }}>
-              {detailLoading ? (
-                <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-                  {t("review.loadingFields")}
-                </div>
-              ) : detail ? (
-                <ReviewForm
-                  detail={detail}
-                  form={form}
-                  initial={initial}
-                  arrayFields={arrayFields}
-                  onChange={(k, v) => setForm((f) => ({ ...f, [k]: v }))}
-                  canEdit={canEditExtraction}
-                />
-              ) : (
-                <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-                  {t("review.selectDocument")}
-                </div>
-              )}
-
-              {/* ── Pinned action bar ──────────────────────────────────────── */}
-              {current && (
-                <div className="border-t border-gray-200 px-5 py-3 bg-white flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => approveMutation.mutate()}
-                    disabled={isBusy || !detail}
-                    className="flex-1 px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                    title={t("review.approveTitle")}
-                  >
-                    {approveMutation.isPending ? t("review.approving") : t("review.approve")}
-                  </button>
-
-                  <button
-                    onClick={() => rejectMutation.mutate()}
-                    disabled={isBusy || !detail}
-                    className="flex-1 px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors"
-                  >
-                    {rejectMutation.isPending ? t("review.rejecting") : t("review.reject")}
-                  </button>
-
-                  <button
-                    onClick={() => flagMutation.mutate()}
-                    disabled={isBusy || !detail}
-                    className="px-3 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                    title={t("review.flagTitle")}
-                  >
-                    {flagMutation.isPending ? t("review.flagging") : t("review.flag")}
-                  </button>
-
-                  <button
-                    onClick={handleSkip}
-                    disabled={isBusy}
-                    className="px-3 py-2 rounded-lg border border-gray-300 text-gray-500 text-sm hover:bg-gray-50 disabled:opacity-40 transition-colors"
-                    title={t("review.skipTitle")}
-                  >
-                    {t("review.skip")}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      <Toast message={toast.message} visible={toast.visible} />
+        <Toast message={toast.message} visible={toast.visible} />
       </div>
     </div>
   );
