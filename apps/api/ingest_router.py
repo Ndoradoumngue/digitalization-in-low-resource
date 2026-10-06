@@ -109,6 +109,15 @@ VLM_PAGE_TIMEOUT = float(os.getenv("VLM_PAGE_TIMEOUT_SECONDS") or 120.0)
 # it stays a global env var rather than living in a prompt file.
 VLM_NUM_CTX = int(os.getenv("VLM_NUM_CTX") or 8192)
 
+# Hard cap on generated tokens per page. At near-zero temperature the model
+# occasionally falls into a repetition loop on a dense page and never
+# closes its JSON - without a cap it then generates until the context is
+# full and page_timeout cuts it off (15 min of Ollama time wasted per
+# page, every retry, since the output is deterministic). Real pages need
+# far less (the longest successful lexicon page is ~1200 tokens), so a
+# runaway now ends in a few minutes as an ordinary parse failure.
+VLM_NUM_PREDICT = int(os.getenv("VLM_NUM_PREDICT") or 2048)
+
 # For documents typeset in two independent side-by-side columns (e.g. a
 # dictionary - NOT parallel-text translation, which needs both columns
 # visible together to pair correctly), split each page down the middle
@@ -498,6 +507,20 @@ async def _init_db() -> None:
         await _backfill_new_base_columns(conn)
         # Purge expired blocklist entries on each startup
         await conn.execute(text("DELETE FROM sdai_token_blocklist WHERE expired_at < NOW()"))
+        # Every in-flight page task lives in this process's memory, so at
+        # startup any page still marked 'processing' was orphaned by the
+        # previous process exiting - nothing will ever finish it. Left as
+        # is, it also keeps the UI offering Pause instead of Resume for the
+        # whole document, with Cancel finding no task to stop. Marking it
+        # 'failed' makes it retryable like any other failure.
+        await conn.execute(
+            text(
+                "UPDATE batch_document_pages"
+                " SET status = 'failed', error_message = 'Interrupted by API restart',"
+                "     updated_at = now()"
+                " WHERE status = 'processing'"
+            )
+        )
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1263,7 +1286,7 @@ async def _run_vlm(img_path: Path, prompt: str, page_timeout: float) -> dict:
                 "model": "qwen2.5vl:7b",
                 "messages": [{"role": "user", "content": prompt, "images": [img_b64]}],
                 "stream": False,
-                "options": {"num_ctx": VLM_NUM_CTX},
+                "options": {"num_ctx": VLM_NUM_CTX, "num_predict": VLM_NUM_PREDICT},
             },
         )
         resp.raise_for_status()
@@ -1295,19 +1318,35 @@ async def _run_vlm(img_path: Path, prompt: str, page_timeout: float) -> dict:
 # _stage2_worker, retry, reload, resume) routes through.
 _active_page_tasks: dict[str, asyncio.Task] = {}
 
+# Gate on concurrent Ollama calls across every page-processing path. Ollama
+# only runs OLLAMA_NUM_PARALLEL requests at once and queues the rest - so
+# without this, N per-page retries clicked in quick succession all hit
+# Ollama together, and their page_timeout clocks run while they sit in
+# Ollama's queue: all but the first few time out (ReadTimeout) without
+# ever being processed. The timeout below only starts once a slot is held.
+_vlm_slot = asyncio.Semaphore(int(os.getenv("OLLAMA_NUM_PARALLEL", "1")))
+
 
 async def _run_vlm_tracked(page_id: str, img_path: Path, prompt: str, page_timeout: float) -> dict:
     """Same contract as _run_vlm, wrapped as an explicit Task registered in
-    _active_page_tasks for the duration of the call. Cancelling that task
-    (see cancel_page) raises asyncio.CancelledError here, which callers
-    must catch explicitly - it is not an Exception subclass, so a bare
-    `except Exception` will not catch it, and letting it propagate out of
-    a persistent worker loop (_stage2_worker) would kill page processing
-    for every document, not just this one."""
-    task = asyncio.ensure_future(_run_vlm(img_path, prompt, page_timeout))
+    _active_page_tasks for the duration of the call (including any wait for
+    a free _vlm_slot). Cancelling that task (see cancel_page) raises
+    asyncio.CancelledError here, which callers must catch explicitly - it
+    is not an Exception subclass, so a bare `except Exception` will not
+    catch it, and letting it propagate out of a persistent worker loop
+    (_stage2_worker) would kill page processing for every document, not
+    just this one."""
+
+    async def _slotted() -> dict:
+        async with _vlm_slot:
+            return await asyncio.wait_for(
+                _run_vlm(img_path, prompt, page_timeout), timeout=page_timeout
+            )
+
+    task = asyncio.ensure_future(_slotted())
     _active_page_tasks[page_id] = task
     try:
-        return await asyncio.wait_for(task, timeout=page_timeout)
+        return await task
     finally:
         _active_page_tasks.pop(page_id, None)
 

@@ -255,12 +255,29 @@ function CompletedPageRow({ page, batchDocumentId }: { page: Page; batchDocument
   );
 }
 
-function SkippedPageRow({ page }: { page: Page }) {
+function SkippedPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId: string }) {
   const { t } = useTranslation();
+  // Skipping isn't final - Retry re-runs extraction on the page, same as
+  // for a failed one, so a page skipped by mistake can be brought back.
+  const retryMutation = useRetryPage(batchDocumentId);
   return (
-    <div className="flex items-center justify-between gap-3 px-3 py-1.5 rounded-lg border border-gray-100 bg-gray-50">
-      <span className="text-xs text-gray-400">{t("upload.skippedPage", { n: page.page_number })}</span>
-      <ViewImageLink imagePath={page.image_path} />
+    <div className="px-3 py-1.5 rounded-lg border border-gray-100 bg-gray-50">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-gray-400">{t("upload.skippedPage", { n: page.page_number })}</span>
+        <div className="flex items-center flex-wrap gap-2 flex-shrink-0">
+          <ViewImageLink imagePath={page.image_path} />
+          <button
+            onClick={() => retryMutation.mutate(page.id)}
+            disabled={retryMutation.isPending}
+            className="px-2.5 py-1 rounded-md text-xs font-medium border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 transition-colors"
+          >
+            {retryMutation.isPending ? t("upload.failedPage.retrying") : t("upload.failedPage.retry")}
+          </button>
+        </div>
+      </div>
+      {retryMutation.isError && (
+        <p className="text-xs text-red-500 mt-1">{(retryMutation.error as Error).message}</p>
+      )}
     </div>
   );
 }
@@ -402,7 +419,7 @@ function DocumentPageProgress({ batchDocumentId }: { batchDocumentId: string }) 
             return <CompletedPageRow key={p.id} page={p} batchDocumentId={batchDocumentId} />;
           }
           if (p.status === "skipped") {
-            return <SkippedPageRow key={p.id} page={p} />;
+            return <SkippedPageRow key={p.id} page={p} batchDocumentId={batchDocumentId} />;
           }
           return <PendingPageRow key={p.id} page={p} batchDocumentId={batchDocumentId} />;
         })}
