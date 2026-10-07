@@ -11,6 +11,7 @@ import {
   updateUserAccessManager,
   updateUserExtractionEditor,
 } from "@sdai/api-client";
+import { saveBlob } from "../utils/download";
 
 export function useGroups() {
   return useQuery({
@@ -104,21 +105,6 @@ export function useRunIntegrityCheck() {
 export function useExportArchive() {
   return useMutation({
     mutationFn: (format: "json" | "sql") => exportArchive(format),
-    onSuccess: ({ blob, filename }) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      // The anchor must be attached to the DOM for .click() to reliably
-      // trigger a download in every browser (Safari in particular ignores
-      // clicks on detached elements). Revoking the object URL must also
-      // be deferred - doing it synchronously right after click() can race
-      // with the browser actually starting the download and silently
-      // kill it before any bytes are read.
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    },
+    onSuccess: ({ blob, filename }) => saveBlob(blob, filename),
   });
 }

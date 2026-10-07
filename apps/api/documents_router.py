@@ -39,7 +39,10 @@ from auth import (
 )
 from cache import _path_key_builder
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from datetime import datetime, timezone
+
+from export_format import insert_statement, list_to_csv, serial
+from fastapi.responses import FileResponse, Response
 from fastapi_cache.decorator import cache
 from i18n import t
 from ingest_router import DOCS_DIR as _INGEST_DOCS_DIR
@@ -178,7 +181,7 @@ def _build_field_set_clause(
         if val is None or val == "":
             set_parts.append(f'"{col}" = :{pname}')
             params[pname] = None
-        elif is_jsonb and isinstance(val, list):
+        elif is_jsonb and isinstance(val, (list, dict)):
             set_parts.append(f'"{col}" = CAST(:{pname} AS jsonb)')
             params[pname] = json.dumps(val)
         elif is_jsonb and isinstance(val, str):
@@ -647,6 +650,99 @@ async def get_document_detail(
         )
 
     return _serialize_row(row)
+
+
+@router.get("/documents/{table_name}/{doc_id}/export", summary="Export one document")
+@limiter.limit("30/minute")
+async def export_document(
+    request: Request,
+    table_name: str,
+    doc_id: str,
+    format: str = Query("json", pattern="^(json|sql|csv)$"),
+    field: str | None = Query(None, max_length=128),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Download one document's data - the per-document counterpart of the
+    admin archive export (GET /api/admin/export), same JSON and SQL shapes,
+    data only (no source files). Anyone who can view the document can
+    export it.
+
+    - json: {"table", "exported_at", "document": {...every column}}
+    - sql:  CREATE TABLE IF NOT EXISTS + one INSERT, replayable elsewhere
+    - csv:  one list field (?field=entries) as a spreadsheet, one row per
+            item and one column per item key
+    """
+    safe = _sanitize(table_name)
+
+    async with _engine().connect() as conn:
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+        if safe not in tables_cols:
+            raise HTTPException(
+                status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
+            )
+        access_clause = _access_where_clause(safe, current_user)
+        where = "id = CAST(:id AS uuid)"
+        if access_clause:
+            where += f" AND {access_clause}"
+        result = await conn.execute(
+            text(f'SELECT * FROM "{safe}" WHERE {where}'),
+            {"id": doc_id, **_access_params(current_user)},
+        )
+        row = result.mappings().one_or_none()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
+    row = dict(row)
+    exported_at = datetime.now(timezone.utc)
+    stem = f"{safe}_{str(row.get('id'))[:8]}"
+
+    if format == "json":
+        body = json.dumps(
+            {
+                "table": safe,
+                "exported_at": exported_at.isoformat(),
+                "document": {k: serial(v) for k, v in row.items()},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        filename, media_type = f"{stem}.json", "application/json"
+    elif format == "sql":
+        col_defs = ", ".join(f'"{c}" {ty}' for c, ty in tables_cols[safe].items())
+        body = "\n".join(
+            [
+                f"-- SDAI document export - {safe} {row.get('id')} - {exported_at.isoformat()}",
+                f'CREATE TABLE IF NOT EXISTS "{safe}" ({col_defs});',
+                insert_statement(safe, row),
+                "",
+            ]
+        )
+        filename, media_type = f"{stem}.sql", "application/sql"
+    else:
+        if not field:
+            raise HTTPException(status_code=422, detail=t("documents.export_field_required", current_user.locale))
+        items = row.get(field)
+        if not isinstance(items, list):
+            raise HTTPException(
+                status_code=422, detail=t("documents.export_field_not_list", current_user.locale, field=field)
+            )
+        body = list_to_csv(items)
+        filename, media_type = f"{stem}_{_sanitize(field)}.csv", "text/csv; charset=utf-8"
+
+    await log_action(
+        action="document_exported",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        table_name=safe,
+        document_id=doc_id,
+        details={"format": format, **({"field": field} if format == "csv" else {})},
+        ip_address=client_ip(request),
+    )
+    return Response(
+        content=body.encode("utf-8"),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 class UpdateDocumentFieldsBody(BaseModel):

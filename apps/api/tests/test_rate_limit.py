@@ -87,9 +87,11 @@ def test_xff_single_ip_used():
     assert _user_or_ip(req) == "ip:203.0.113.1"
 
 
-def test_xff_first_ip_in_chain_used():
+def test_xff_last_ip_in_chain_used():
+    # The last entry is the one nginx appends itself; earlier entries come
+    # from the client and can be forged to dodge the rate limit.
     req = _make_request(xff="203.0.113.1, 10.0.0.1, 192.168.1.1")
-    assert _user_or_ip(req) == "ip:203.0.113.1"
+    assert _user_or_ip(req) == "ip:192.168.1.1"
 
 
 def test_xff_takes_precedence_over_client_host():

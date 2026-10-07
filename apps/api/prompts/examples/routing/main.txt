@@ -1,0 +1,17 @@
+# list_fields: parcels
+# page_prompts: 1=cover.txt
+# classify_prompt: classify.txt
+# page_types: cover=cover.txt; register=register.txt
+# min_items: parcels=1
+
+This page comes from a scanned land register. Extract every parcel listed on it.
+
+Return ONLY a JSON object in this exact shape:
+
+{
+  "document_type": "Registre foncier",
+  "parcels": [
+    {"parcel_number": "as written", "owner": "as written", "location": "as written"}
+  ],
+  "extraction_confidence": "high or medium or low"
+}

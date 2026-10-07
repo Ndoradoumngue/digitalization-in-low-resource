@@ -202,12 +202,21 @@
       "summary": "Pages : {{done}} / {{total}} traitées",
       "failedSuffix": " · {{count}} échouées",
       "skippedSuffix": " · {{count}} ignorées",
+      "flaggedSuffix": " · {{count}} à vérifier",
       "resumeTitle": "Traiter chaque page qui n'a pas encore été tentée - utiliser ceci si l'exécution a été interrompue (ex. redémarrage du serveur) et n'a pas avancé depuis un moment",
       "resuming": "Reprise…",
       "resumeRemaining": "Reprendre le reste ({{count}})",
       "pauseTitle": "Arrêter immédiatement la page en cours d'extraction et suspendre le reste - utiliser Reprendre le reste pour continuer plus tard",
       "pausing": "Mise en pause…",
       "pause": "Pause"
+    },
+    "qualityFlags": {
+      "title": "Les contrôles automatiques ont trouvé des problèmes dans l'extraction de cette page - comparez-la avec l'image, puis corrigez-la avec Relancer ou une saisie manuelle",
+      "empty_value": "{{count}} élément(s) de « {{field}} » avec un côté vide",
+      "identical_values": "{{count}} élément(s) de « {{field}} » avec le même texte des deux côtés",
+      "overlong_value": "{{count}} élément(s) de « {{field}} » très long(s) - plusieurs entrées ont peut-être été fusionnées",
+      "repeated_items": "{{count}} élément(s) de « {{field}} » répété(s) 3 fois ou plus",
+      "too_few_items": "Seulement {{count}} élément(s) dans « {{field}} » - moins que prévu pour ce type de page"
     },
     "deleteDocument": {
       "confirm": "Supprimer le document extrait de ce téléversement ? Cela permet de retéléverser le même fichier sans qu'il soit bloqué comme doublon. Cette action est irréversible.",
@@ -287,6 +296,21 @@
     "newBatch": "Nouveau lot"
   },
   "review": {
+    "pages": {
+      "previous": "Page précédente",
+      "next": "Page suivante",
+      "jump": "Aller à la page",
+      "of": "/ {{total}}"
+    },
+    "complex": {
+      "search": "Rechercher…",
+      "count": "{{count}} éléments",
+      "filtered": "{{shown}} sur {{count}} éléments",
+      "editJson": "Modifier en JSON",
+      "showTable": "Afficher le tableau",
+      "invalidJson": "JSON invalide - corrigez-le avant d'approuver",
+      "invalidJsonField": "JSON invalide dans « {{field}} » - corrigez-le avant d'approuver"
+    },
     "toast": {
       "approved": "Approuvé",
       "rejected": "Rejeté",
@@ -304,8 +328,8 @@
     "oldestSuffix": " · le plus ancien {{time}}",
     "emptyQueue": "La file de révision est vide - tous les documents sont traités",
     "uploadMore": "Téléverser plus de documents",
-    "navPrevious": "← Précédent",
-    "navNext": "Suivant →",
+    "navPrevious": "← Document précédent",
+    "navNext": "Document suivant →",
     "reviewingOf": "Révision {{current}} sur {{total}}",
     "noImage": "Aucune image disponible",
     "ingested": "Ingéré {{time}}",
@@ -561,5 +585,18 @@
   "confirmDialog": {
     "confirm": "Confirmer",
     "cancel": "Annuler"
+  },
+  "listTable": {
+    "search": "Rechercher…",
+    "count": "{{count}} éléments",
+    "filtered": "{{shown}} sur {{count}} éléments"
+  },
+  "exportMenu": {
+    "button": "Exporter ▾",
+    "preparing": "Préparation…",
+    "title": "Télécharger les données de ce document",
+    "json": "Document complet - JSON",
+    "sql": "Document complet - SQL",
+    "csv": "{{field}} - tableur CSV"
   }
 }

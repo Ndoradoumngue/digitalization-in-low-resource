@@ -1,11 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  exportDocument,
   fetchDbDocumentDetail,
   fetchDbDocuments,
   fetchDbReviewers,
   fetchDbTypes,
   type DbListParams,
+  type DocumentExportFormat,
 } from "@sdai/api-client";
+import { saveBlob } from "../utils/download";
 
 export function useDbTypes() {
   return useQuery({
@@ -36,5 +39,13 @@ export function useDbDocumentDetail(tableName: string, id: string) {
     queryKey: ["db-document", tableName, id],
     queryFn:  () => fetchDbDocumentDetail(tableName, id),
     enabled:  !!tableName && !!id,
+  });
+}
+
+export function useExportDocument(tableName: string, id: string) {
+  return useMutation({
+    mutationFn: ({ format, field }: { format: DocumentExportFormat; field?: string }) =>
+      exportDocument(tableName, id, format, field),
+    onSuccess: ({ blob, filename }) => saveBlob(blob, filename),
   });
 }

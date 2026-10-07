@@ -49,6 +49,13 @@ export const PageStatusEnum = z.enum([
 ]);
 export type PageStatus = z.infer<typeof PageStatusEnum>;
 
+export const QualityFlagSchema = z.object({
+  code:  z.enum(["empty_value", "identical_values", "overlong_value", "repeated_items", "too_few_items"]),
+  field: z.string(),
+  count: z.number(),
+});
+export type QualityFlag = z.infer<typeof QualityFlagSchema>;
+
 export const PageSchema = z.object({
   id:              z.string(),
   page_number:     z.number(),
@@ -57,6 +64,7 @@ export const PageSchema = z.object({
   error_message:   z.string().nullable(),
   processing_time: z.number().nullable(),
   fields:          z.record(z.string(), z.unknown()).nullable(),
+  quality_flags:   z.array(QualityFlagSchema).default([]),
   updated_at:      z.string(),
 });
 export type Page = z.infer<typeof PageSchema>;
@@ -70,6 +78,7 @@ export const PageListSchema = z.object({
   failed:            z.number(),
   manual:            z.number(),
   skipped:           z.number(),
+  flagged:           z.number().default(0),
   pages:             z.array(PageSchema),
 });
 export type PageList = z.infer<typeof PageListSchema>;

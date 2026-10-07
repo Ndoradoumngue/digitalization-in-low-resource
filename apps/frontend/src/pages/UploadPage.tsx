@@ -246,6 +246,15 @@ function CompletedPageRow({ page, batchDocumentId }: { page: Page; batchDocument
       {retryMutation.isError && (
         <p className="text-xs text-red-500 mt-1">{(retryMutation.error as Error).message}</p>
       )}
+      {page.status === "completed" && page.quality_flags.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 text-xs text-amber-700" title={t("upload.qualityFlags.title")}>
+          {page.quality_flags.map((f) => (
+            <li key={`${f.code}-${f.field}`}>
+              ⚠ {t(`upload.qualityFlags.${f.code}`, { count: f.count, field: f.field })}
+            </li>
+          ))}
+        </ul>
+      )}
       {open && (
         <pre className="mt-2 text-xs font-mono bg-gray-50 rounded-md p-2 overflow-x-auto whitespace-pre-wrap break-words">
           {JSON.stringify(page.fields, null, 2)}
@@ -371,6 +380,7 @@ function DocumentPageProgress({ batchDocumentId }: { batchDocumentId: string }) 
           {t("upload.pageProgress.summary", { done, total: data.total })}
           {data.failed > 0 ? t("upload.pageProgress.failedSuffix", { count: data.failed }) : ""}
           {data.skipped > 0 ? t("upload.pageProgress.skippedSuffix", { count: data.skipped }) : ""}
+          {data.flagged > 0 ? t("upload.pageProgress.flaggedSuffix", { count: data.flagged }) : ""}
         </span>
         <div className="flex items-center gap-2">
           {canPause && (

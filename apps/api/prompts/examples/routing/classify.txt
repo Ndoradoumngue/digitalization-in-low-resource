@@ -1,0 +1,6 @@
+Look at this page and answer with its type only.
+
+- "cover": a cover sheet or title page, with no parcels listed on it
+- "register": a register page, a table with one parcel per row
+
+Return ONLY one of: {"page_type": "cover"} or {"page_type": "register"}

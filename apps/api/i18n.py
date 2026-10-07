@@ -79,6 +79,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Document not found",
         "fr": "Document introuvable",
     },
+    "documents.export_field_required": {
+        "en": "CSV export needs a list field: add ?field=<name>",
+        "fr": "L'export CSV nécessite un champ de type liste : ajoutez ?field=<nom>",
+    },
+    "documents.export_field_not_list": {
+        "en": "Field '{field}' is not a list and cannot be exported as CSV",
+        "fr": "Le champ « {field} » n'est pas une liste et ne peut pas être exporté en CSV",
+    },
     "common.group_not_found": {
         "en": "Group not found",
         "fr": "Groupe introuvable",

@@ -975,7 +975,9 @@ def test_serve_image_path_traversal_denied(auth_client, tmp_path, monkeypatch):
 def test_serve_image_not_found(auth_client, tmp_path, monkeypatch):
     import documents_router as dr
 
-    monkeypatch.setattr(dr, "DATA_DIR", tmp_path)
+    # The allowed roots are computed at import, so point them at tmp_path
+    # directly - patching DATA_DIR alone leaves the path outside them (403).
+    monkeypatch.setattr(dr, "_SAFE_FILE_ROOTS", [tmp_path.resolve()])
     (tmp_path / "images").mkdir()
 
     resp = auth_client.get(f"/api/db/image?path={tmp_path}/images/missing.png")

@@ -4,17 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { updateDocumentFields } from "@sdai/api-client";
 import { labelFor } from "../utils/format";
 import { renderFieldValue } from "../utils/renderField";
-
-// A field is "complex" (object, or array containing objects - e.g. a
-// lexicon's "entries": [{kabalay, french}]) if a plain text input can't
-// represent it. Those get a raw-JSON textarea instead; everything else
-// (scalars, arrays of scalars) gets the same comma-separated text input
-// the review form uses.
-function isComplexValue(v: unknown): boolean {
-  if (v === null || v === undefined) return false;
-  if (Array.isArray(v)) return v.some((item) => item !== null && typeof item === "object");
-  return typeof v === "object";
-}
+import ListTable, { isComplexValue } from "./ListTable";
 
 interface Props {
   tableName: string;
@@ -151,7 +141,9 @@ export default function FieldsPanel({ tableName, id, fieldRows, canEdit, title }
                     />
                   )
                 ) : (
-                  <dd className="text-sm text-gray-800 break-words">{renderFieldValue(value)}</dd>
+                  <dd className="text-sm text-gray-800 break-words">
+                    {complex ? <ListTable value={value} /> : renderFieldValue(value)}
+                  </dd>
                 )}
               </div>
             );

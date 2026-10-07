@@ -1,0 +1,14 @@
+# quality_checks: off
+
+This page is the cover sheet of a scanned land register. It lists no parcels.
+Copy only what is printed on it. Leave a field empty if it isn't printed.
+
+Return ONLY a JSON object in this exact shape:
+
+{
+  "document_type": "Registre foncier",
+  "title": "the register's title as printed, else empty",
+  "district": "the district or locality as printed, else empty",
+  "parcels": [],
+  "extraction_confidence": "high or medium or low"
+}

@@ -542,7 +542,9 @@ export interface ReviewQueueParams {
 }
 
 export interface ReviewPatchBody {
-  fields: Record<string, string | string[] | null>;
+  // Scalars, arrays of scalars, or - for list-of-objects fields such as a
+  // lexicon's "entries" - the parsed JSON value itself.
+  fields: Record<string, unknown>;
   action: "approve" | "reject";
 }
 
@@ -731,6 +733,33 @@ export async function runIntegrityCheck(): Promise<IntegrityCheckResult> {
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   return IntegrityCheckResultSchema.parse(await res.json());
+}
+
+// ── Document export ──────────────────────────────────────────────────────────
+
+export type DocumentExportFormat = "json" | "sql" | "csv";
+
+/** One document's data as a file. "csv" exports one list field (e.g.
+ *  "entries") as a spreadsheet and needs `field`. */
+export async function exportDocument(
+  tableName: string,
+  id: string,
+  format: DocumentExportFormat,
+  field?: string,
+): Promise<ArchiveExportResult> {
+  const params = new URLSearchParams({ format });
+  if (field) params.set("field", field);
+  const res = await fetch(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/export?${params}`,
+    withAuth({ method: "GET" }),
+  );
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  return { blob: await res.blob(), filename: match?.[1] ?? `${tableName}_${id}.${format}` };
 }
 
 // ── Admin: archive export ────────────────────────────────────────────────────

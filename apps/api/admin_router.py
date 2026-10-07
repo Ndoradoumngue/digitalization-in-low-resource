@@ -27,6 +27,7 @@ from pathlib import Path
 from audit import log_action
 from auth import CurrentUser, require_admin
 from documents_router import _SAFE_FILE_ROOTS, _get_tables_columns
+from export_format import insert_statement, serial
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from i18n import t
@@ -36,41 +37,6 @@ from sqlalchemy import text
 from starlette.background import BackgroundTask
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-
-
-def _serial(v):
-    if v is None:
-        return None
-    if hasattr(v, "isoformat"):
-        return v.isoformat()
-    if hasattr(v, "hex"):  # UUID object from asyncpg
-        return str(v)
-    if isinstance(v, (dict, list)):
-        return v
-    if isinstance(v, (int, float, bool)):
-        return v
-    return str(v)
-
-
-def _sql_literal(v) -> str:
-    """Render one Python value (as returned by asyncpg for a row column)
-    as a SQL literal, for the .sql export format. Not parameterized SQL -
-    this produces a standalone text file meant to be read or replayed
-    later, not executed by this process, so the values must be inlined
-    safely rather than bound."""
-    if v is None:
-        return "NULL"
-    if isinstance(v, bool):
-        return "TRUE" if v else "FALSE"
-    if isinstance(v, (int, float)):
-        return repr(v)
-    if isinstance(v, (dict, list)):
-        text_val = json.dumps(v, ensure_ascii=False).replace("'", "''")
-        return f"'{text_val}'::jsonb"
-    if hasattr(v, "isoformat"):
-        return f"'{v.isoformat()}'"
-    text_val = str(v).replace("'", "''")  # covers str, UUID, etc.
-    return f"'{text_val}'"
 
 
 @router.get("/audit-log", summary="Audit log")
@@ -130,7 +96,7 @@ async def get_audit_log(
         rows = result.mappings().all()
 
     total = int(rows[0]["total_count"]) if rows else 0
-    items = [{k: _serial(v) for k, v in dict(r).items() if k != "total_count"} for r in rows]
+    items = [{k: serial(v) for k, v in dict(r).items() if k != "total_count"} for r in rows]
 
     return {"total": total, "page": page, "page_size": page_size, "items": items}
 
@@ -420,7 +386,7 @@ async def export_archive(
                     if format == "json":
                         json_tables[table_name] = {
                             "columns": cols,
-                            "rows": [{k: _serial(v) for k, v in row.items()} for row in rows],
+                            "rows": [{k: serial(v) for k, v in row.items()} for row in rows],
                         }
                     else:
                         col_defs = ", ".join(f'"{c}" {t}' for c, t in cols.items())
@@ -428,12 +394,7 @@ async def export_archive(
                             f'\nCREATE TABLE IF NOT EXISTS "{table_name}" ({col_defs});'
                         )
                         for row in rows:
-                            col_names = list(row.keys())
-                            col_clause = ", ".join(f'"{c}"' for c in col_names)
-                            val_clause = ", ".join(_sql_literal(row[c]) for c in col_names)
-                            sql_lines.append(
-                                f'INSERT INTO "{table_name}" ({col_clause}) VALUES ({val_clause});'
-                            )
+                            sql_lines.append(insert_statement(table_name, row))
 
                     for row in rows:
                         doc_key = row.get("record_id") or str(row.get("id"))

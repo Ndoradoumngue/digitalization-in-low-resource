@@ -7,6 +7,7 @@ import NavSidebar from "../components/NavSidebar";
 import PanZoomImage from "../components/PanZoomImage";
 import { dbImageUrl } from "@sdai/api-client";
 import FieldsPanel from "../components/FieldsPanel";
+import ExportMenu from "../components/ExportMenu";
 import LinksSection from "../components/LinksSection";
 import AccessSection from "../components/AccessSection";
 import SeriesSection from "../components/SeriesSection";
@@ -87,6 +88,8 @@ export default function DocumentDetailPage() {
   const fieldRows = data
     ? Object.entries(data).filter(([k]) => !SKIP_FIELDS.has(k))
     : [];
+  // Extracted list fields, each exportable on its own as a CSV.
+  const listFields = fieldRows.filter(([, v]) => Array.isArray(v) && v.length > 0).map(([k]) => k);
 
   return (
     <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
@@ -118,6 +121,8 @@ export default function DocumentDetailPage() {
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          {data && tableName && id && <ExportMenu tableName={tableName} id={id} listFields={listFields} />}
 
           {/* Prev / Next */}
           {list.length > 0 && (

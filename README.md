@@ -56,6 +56,8 @@ No code change or rebuild needed - just set the vars and restart the `api` servi
 # list_fields: entries, table_of_contents, abbreviations
 # split_page_columns: true
 # split_from_page: 12
+# page_prompts: 1-2=cover.txt
+# min_items: entries=6
 
 <your actual prompt text follows, starting after a blank line>
 ```
@@ -63,6 +65,37 @@ No code change or rebuild needed - just set the vars and restart the `api` servi
 - `list_fields` - comma-separated names of the fields in your schema that should **accumulate across pages** rather than take the first value found (see "Multi-page reconciliation" in [ARCHITECTURE.md](./ARCHITECTURE.md)). Get this wrong and a list field silently keeps only page 1's values.
 - `split_page_columns: true` - this document is typeset in two independent side-by-side columns (e.g. a dictionary, each entry self-contained within its column - **not** parallel-text translation, which needs both columns visible together to pair correctly). Splits each page down the middle before extraction, roughly halving content - and generation time - per VLM call.
 - `split_from_page: N` - only pages at or after this 1-indexed scan page get split; earlier pages (cover, table of contents, introduction - front matter that's single-column even when the body isn't) are left whole. Omit it to split every page.
+
+**Routing pages to different prompts.** When one document mixes page layouts (a cover, a register, annex tables...), one prompt per layout is far more reliable than one prompt describing all of them: a small model fills every field it's asked for and invents data for layouts that aren't on the page. The top-level prompt file can route pages in two ways, alone or together. All the corpus-specific knowledge stays in prompt files; the code only follows the directives.
+
+- `page_prompts: 1-11=front.txt; 93-105=annex.txt` - for documents whose layout is **known in advance**. Sends those **source pages** (page numbers of the original file, before any column split) to other prompt files. No extra cost.
+- `classify_prompt: classify.txt` together with `page_types: cover=cover.txt; register=register.txt` - for documents whose layout **isn't known in advance**. Each page is first sent with `classify.txt`, which you write for your corpus and which must return `{"page_type": "<one of the names>"}`. The page is then extracted with the prompt file of that type. This costs one extra VLM call per page, so it's only practical on a GPU (see [Faster extraction](#faster-extraction-give-ollama-a-gpu)).
+
+A page range match wins first, then the classifier's answer, then the top-level file's own prompt. If classification fails (timeout, invalid JSON, a type that isn't listed), the page is extracted with the top-level prompt rather than lost. Paths are resolved relative to the top-level file. Every routed prompt should return the same field names, so pages still merge into one document. Routed prompt files can set their own check directives (below), but can't route further.
+
+A minimal classifier prompt:
+
+```
+Look at this page and answer with its type only.
+- "cover": a title page or cover sheet, with no records on it
+- "register": a page of the land register, a table with one parcel per row
+Return ONLY: {"page_type": "cover"} or {"page_type": "register"}
+```
+
+**Automatic checks after extraction.** Every page the VLM extracts is checked before it's saved. A page is flagged when a list item has an empty side (`empty_value`), the same text on both sides (`identical_values`), a value too long to be a single item, which usually means many items were squeezed into one (`overlong_value`), an item repeated too many times (`repeated_items`), or fewer items than expected (`too_few_items`). A flagged page keeps its data and stays `completed`, but the upload page shows a warning on it, and its document goes to the review queue (`review_required`) even when the model reported high confidence. The flags are cleared when the page is re-run cleanly or entered by hand.
+
+The thresholds are set per prompt file, because what's normal depends on the corpus:
+
+| Directive | Default | Meaning |
+|---|---|---|
+| `min_items: entries=6, parcels=2` | none | Flag a page with fewer items than this in a list field |
+| `max_value_length: 1500` | 400 | Flag a list item value longer than this. Raise it for corpora with long free-text fields |
+| `max_repeats: 5` | 3 | Flag an item repeated this many times |
+| `quality_checks: off` | on | Turn the checks off for this prompt |
+
+**Routing example**: [`apps/api/prompts/examples/routing/`](./apps/api/prompts/examples/routing/) is a small generic set for a scanned land register, showing both routing methods and the check directives together: [`main.txt`](./apps/api/prompts/examples/routing/main.txt) (the top-level prompt, with all the directives), [`classify.txt`](./apps/api/prompts/examples/routing/classify.txt), [`cover.txt`](./apps/api/prompts/examples/routing/cover.txt) and [`register.txt`](./apps/api/prompts/examples/routing/register.txt). Copy the folder into `documents/prompts/`, rename the fields for your corpus, and point `VLM_PROMPT_FILE` (or a tenant's or preset's `--prompt-file`) at `main.txt`.
+
+**Where prompt files live - keep your own prompts local.** The prompts a deployment actually uses go in `documents/prompts/`. That folder is volume-mounted into the API container and is ignored by git (`documents/` is in `.gitignore`), so prompts written for a specific corpus or client stay on the server and are never pushed. Only generic examples belong in `apps/api/prompts/examples/`. Don't copy a working prompt there. Edits to a prompt file take effect within about 30 seconds, with no restart; a mistake in a directive (a missing routed file, overlapping ranges, an invalid number) is reported as an error when the prompt is loaded rather than being silently ignored.
 
 These live in the prompt file because they describe *that corpus's schema and layout*, the same thing the rest of the prompt already describes - a reader of the prompt sees the whole picture in one place, instead of it scattered across env vars or Python constants elsewhere. `VLM_LIST_FIELDS`/`SPLIT_PAGE_COLUMNS`/`SPLIT_FROM_PAGE` still exist as deployment-wide env vars (see `.env.example`) for the built-in default prompt, which has no file to put directives in - a prompt file's own directives always win over them when both are set.
 
@@ -296,9 +329,126 @@ Add to cron for automatic monthly renewal:
 | Memory allocated to Docker | 16 GiB+ | See note below - this is a common source of silent ingestion crashes |
 | `qwen2.5vl:7b` model | - | Downloaded automatically on first boot via the containerised Ollama service |
 
-Ollama runs as a Docker service - no host installation required. The model (~5 GB) is pulled automatically on first boot. For offline environments see the [Offline deployment](#offline-deployment) section.
+Ollama runs as a Docker service - no host installation required. The model (~5 GB) is pulled automatically on first boot. For offline environments see the [Offline deployment](#offline-deployment) section. By default the containerised Ollama runs on CPU only, which is slow; see [Faster extraction](#faster-extraction-give-ollama-a-gpu) to give it a GPU (a server with an NVIDIA or AMD GPU, macOS, or a separate GPU machine when running on a NAS).
 
 > **Memory matters.** `qwen2.5vl:7b` is ~6 GB on disk and needs meaningfully more RAM than that to run (weights + KV cache + inference overhead), on top of Postgres, Redis, the API, and nginx all sharing the same Docker VM. If Docker is only given the default ~8 GiB, the OS will silently kill the model process mid-inference - documents will show `status: crashed` with an error like `Server error '500 Internal Server Error' for url 'http://ollama:11434/api/chat'`, and Ollama's own logs (`docker compose logs ollama`) will show `llama-server process has terminated: signal: killed`. That signature means **out of memory**, not a bug. On Docker Desktop: Settings → Resources → Memory, raise to at least 16 GiB, apply, and restart Docker Desktop.
+
+---
+
+## Faster extraction: give Ollama a GPU
+
+**If extraction is slow, this is almost always the cause, on any machine.** `qwen2.5vl:7b` is a GPU workload. On CPU alone it generates about 1-2 tokens/s. A dense dictionary page needs 1,500-2,500 output tokens, which takes 15-30 minutes per page. That is longer than `VLM_PAGE_TIMEOUT_SECONDS`, so the densest pages fail or stay stuck in `processing`. With a GPU, the same page takes a few minutes or less.
+
+**Check what Ollama is running on.** Run `docker compose exec ollama ollama ps`, or `ollama ps` for a host install. The `PROCESSOR` column shows `100% CPU` or `100% GPU`.
+
+The default `docker-compose.yml` gives the Ollama container no GPU access, so out of the box it always runs on CPU. Pick the option below that matches your hardware. In every option, only Ollama moves: Postgres, Redis, the API and the frontend stay in Docker as they are, and existing batches and data are unaffected.
+
+| Machine running the stack | GPU available to Ollama? | Use |
+|---|---|---|
+| Linux server or PC with an NVIDIA GPU (on-premises or a cloud GPU instance) | Yes, once the container is given the GPU | [Option A](#option-a---server-with-a-gpu-keep-ollama-in-docker) |
+| Linux server or PC with an AMD GPU (supported by ROCm) | Yes, with the ROCm image of Ollama | [Option A](#option-a---server-with-a-gpu-keep-ollama-in-docker) |
+| Windows with an NVIDIA GPU (Docker Desktop + WSL 2) | Yes, once the container is given the GPU | [Option A](#option-a---server-with-a-gpu-keep-ollama-in-docker) |
+| macOS (Apple Silicon) | Not inside Docker; Docker on macOS cannot use the Apple GPU (Metal) | [Option B](#option-b---ollama-installed-on-the-same-machine-macos) |
+| NAS, mini-PC, or any server without a usable GPU (including Intel integrated graphics) | No | [Option C](#option-c---ollama-on-another-machine-on-the-network-nas-and-gpu-less-servers) |
+
+A GPU server does not have to run the whole stack. If one is available elsewhere on the network, for example a shared GPU workstation or a machine in the ministry's server room, the stack can stay where it is and send extraction to it with [Option C](#option-c---ollama-on-another-machine-on-the-network-nas-and-gpu-less-servers).
+
+**Sizing.** `qwen2.5vl:7b` needs about 8 GB of GPU memory (VRAM) to run fully on the GPU. Cards with less VRAM split the model between GPU and CPU (`ollama ps` then shows something like `40%/60% CPU/GPU`), which is faster than CPU alone but far slower than a full fit. Any NVIDIA card with 8 GB or more from the last several generations (for example an RTX 3060 12 GB, RTX 4060 Ti 16 GB, or a data-centre card such as an A10 or L4) is comfortably fast enough.
+
+### Option A - Server with a GPU (keep Ollama in Docker)
+
+**NVIDIA GPU**
+
+1. Install the NVIDIA driver and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host. Confirm the GPU is visible with `nvidia-smi`. Cloud GPU instances usually come with the driver preinstalled; the toolkit may still need installing. On Windows, a recent NVIDIA driver plus Docker Desktop with the WSL 2 backend is enough.
+2. Give the `ollama` service the GPU in `docker-compose.yml`:
+
+   ```yaml
+   ollama:
+     # ...existing settings...
+     deploy:
+       resources:
+         reservations:
+           devices:
+             - driver: nvidia
+               count: all
+               capabilities: [gpu]
+   ```
+
+**AMD GPU**
+
+1. Install the AMD GPU driver with ROCm support on the host. Check that your card is on [Ollama's list of supported AMD GPUs](https://github.com/ollama/ollama/blob/main/docs/gpu.md).
+2. In `docker-compose.yml`, switch the `ollama` service to the ROCm image and pass the GPU devices through:
+
+   ```yaml
+   ollama:
+     image: ollama/ollama:rocm
+     # ...existing settings...
+     devices:
+       - /dev/kfd
+       - /dev/dri
+   ```
+
+**Then, for either vendor**
+
+3. Recreate the service with `docker compose up -d ollama`.
+4. Check that `docker compose exec ollama ollama ps` shows `100% GPU`. If it shows a CPU/GPU split, the card does not have enough VRAM for the whole model (see Sizing above).
+
+### Option B - Ollama installed on the same machine (macOS)
+
+On a Mac, Ollama installed natively uses the Apple GPU and is roughly 10-20× faster than in Docker.
+
+1. Install Ollama on the host, start it, and pull the model:
+
+   ```bash
+   brew install ollama
+   OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 ollama serve   # leave running (or: brew services start ollama)
+   ollama pull qwen2.5vl:7b                                        # in another terminal
+   ```
+
+2. Point the API at the host. In `docker-compose.yml`, under the `api` service:
+   - change `OLLAMA_HOST=http://ollama:11434` to `OLLAMA_HOST=http://host.docker.internal:11434`. The value is set in the compose file, so changing `.env` alone has no effect.
+   - remove `ollama` from `depends_on`.
+3. Stop the containerised Ollama and restart the API:
+
+   ```bash
+   docker compose stop ollama
+   docker compose up -d api
+   ```
+
+   This also frees the ~8 GiB the model was using inside the Docker VM.
+4. Check that `ollama ps` on the host shows `100% GPU`.
+
+This option also works on a Linux host with an NVIDIA or AMD GPU, as an alternative to Option A. On Linux, `host.docker.internal` additionally needs `extra_hosts: ["host.docker.internal:host-gateway"]` on the `api` service.
+
+### Option C - Ollama on another machine on the network (NAS and GPU-less servers)
+
+Most NAS devices (Synology, QNAP, TrueNAS boxes and the like) have a low-power CPU, no GPU Ollama can use, and limited RAM. On them `qwen2.5vl:7b` runs slower than on a laptop CPU, if it fits in memory at all. The NAS is still a good place for the rest of the stack: the database, document storage and web app. Extraction should run on a separate machine on the same network that has a GPU, such as an Apple Silicon Mac or a PC with an NVIDIA card. The API sends each page image to that machine and gets the JSON back.
+
+1. On the GPU machine, install Ollama, pull the model, and let it accept connections from the network:
+
+   ```bash
+   ollama pull qwen2.5vl:7b
+   OLLAMA_HOST=0.0.0.0:11434 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 ollama serve
+   ```
+
+   Give the machine a fixed IP address, or a DHCP reservation, so the address below does not change.
+2. On the NAS, in `docker-compose.yml` under the `api` service, set `OLLAMA_HOST=http://<gpu-machine-ip>:11434` and remove `ollama` from `depends_on`.
+3. On the NAS, remove or stop the `ollama` service and restart the API:
+
+   ```bash
+   docker compose stop ollama
+   docker compose up -d api
+   ```
+
+4. From the NAS, check the connection with `curl http://<gpu-machine-ip>:11434/api/tags`. It should list `qwen2.5vl:7b`.
+
+> **Security.** Ollama has no authentication. Anyone who can reach port 11434 can use the model. Keep the GPU machine on the internal network only: do not forward port 11434 on the router, and if possible restrict it with a firewall rule so that only the NAS can connect. Page images travel over the LAN to this machine, which should be one the deployment is allowed to process documents on.
+
+The GPU machine must be on and running `ollama serve` while documents are being ingested. If it is unreachable, pages fail with a connection error and can be retried once it is back.
+
+### After switching
+
+Restarting the API interrupts any page that is mid-extraction. If pages stay in `processing` afterwards, restart them with `POST /api/ingest/pages/resume/{batch_document_id}`. Pages that previously failed by timing out can be retried from the UI. With a GPU they should now complete well within `VLM_PAGE_TIMEOUT_SECONDS`.
 
 ---
 
@@ -687,6 +837,16 @@ All routes require authentication, either via a JWT cookie set by `POST /api/aut
 | `POST` | `/api/ingest/path` | Ingest from a local filesystem path or Google Drive folder ID |
 | `GET` | `/api/ingest/status/{batch_id}` | Poll batch processing status |
 | `GET` | `/api/ingest/presets` | List this tenant's active prompt presets (`key`, `label`) - the valid values for `upload`'s `preset` field |
+| `GET` | `/api/ingest/pages/{batch_document_id}` | Per-page status of one document, with each page's extracted `fields` and `quality_flags` (see "Automatic checks after extraction"). Counts include `flagged`: completed pages that failed a check |
+| `POST` | `/api/ingest/pages/{page_id}/retry` | Re-run extraction on one page (a failed page, or a completed one to redo) |
+| `POST` | `/api/ingest/pages/{page_id}/reload` | Re-derive the page from the original file (re-split, re-preprocess), then extract it again |
+| `POST` | `/api/ingest/pages/{page_id}/manual` | Store a hand-entered result for one page and merge it into the document. Body: `{"fields": {...}}`, the same shape the page's prompt returns. Requires the extraction-editing permission |
+| `POST` | `/api/ingest/pages/{page_id}/skip` | Mark a page as not relevant (blank, cover...) and remove its content from the document |
+| `POST` | `/api/ingest/pages/{page_id}/cancel` | Stop the page currently being extracted |
+| `POST` | `/api/ingest/documents/{batch_document_id}/pause` | Stop the page in progress and hold the remaining pages |
+| `POST` | `/api/ingest/pages/resume/{batch_document_id}` | Process every pending, failed or stuck page of a document, one at a time |
+
+**Manual entry from the UI vs the API.** In the upload page's manual-entry box, paste only the fields object itself (`{"document_type": ..., "entries": [...]}`) - the UI adds the `{"fields": ...}` wrapper. Only a direct call to `POST /pages/{page_id}/manual` sends the wrapper. Pasting the wrapped form into the UI stores the page double-wrapped, and it contributes nothing to the document.
 
 `GET /api/ingest/status/{batch_id}` response includes `duplicates_skipped` - the count of files whose SHA-256 hash already exists in the database and were therefore skipped without VLM processing.
 

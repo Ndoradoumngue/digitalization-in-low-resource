@@ -451,6 +451,12 @@ CREATE INDEX IF NOT EXISTS idx_batch_document_pages_status
 -- EXISTS above is a no-op on an existing table).
 ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS source_path TEXT;
 ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS source_page_number INTEGER;
+
+-- Automatic post-extraction checks (see _quality_flags): a JSON list of
+-- {"code", "count"} problems found in the page's VLM output, or NULL when
+-- the page passed or was entered by hand. A flagged page keeps its data,
+-- but its document is sent to review instead of being auto-approved.
+ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS quality_flags JSONB;
 """
 
 # Renames any dynamically-created per-document-type table (identified the
@@ -729,6 +735,7 @@ async def startup() -> None:
         asyncio.create_task(_stage2_worker()),
         asyncio.create_task(_stage3_worker()),
         asyncio.create_task(_integrity_check_worker()),
+        asyncio.create_task(_finalize_stranded_documents()),
     ]
 
 
@@ -783,11 +790,35 @@ Return ONLY a JSON object:
 }"""
 
 
+class QualityChecks(NamedTuple):
+    """Thresholds for the automatic post-extraction checks (_quality_flags),
+    set per prompt file with directives - the defaults suit most corpora."""
+
+    enabled: bool = True
+    # Minimum item count per list field, e.g. {"entries": 8}. No default:
+    # how many items a page normally holds depends entirely on the corpus.
+    min_items: dict[str, int] = {}
+    # A longer value inside a list item usually means the model collapsed
+    # many items into one. Raise it for corpora with long free-text fields.
+    max_value_length: int = 400
+    # The same item this many times in one list is a generation loop.
+    max_repeats: int = 3
+
+
 class LoadedPrompt(NamedTuple):
     text: str
     split_page_columns: bool | None
     split_from_page: int | None
     list_fields: frozenset[str] | None
+    checks: QualityChecks = QualityChecks()
+    # Routing to other prompt files - only ever set on a top-level prompt
+    # (see the page_prompts / classify_prompt / page_types directives):
+    #   page_prompts: ((first source page, last source page, prompt), ...)
+    #   classify_prompt: prompt text asking the VLM for a page type
+    #   page_types: (("type name", prompt), ...)
+    page_prompts: tuple[tuple[int, int, "LoadedPrompt"], ...] = ()
+    classify_prompt: str | None = None
+    page_types: tuple[tuple[str, "LoadedPrompt"], ...] = ()
 
 
 # Directives a prompt file can set for itself, as leading comment lines
@@ -807,11 +838,122 @@ class LoadedPrompt(NamedTuple):
 # anything else looking vaguely like "# key: value" is left alone and
 # treated as the start of the prompt text, so a prompt that happens to
 # open with a markdown-style comment isn't silently eaten.
-_PROMPT_DIRECTIVE_KEYS = {"split_page_columns", "split_from_page", "list_fields"}
+#
+# Routing - for documents that mix several page layouts, where one prompt
+# describing every layout makes a small VLM invent fields for layouts that
+# aren't on the page. Both are optional and can be combined (a page range
+# match wins, then the classifier's answer, then this file's own prompt):
+#   # page_prompts: 1-11=front.txt; 93-105=annex.txt
+#       routes those *source* pages (page numbers of the original file,
+#       before any column split) to other prompt files. For documents
+#       whose layout is known in advance.
+#   # classify_prompt: classify.txt
+#   # page_types: cover=cover.txt; register=register.txt
+#       first sends each page with classify.txt, which must return
+#       {"page_type": "<name>"}, then extracts it with the prompt file
+#       of that type. Costs one extra VLM call per page, but works on
+#       documents whose layout isn't known in advance. An unknown type or
+#       a failed classification falls back to this file's own prompt.
+# Paths are resolved relative to this file. Routed prompt files can set
+# their own check directives, but can't route further.
+#
+# Automatic checks (see _quality_flags), per prompt file:
+#   # min_items: entries=8        flag a page with fewer list items
+#   # max_value_length: 400       flag a list item value longer than this
+#   # max_repeats: 3              flag an item repeated this many times
+#   # quality_checks: off         turn the checks off for this prompt
+_PROMPT_DIRECTIVE_KEYS = {
+    "split_page_columns",
+    "split_from_page",
+    "list_fields",
+    "page_prompts",
+    "classify_prompt",
+    "page_types",
+    "min_items",
+    "max_value_length",
+    "max_repeats",
+    "quality_checks",
+}
+_ROUTING_DIRECTIVES = ("page_prompts", "classify_prompt", "page_types")
 _PROMPT_DIRECTIVE_RE = re.compile(r"^#\s*([a-zA-Z_]+)\s*:\s*(.+?)\s*$")
+_PAGE_TYPE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 
 
-def _load_vlm_prompt(prompt_file: str | None) -> LoadedPrompt:
+def _parse_min_items(prompt_file: str, raw: str) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for part in raw.split(","):
+        if not part.strip():
+            continue
+        field, sep, value = part.partition("=")
+        if not sep or not field.strip() or not value.strip().isdigit():
+            raise RuntimeError(
+                f"prompt file {prompt_file!r}: min_items must look like"
+                f" 'entries=8, other=2', got {raw!r}"
+            )
+        out[field.strip()] = int(value.strip())
+    return out
+
+
+def _parse_positive_int(prompt_file: str, key: str, raw: str) -> int:
+    value = raw.strip()
+    if not value.isdigit() or int(value) < 1:
+        raise RuntimeError(f"prompt file {prompt_file!r}: {key} must be a positive integer, got {raw!r}")
+    return int(value)
+
+
+def _resolve_sub_prompt(prompt_file: str, target: str) -> Path:
+    target_path = Path(target.strip())
+    if not target_path.is_absolute():
+        target_path = Path(prompt_file).parent / target_path
+    return target_path
+
+
+def _parse_page_prompts(
+    prompt_file: str, raw: str
+) -> tuple[tuple[int, int, LoadedPrompt], ...]:
+    ranges: list[tuple[int, int, LoadedPrompt]] = []
+    for part in raw.split(";"):
+        if not part.strip():
+            continue
+        span, sep, target = part.partition("=")
+        first, dash, last = span.strip().partition("-")
+        if not sep or not target.strip() or not first.isdigit() or (dash and not last.isdigit()):
+            raise RuntimeError(
+                f"prompt file {prompt_file!r}: page_prompts must look like"
+                f" '1-11=front.txt; 200-214=grammar.txt', got {raw!r}"
+            )
+        lo, hi = int(first), int(last) if dash else int(first)
+        if lo > hi:
+            raise RuntimeError(f"prompt file {prompt_file!r}: page_prompts range {span.strip()!r} is backwards")
+        loaded = _load_vlm_prompt(str(_resolve_sub_prompt(prompt_file, target)), allow_routing=False)
+        ranges.append((lo, hi, loaded))
+    ranges.sort(key=lambda r: r[0])
+    for (_, prev_hi, _), (lo, _, _) in zip(ranges, ranges[1:]):
+        if lo <= prev_hi:
+            raise RuntimeError(f"prompt file {prompt_file!r}: page_prompts ranges overlap")
+    return tuple(ranges)
+
+
+def _parse_page_types(prompt_file: str, raw: str) -> tuple[tuple[str, LoadedPrompt], ...]:
+    types: list[tuple[str, LoadedPrompt]] = []
+    for part in raw.split(";"):
+        if not part.strip():
+            continue
+        name, sep, target = part.partition("=")
+        name = name.strip().lower()
+        if not sep or not target.strip() or not _PAGE_TYPE_RE.match(name):
+            raise RuntimeError(
+                f"prompt file {prompt_file!r}: page_types must look like"
+                f" 'cover=cover.txt; register=register.txt', got {raw!r}"
+            )
+        if any(existing == name for existing, _ in types):
+            raise RuntimeError(f"prompt file {prompt_file!r}: page type {name!r} is listed twice")
+        loaded = _load_vlm_prompt(str(_resolve_sub_prompt(prompt_file, target)), allow_routing=False)
+        types.append((name, loaded))
+    return tuple(types)
+
+
+def _load_vlm_prompt(prompt_file: str | None, allow_routing: bool = True) -> LoadedPrompt:
     if not prompt_file:
         return LoadedPrompt(_DEFAULT_VLM_PROMPT, None, None, None)
     path = Path(prompt_file)
@@ -862,7 +1004,54 @@ def _load_vlm_prompt(prompt_file: str | None) -> LoadedPrompt:
     if "list_fields" in directives:
         list_fields = _parse_list_fields(directives["list_fields"])
 
-    return LoadedPrompt(prompt_text, split_page_columns, split_from_page, list_fields)
+    checks = QualityChecks(
+        enabled=directives.get("quality_checks", "on").strip().lower() not in ("off", "false", "no", "0"),
+        min_items=_parse_min_items(prompt_file, directives["min_items"]) if "min_items" in directives else {},
+        max_value_length=(
+            _parse_positive_int(prompt_file, "max_value_length", directives["max_value_length"])
+            if "max_value_length" in directives
+            else QualityChecks().max_value_length
+        ),
+        max_repeats=(
+            _parse_positive_int(prompt_file, "max_repeats", directives["max_repeats"])
+            if "max_repeats" in directives
+            else QualityChecks().max_repeats
+        ),
+    )
+
+    routing = [k for k in _ROUTING_DIRECTIVES if k in directives]
+    if routing and not allow_routing:
+        raise RuntimeError(
+            f"prompt file {prompt_file!r}: {', '.join(routing)} can only be set on the"
+            " top-level prompt file, not on a prompt file it routes to"
+        )
+    if ("classify_prompt" in directives) != ("page_types" in directives):
+        raise RuntimeError(
+            f"prompt file {prompt_file!r}: classify_prompt and page_types must be set together"
+        )
+
+    page_prompts: tuple[tuple[int, int, LoadedPrompt], ...] = ()
+    if "page_prompts" in directives:
+        page_prompts = _parse_page_prompts(prompt_file, directives["page_prompts"])
+
+    classify_prompt: str | None = None
+    page_types: tuple[tuple[str, LoadedPrompt], ...] = ()
+    if "classify_prompt" in directives:
+        classify_prompt = _load_vlm_prompt(
+            str(_resolve_sub_prompt(prompt_file, directives["classify_prompt"])), allow_routing=False
+        ).text
+        page_types = _parse_page_types(prompt_file, directives["page_types"])
+
+    return LoadedPrompt(
+        prompt_text,
+        split_page_columns,
+        split_from_page,
+        list_fields,
+        checks,
+        page_prompts,
+        classify_prompt,
+        page_types,
+    )
 
 
 def _parse_list_fields(raw: str | None) -> frozenset[str]:
@@ -891,6 +1080,26 @@ class TenantConfig(NamedTuple):
     page_timeout: float
     split_page_columns: bool
     split_from_page: int | None
+    # The full top-level prompt (routing + checks). None only for configs
+    # built directly in code, which then behave as a single plain prompt.
+    loaded: LoadedPrompt | None = None
+
+    @property
+    def main(self) -> LoadedPrompt:
+        return self.loaded or LoadedPrompt(self.prompt, None, None, None)
+
+    def prompt_for_range(self, source_page_number: int | None) -> LoadedPrompt | None:
+        """The page_prompts entry whose range covers this source page."""
+        if source_page_number is not None:
+            for lo, hi, loaded in self.main.page_prompts:
+                if lo <= source_page_number <= hi:
+                    return loaded
+        return None
+
+    def prompt_for_type(self, page_type: str | None) -> LoadedPrompt | None:
+        """The page_types entry for a classifier answer, if it names one."""
+        name = str(page_type or "").strip().lower()
+        return next((loaded for t, loaded in self.main.page_types if t == name), None)
 
 
 # Per-tenant config is DB-stored (see sdai_tenants) but changes rarely and
@@ -967,7 +1176,14 @@ async def _get_tenant_config(tenant_id: str, preset_id: str | None = None) -> Te
         else loaded.split_from_page if loaded.split_from_page is not None else SPLIT_FROM_PAGE
     )
 
-    cfg = TenantConfig(loaded.text, list_fields, page_timeout, split_page_columns, split_from_page)
+    cfg = TenantConfig(
+        loaded.text,
+        list_fields,
+        page_timeout,
+        split_page_columns,
+        split_from_page,
+        loaded,
+    )
     _tenant_config_cache[cache_key] = (time.monotonic(), cfg)
     return cfg
 
@@ -1038,6 +1254,70 @@ async def _resolve_preset_for_batch_document(batch_document_id: str) -> str | No
         )
         record = row.one_or_none()
     return record[0] if record else None
+
+
+def _quality_flags(fields: dict, list_fields: frozenset[str], checks: QualityChecks) -> list[dict]:
+    """Cheap structural checks on one page's VLM output, run right after
+    extraction. Returns a list of {"code", "field", "count"} problems
+    (empty when the page looks sound). They don't change the page's data,
+    they only route its document to human review (see _stage3_process).
+
+    Each check targets a failure seen in practice on CPU-run small models:
+    an item with one side left empty, both sides identical (the model
+    copied instead of translating), one item holding a whole collapsed
+    column, a list cut far shorter than the page type normally holds, and
+    the same item repeated (generation loop). Thresholds come from the
+    prompt file that extracted the page (see QualityChecks)."""
+    flags: list[dict] = []
+    if not checks.enabled:
+        return flags
+    min_items = checks.min_items
+
+    def add(code: str, field: str, count: int) -> None:
+        if count:
+            flags.append({"code": code, "field": field, "count": count})
+
+    for field in sorted(list_fields | set(min_items)):
+        items = fields.get(field)
+        if not isinstance(items, list):
+            items = []
+        dict_items = [i for i in items if isinstance(i, dict) and len(i) >= 2]
+        add(
+            "empty_value",
+            field,
+            sum(1 for i in dict_items if any(not str(v or "").strip() for v in i.values())),
+        )
+        add(
+            "identical_values",
+            field,
+            sum(
+                1
+                for i in dict_items
+                if len({str(v).strip().casefold() for v in i.values()}) == 1
+                and str(next(iter(i.values()))).strip()
+            ),
+        )
+        add(
+            "overlong_value",
+            field,
+            sum(
+                1
+                for i in items
+                if any(
+                    len(str(v)) > checks.max_value_length
+                    for v in (i.values() if isinstance(i, dict) else [i])
+                )
+            ),
+        )
+        counts: dict[str, int] = {}
+        for i in items:
+            key = json.dumps(i, sort_keys=True, ensure_ascii=False)
+            counts[key] = counts.get(key, 0) + 1
+        add("repeated_items", field, sum(1 for c in counts.values() if c >= checks.max_repeats))
+        minimum = min_items.get(field)
+        if minimum is not None and len(items) < minimum:
+            flags.append({"code": "too_few_items", "field": field, "count": len(items)})
+    return flags
 
 
 # Fields that don't count as "this page contributed content" on their own -
@@ -2043,18 +2323,23 @@ async def _update_page_status(
     error_message: str | None = None,
     processing_time: float | None = None,
     fields: dict | None = None,
+    quality_flags: list[dict] | None = None,
 ) -> None:
+    # quality_flags is reset on every status change unless passed in, so a
+    # retry that comes back clean, or a manual entry, clears old warnings.
     async with _session()() as sess:
         await sess.execute(
             text(
                 "UPDATE batch_document_pages SET status=:s, error_message=:em,"
-                " processing_time=:pt, fields=:f, updated_at=now() WHERE id=:id"
+                " processing_time=:pt, fields=:f, quality_flags=:qf,"
+                " updated_at=now() WHERE id=:id"
             ),
             {
                 "s": status,
                 "em": error_message,
                 "pt": processing_time,
                 "f": json.dumps(fields, ensure_ascii=False) if fields is not None else None,
+                "qf": json.dumps(quality_flags) if quality_flags else None,
                 "id": page_id,
             },
         )
@@ -2195,12 +2480,20 @@ def _exc_message(exc: BaseException) -> str:
 # ── Stage 2: VLM single worker ────────────────────────────────────────────────
 
 
+# Documents whose initial Stage 2 pass is running right now. That pass
+# hands the document to Stage 3 itself when it ends, so
+# _finalize_if_complete must leave these alone or the document would be
+# stored twice.
+_stage2_in_flight: set[str] = set()
+
+
 async def _stage2_worker() -> None:
     """Runs VLM on one page at a time (120 s timeout per page), across all
     pages of one document, then reconciles the per-page results into a
     single record before handing off to Stage 3."""
     while True:
         prepared = await _preprocessed_queue.get()
+        _stage2_in_flight.add(prepared.doc_id)
         try:
             preset_id = await _resolve_preset_for_batch(prepared.batch_id)
             cfg = await _get_tenant_config(prepared.tenant_id, preset_id)
@@ -2222,7 +2515,8 @@ async def _stage2_worker() -> None:
                 page_t0 = time.monotonic()
                 await _update_page_status(page_id, "processing")
                 try:
-                    raw = await _run_vlm_tracked(page_id, page_path, cfg.prompt, cfg.page_timeout)
+                    chosen = await _page_prompt(cfg, page_id, page_path)
+                    raw = await _run_vlm_tracked(page_id, page_path, chosen.text, cfg.page_timeout)
                     if raw.get("_parse_error") or raw.get("_error"):
                         err = raw.get("_raw", "VLM parse error")[:500]
                         page_errors.append(err)
@@ -2239,6 +2533,7 @@ async def _stage2_worker() -> None:
                             "completed",
                             fields=raw,
                             processing_time=round(time.monotonic() - page_t0, 2),
+                            quality_flags=_quality_flags(raw, cfg.list_fields, chosen.checks),
                         )
                 except asyncio.CancelledError:
                     # A user-initiated cancel (cancel_page, or a
@@ -2304,10 +2599,24 @@ async def _stage2_worker() -> None:
                 )
             )
         finally:
+            _stage2_in_flight.discard(prepared.doc_id)
             _preprocessed_queue.task_done()
 
 
 # ── Stage 3: Post-processing pool ─────────────────────────────────────────────
+
+
+async def _document_has_flagged_pages(batch_document_id: str) -> bool:
+    async with _engine().connect() as conn:
+        row = await conn.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM batch_document_pages"
+                " WHERE batch_document_id = CAST(:bd AS uuid)"
+                "   AND status = 'completed' AND quality_flags IS NOT NULL)"
+            ),
+            {"bd": batch_document_id},
+        )
+        return bool(row.scalar())
 
 
 async def _stage3_process(result: _VlmResult) -> None:
@@ -2354,8 +2663,12 @@ async def _stage3_process(result: _VlmResult) -> None:
 
         confidence = result.fields.get("extraction_confidence", "low")
         document_type = result.fields.get("document_type", "document")
-        review_status = "auto_approved" if confidence == "high" else "review_required"
-        final_status = "completed" if confidence == "high" else "review_required"
+        # The model's own "high" confidence isn't enough on its own: any
+        # page that failed the automatic checks sends the whole document
+        # to a human instead of auto-approving it.
+        auto_ok = confidence == "high" and not await _document_has_flagged_pages(result.doc_id)
+        review_status = "auto_approved" if auto_ok else "review_required"
+        final_status = "completed" if auto_ok else "review_required"
 
         try:
             await _store_extraction(
@@ -2550,17 +2863,105 @@ async def _retry_document(
     return batch_id
 
 
+async def _finalize_if_complete(batch_document_id: str) -> bool:
+    """Finalize a document that was never handed to Stage 3 - its initial
+    pass was interrupted (API restart, pause, a stuck page) and its pages
+    were then finished one by one with retry, resume, skip or manual entry.
+    Those paths only update an already-stored record, so without this the
+    document stays "processing" forever even with every page done.
+
+    Runs Stage 3 on the reconciled pages once no page is still pending,
+    processing or failed. Returns True if it finalized the document."""
+    if batch_document_id in _stage2_in_flight:
+        return False
+    async with _engine().connect() as conn:
+        doc = (
+            await conn.execute(
+                text(
+                    "SELECT batch_id::text, filename, status, source_path"
+                    " FROM batch_documents WHERE id = CAST(:bd AS uuid)"
+                ),
+                {"bd": batch_document_id},
+            )
+        ).mappings().one_or_none()
+        if doc is None or doc["status"] not in ("pending", "processing"):
+            return False
+        pages = (
+            await conn.execute(
+                text(
+                    "SELECT status, fields, image_path FROM batch_document_pages"
+                    " WHERE batch_document_id = CAST(:bd AS uuid) ORDER BY page_number"
+                ),
+                {"bd": batch_document_id},
+            )
+        ).mappings().all()
+    if not pages or any(p["status"] in ("pending", "processing", "failed") for p in pages):
+        return False
+
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None:
+        return False
+    tenant_id, tenant_slug = tenant
+    cfg = await _get_tenant_config(tenant_id, await _resolve_preset_for_batch_document(batch_document_id))
+
+    page_fields = [p["fields"] for p in pages if p["status"] in ("completed", "manual") and p["fields"]]
+    source = Path(doc["source_path"]) if doc["source_path"] else None
+    if source is None or not source.exists():
+        await _update_doc_status(
+            batch_document_id,
+            "crashed",
+            error_message="Cannot finalize: the original uploaded file is no longer on disk",
+        )
+        return True
+    content_hash = await asyncio.to_thread(_compute_hash, source)
+    await _stage3_process(
+        _VlmResult(
+            doc_id=batch_document_id,
+            batch_id=doc["batch_id"],
+            dest_paths=[Path(p["image_path"]) for p in pages],
+            pdf_path=source if source.suffix.lower() == ".pdf" else None,
+            filename=doc["filename"],
+            t0=time.monotonic(),
+            fields=_reconcile_pages(page_fields, cfg.list_fields) if page_fields else {},
+            error=None if page_fields else "Every page was skipped - nothing to store",
+            content_hash=content_hash,
+            tenant_id=tenant_id,
+            tenant_slug=tenant_slug,
+        )
+    )
+    return True
+
+
+async def _finalize_stranded_documents() -> None:
+    """Startup pass: finalize documents an earlier restart left
+    "processing" with every page already done."""
+    try:
+        async with _engine().connect() as conn:
+            rows = await conn.execute(
+                text("SELECT id::text FROM batch_documents WHERE status IN ('pending', 'processing')")
+            )
+            doc_ids = [r[0] for r in rows]
+        for doc_id in doc_ids:
+            await _finalize_if_complete(doc_id)
+    except Exception as e:
+        print(f"[finalize] WARNING: startup pass failed: {_exc_message(e)}", file=sys.stderr)
+
+
 async def _merge_page_into_document(batch_document_id: str) -> None:
     """Re-reconcile all completed/manually-entered pages for a document and
     update its already-stored record in place. Used after a per-page retry
     or manual entry, so the change is reflected even when the document was
-    already finalized by Stage 3 before this page succeeded.
+    already finalized by Stage 3 before this page succeeded. A document that
+    was never finalized is finalized here instead, once all its pages are
+    done (see _finalize_if_complete).
 
     A no-op if the document hasn't been finalized yet (or its document_type
     changed since - a known simplification: the row is looked up by its
     *current* inferred table, not moved if the type changes between
     reconciliations).
     """
+    if await _finalize_if_complete(batch_document_id):
+        return
     async with _engine().connect() as conn:
         pages_result = await conn.execute(
             text(
@@ -2805,7 +3206,7 @@ async def _run_page_reload(page_id: str) -> None:
 
     for pid, path in zip(new_page_ids, new_paths):
         await _update_page_status(pid, "processing")
-        await _process_one_page(pid, path, cfg.prompt, cfg.page_timeout)
+        await _process_one_page(pid, path, cfg)
 
     await _merge_page_into_document(batch_document_id)
 
@@ -2842,16 +3243,52 @@ async def _retry_single_page(page_id: str, locale: str = DEFAULT_LOCALE) -> None
     asyncio.create_task(_run_page_retry(page_id, record["batch_document_id"], image_path))
 
 
-async def _process_one_page(
-    page_id: str, image_path: Path, prompt: str, page_timeout: float
-) -> bool:
+async def _page_prompt(cfg: TenantConfig, page_id: str, image_path: Path) -> LoadedPrompt:
+    """Which prompt extracts this page: a page_prompts range covering its
+    source page, else the prompt of the type the classify_prompt reports,
+    else the main prompt. Classification is one extra VLM call. If it fails
+    (timeout, bad JSON, an unknown type), the main prompt is used - it must
+    never cost the page its extraction. A user cancel still propagates."""
+    main = cfg.main
+    if main.page_prompts:
+        async with _engine().connect() as conn:
+            row = await conn.execute(
+                text("SELECT source_page_number FROM batch_document_pages WHERE id = CAST(:id AS uuid)"),
+                {"id": page_id},
+            )
+            ranged = cfg.prompt_for_range(row.scalar_one_or_none())
+        if ranged is not None:
+            return ranged
+    if main.classify_prompt:
+        try:
+            raw = await _run_vlm_tracked(page_id, image_path, main.classify_prompt, cfg.page_timeout)
+        except Exception as exc:
+            print(
+                f"[classify] page {page_id}: classification failed, using main prompt: {_exc_message(exc)}",
+                file=sys.stderr,
+            )
+            return main
+        typed = cfg.prompt_for_type(raw.get("page_type"))
+        if typed is None:
+            print(
+                f"[classify] page {page_id}: unknown page_type {raw.get('page_type')!r}, using main prompt",
+                file=sys.stderr,
+            )
+            return main
+        return typed
+    return main
+
+
+async def _process_one_page(page_id: str, image_path: Path, cfg: TenantConfig) -> bool:
     """Run VLM extraction for one page and update its row. Returns True on
     success. Does not merge into the parent document - callers merge once
     after processing one or more pages, so a bulk resume doesn't re-run
     the (cheap but non-trivial) reconciliation after every single page."""
     t0 = time.monotonic()
+    page_timeout = cfg.page_timeout
     try:
-        raw = await _run_vlm_tracked(page_id, image_path, prompt, page_timeout)
+        chosen = await _page_prompt(cfg, page_id, image_path)
+        raw = await _run_vlm_tracked(page_id, image_path, chosen.text, page_timeout)
     except asyncio.CancelledError:
         # A user-initiated cancel (cancel_page, or a cancel-and-delete of
         # the whole document) - treated as a per-page outcome, not
@@ -2895,6 +3332,7 @@ async def _process_one_page(
         "completed",
         fields=raw,
         processing_time=round(time.monotonic() - t0, 2),
+        quality_flags=_quality_flags(raw, cfg.list_fields, chosen.checks),
     )
     return True
 
@@ -2909,7 +3347,7 @@ async def _run_page_retry(page_id: str, batch_document_id: str, image_path: Path
     tenant_id, _tenant_slug = tenant
     preset_id = await _resolve_preset_for_batch_document(batch_document_id)
     cfg = await _get_tenant_config(tenant_id, preset_id)
-    await _process_one_page(page_id, image_path, cfg.prompt, cfg.page_timeout)
+    await _process_one_page(page_id, image_path, cfg)
     await _merge_page_into_document(batch_document_id)
 
 
@@ -3034,7 +3472,7 @@ async def _run_resume(batch_document_id: str, pages: list[tuple[str, Path]]) -> 
                 error_message=f"Stored page image no longer on disk: {image_path}",
             )
             continue
-        await _process_one_page(page_id, image_path, cfg.prompt, cfg.page_timeout)
+        await _process_one_page(page_id, image_path, cfg)
     await _merge_page_into_document(batch_document_id)
 
 
@@ -3544,7 +3982,7 @@ async def list_pages(
         result = await sess.execute(
             text(
                 "SELECT id, page_number, image_path, status, error_message,"
-                " processing_time, fields, updated_at"
+                " processing_time, fields, quality_flags, updated_at"
                 " FROM batch_document_pages WHERE batch_document_id = CAST(:bd AS uuid)"
                 " ORDER BY page_number"
             ),
@@ -3564,6 +4002,7 @@ async def list_pages(
             "error_message": r["error_message"],
             "processing_time": r["processing_time"],
             "fields": r["fields"],
+            "quality_flags": r["quality_flags"] or [],
             "updated_at": r["updated_at"].isoformat(),
         }
         for r in rows
@@ -3581,6 +4020,7 @@ async def list_pages(
         "failed": _count("failed"),
         "manual": _count("manual"),
         "skipped": _count("skipped"),
+        "flagged": sum(1 for p in pages if p["status"] == "completed" and p["quality_flags"]),
         "pages": pages,
     }
 

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -12,14 +13,18 @@ import { useReviewQueue } from "../hooks/useReview";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
 import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
+import ListTable, { isComplexValue } from "../components/ListTable";
 import type { ReviewQueueItem } from "@sdai/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+// System columns (mirrors _BASE_COLS in apps/api/ingest_router.py) - not
+// extracted content, so never shown as editable fields.
 const READONLY = new Set([
   "id", "table_name", "document_type", "confidence",
-  "review_status", "source_image_path", "ingested_at",
-  "reviewed_at", "batch_id",
+  "review_status", "source_image_path", "source_pdf_path", "page_image_paths",
+  "ingested_at", "reviewed_at", "reviewed_by", "batch_id", "batch_document_id",
+  "content_hash",
 ]);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -107,6 +112,55 @@ function Toast({ message, visible }: { message: string; visible: boolean }) {
   );
 }
 
+// ── List-of-objects field ─────────────────────────────────────────────────────
+
+function ComplexField({
+  value,
+  jsonText,
+  onChange,
+  canEdit,
+}: {
+  value: unknown;
+  jsonText: string;
+  onChange: (val: string) => void;
+  canEdit: boolean;
+}) {
+  const { t } = useTranslation();
+  const [editing, setEditing] = useState(false);
+
+  const toggle = canEdit ? (
+    <button
+      type="button"
+      onClick={() => setEditing((e) => !e)}
+      className="ml-auto text-[11px] font-medium text-indigo-600 hover:text-indigo-800 whitespace-nowrap"
+    >
+      {editing ? t("review.complex.showTable") : t("review.complex.editJson")}
+    </button>
+  ) : null;
+
+  if (!editing) return <ListTable value={value} toolbar={toggle} />;
+
+  let jsonError = false;
+  try {
+    JSON.parse(jsonText);
+  } catch {
+    jsonError = true;
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center">{toggle}</div>
+      <textarea
+        value={jsonText}
+        onChange={(e) => onChange(e.target.value)}
+        rows={14}
+        spellCheck={false}
+        className="w-full font-mono text-xs rounded-md border border-gray-300 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+      />
+      {jsonError && <p className="text-xs text-red-500">{t("review.complex.invalidJson")}</p>}
+    </div>
+  );
+}
+
 // ── Editable form ─────────────────────────────────────────────────────────────
 
 interface FormProps {
@@ -114,11 +168,12 @@ interface FormProps {
   form: Record<string, string>;
   initial: Record<string, string>;
   arrayFields: Set<string>;
+  complexFields: Set<string>;
   onChange: (key: string, val: string) => void;
   canEdit: boolean;
 }
 
-function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: FormProps) {
+function ReviewForm({ detail, form, initial, arrayFields, complexFields, onChange, canEdit }: FormProps) {
   const { t } = useTranslation();
   const confidence = detail.confidence ? String(detail.confidence) : null;
   const documentType = detail.document_type ? String(detail.document_type) : null;
@@ -126,7 +181,9 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
   const editableKeys = Object.keys(detail).filter((k) => !READONLY.has(k));
 
   return (
-    <div className="flex flex-col h-full">
+    // flex-1 + min-h-0 (not h-full): the form shrinks to leave room for the
+    // pinned action bar below it, and scrolls internally instead.
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Read-only badges */}
       <div className="px-5 py-3 border-b border-gray-200 flex flex-wrap items-center gap-2 flex-shrink-0">
         {documentType && (
@@ -142,7 +199,7 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
       </div>
 
       {/* Editable fields */}
-      <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3">
+      <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-3">
         {!canEdit && (
           <p className="text-xs text-gray-400 italic">
             {t("review.permissionNote")}
@@ -155,6 +212,7 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
           const val = form[key] ?? "";
           const changed = val !== (initial[key] ?? "");
           const isArray = arrayFields.has(key);
+          const isComplex = complexFields.has(key);
 
           return (
             <div
@@ -164,10 +222,18 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
             >
               <label className="block text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
                 {labelFor(key)}
-                {isArray && (
+                {isArray && !isComplex && (
                   <span className="ml-1 font-normal normal-case text-gray-400">{t("review.commaSeparated")}</span>
                 )}
               </label>
+              {isComplex ? (
+                <ComplexField
+                  value={detail[key]}
+                  jsonText={val}
+                  onChange={(v) => onChange(key, v)}
+                  canEdit={canEdit}
+                />
+              ) : (
               <input
                 type="text"
                 value={val}
@@ -176,6 +242,7 @@ function ReviewForm({ detail, form, initial, arrayFields, onChange, canEdit }: F
                 placeholder={t("review.fieldPlaceholder")}
                 className="w-full rounded-md border border-gray-300 px-2.5 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 placeholder-gray-300 disabled:bg-gray-50 disabled:text-gray-500"
               />
+              )}
             </div>
           );
         })}
@@ -216,14 +283,19 @@ export default function ReviewPage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [initial, setInitial] = useState<Record<string, string>>({});
   const [arrayFields, setArrayFields] = useState<Set<string>>(new Set());
+  const [complexFields, setComplexFields] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!detail) return;
     const vals: Record<string, string> = {};
     const arrays: Set<string> = new Set();
+    const complex: Set<string> = new Set();
     for (const [k, v] of Object.entries(detail)) {
       if (READONLY.has(k)) continue;
-      if (Array.isArray(v)) {
+      if (isComplexValue(v)) {
+        complex.add(k);
+        vals[k] = JSON.stringify(v, null, 2);
+      } else if (Array.isArray(v)) {
         arrays.add(k);
         vals[k] = (v as unknown[]).map(String).join(", ");
       } else {
@@ -233,7 +305,19 @@ export default function ReviewPage() {
     setForm(vals);
     setInitial({ ...vals });
     setArrayFields(arrays);
+    setComplexFields(complex);
   }, [detail]);
+
+  // Every page image of the current document (multi-page documents store
+  // them in page_image_paths), so the reviewer can check any page, not just
+  // the first one.
+  const pagePaths = useMemo(() => {
+    const paths = detail?.page_image_paths;
+    if (Array.isArray(paths) && paths.length > 0) return paths.map(String);
+    return current?.source_image_path ? [current.source_image_path] : [];
+  }, [detail, current]);
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [current?.id]);
 
   // Toast
   const [toast, setToast] = useState({ message: "", visible: false });
@@ -265,11 +349,19 @@ export default function ReviewPage() {
   // every field back unconditionally would make every approval look like
   // an edit and require the extraction-editing permission even when
   // nothing was touched (see documents_router._build_field_set_clause).
-  function buildFields(): Record<string, string | string[] | null> {
-    const out: Record<string, string | string[] | null> = {};
+  // Throws on invalid JSON in a list-of-objects field, so a half-edited
+  // value can never be saved as a plain string over the real data.
+  function buildFields(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(form)) {
       if (v === (initial[k] ?? "")) continue;
-      if (arrayFields.has(k)) {
+      if (complexFields.has(k)) {
+        try {
+          out[k] = JSON.parse(v);
+        } catch {
+          throw new Error(t("review.complex.invalidJsonField", { field: labelFor(k) }));
+        }
+      } else if (arrayFields.has(k)) {
         out[k] = v.trim()
           ? v.split(",").map((s) => s.trim()).filter(Boolean)
           : [];
@@ -343,9 +435,9 @@ export default function ReviewPage() {
   }, {});
 
   const oldestIngested = items[0]?.ingested_at;
-  const imgSrc = current?.source_image_path
-    ? dbImageUrl(current.source_image_path)
-    : null;
+  const pageIdx = Math.min(page, Math.max(0, pagePaths.length - 1));
+  const pagePath = pagePaths[pageIdx] ?? current?.source_image_path ?? null;
+  const imgSrc = pagePath ? dbImageUrl(pagePath) : null;
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -430,7 +522,7 @@ export default function ReviewPage() {
               <div className="flex flex-col border-r border-gray-200" style={{ width: "58%" }}>
                 <div className="flex-1 overflow-hidden">
                   {imgSrc ? (
-                    <PanZoomImage src={imgSrc} />
+                    <PanZoomImage key={imgSrc} src={imgSrc} />
                   ) : (
                     <div className="flex h-full items-center justify-center text-gray-400 text-sm bg-gray-100">
                       {t("review.noImage")}
@@ -440,8 +532,41 @@ export default function ReviewPage() {
                 {/* Image metadata */}
                 {current && (
                   <div className="px-4 py-2 border-t border-gray-200 bg-white flex items-center gap-4 flex-shrink-0">
+                    {pagePaths.length > 1 && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => setPage(Math.max(0, pageIdx - 1))}
+                          disabled={pageIdx <= 0}
+                          title={t("review.pages.previous")}
+                          className="px-2 py-0.5 rounded border border-gray-300 text-xs disabled:opacity-40 hover:bg-gray-50"
+                        >
+                          ‹
+                        </button>
+                        <input
+                          type="number"
+                          min={1}
+                          max={pagePaths.length}
+                          value={pageIdx + 1}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (Number.isFinite(n)) setPage(Math.min(pagePaths.length, Math.max(1, n)) - 1);
+                          }}
+                          aria-label={t("review.pages.jump")}
+                          className="w-14 rounded border border-gray-300 px-1 py-0.5 text-xs text-center"
+                        />
+                        <span className="text-xs text-gray-500">{t("review.pages.of", { total: pagePaths.length })}</span>
+                        <button
+                          onClick={() => setPage(Math.min(pagePaths.length - 1, pageIdx + 1))}
+                          disabled={pageIdx >= pagePaths.length - 1}
+                          title={t("review.pages.next")}
+                          className="px-2 py-0.5 rounded border border-gray-300 text-xs disabled:opacity-40 hover:bg-gray-50"
+                        >
+                          ›
+                        </button>
+                      </div>
+                    )}
                     <span className="text-xs text-gray-500 truncate">
-                      {current.source_image_path?.split("/").pop() ?? "-"}
+                      {pagePath?.split("/").pop() ?? "-"}
                     </span>
                     {current.ingested_at && (
                       <span className="text-xs text-gray-400 ml-auto shrink-0">
@@ -464,6 +589,7 @@ export default function ReviewPage() {
                     form={form}
                     initial={initial}
                     arrayFields={arrayFields}
+                    complexFields={complexFields}
                     onChange={(k, v) => setForm((f) => ({ ...f, [k]: v }))}
                     canEdit={canEditExtraction}
                   />

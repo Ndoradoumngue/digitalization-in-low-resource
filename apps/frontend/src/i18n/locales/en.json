@@ -202,12 +202,21 @@
       "summary": "Pages: {{done}} / {{total}} processed",
       "failedSuffix": " · {{count}} failed",
       "skippedSuffix": " · {{count}} skipped",
+      "flaggedSuffix": " · {{count}} to check",
       "resumeTitle": "Process every page that hasn't been attempted yet - use this if the run was interrupted (e.g. a server restart) and hasn't moved in a while",
       "resuming": "Resuming…",
       "resumeRemaining": "Resume remaining ({{count}})",
       "pauseTitle": "Stop the page currently being extracted right away and hold off on the rest - use Resume remaining to continue later",
       "pausing": "Pausing…",
       "pause": "Pause"
+    },
+    "qualityFlags": {
+      "title": "Automatic checks found problems in this page's extraction - compare it with the image, then fix it with Re-run or a manual entry",
+      "empty_value": "{{count}} item(s) in “{{field}}” with an empty side",
+      "identical_values": "{{count}} item(s) in “{{field}}” with the same text on both sides",
+      "overlong_value": "{{count}} item(s) in “{{field}}” are very long - several entries may have been merged into one",
+      "repeated_items": "{{count}} item(s) in “{{field}}” repeated 3 times or more",
+      "too_few_items": "Only {{count}} item(s) in “{{field}}” - fewer than expected for this kind of page"
     },
     "deleteDocument": {
       "confirm": "Delete the extracted document for this upload? This lets you re-upload the same file without it being blocked as a duplicate. This cannot be undone.",
@@ -287,6 +296,21 @@
     "newBatch": "New batch"
   },
   "review": {
+    "pages": {
+      "previous": "Previous page",
+      "next": "Next page",
+      "jump": "Go to page",
+      "of": "/ {{total}}"
+    },
+    "complex": {
+      "search": "Search…",
+      "count": "{{count}} items",
+      "filtered": "{{shown}} of {{count}} items",
+      "editJson": "Edit as JSON",
+      "showTable": "Show table",
+      "invalidJson": "Invalid JSON - fix it before approving",
+      "invalidJsonField": "Invalid JSON in “{{field}}” - fix it before approving"
+    },
     "toast": {
       "approved": "Approved",
       "rejected": "Rejected",
@@ -304,8 +328,8 @@
     "oldestSuffix": " · oldest {{time}}",
     "emptyQueue": "Review queue is empty - all documents processed",
     "uploadMore": "Upload more documents",
-    "navPrevious": "← Previous",
-    "navNext": "Next →",
+    "navPrevious": "← Previous document",
+    "navNext": "Next document →",
     "reviewingOf": "Reviewing {{current}} of {{total}}",
     "noImage": "No image available",
     "ingested": "Ingested {{time}}",
@@ -561,5 +585,18 @@
   "confirmDialog": {
     "confirm": "Confirm",
     "cancel": "Cancel"
+  },
+  "listTable": {
+    "search": "Search…",
+    "count": "{{count}} items",
+    "filtered": "{{shown}} of {{count}} items"
+  },
+  "exportMenu": {
+    "button": "Export ▾",
+    "preparing": "Preparing…",
+    "title": "Download this document's data",
+    "json": "Whole document - JSON",
+    "sql": "Whole document - SQL",
+    "csv": "{{field}} - CSV spreadsheet"
   }
 }

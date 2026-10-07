@@ -1,0 +1,16 @@
+# min_items: parcels=3
+# max_value_length: 300
+
+This page is a register page of a scanned land register: a table with one parcel
+per row. Make one item per row, in order. Never merge two rows into one item, never
+leave a column empty when it is printed, and never repeat a row.
+
+Return ONLY a JSON object in this exact shape:
+
+{
+  "document_type": "Registre foncier",
+  "parcels": [
+    {"parcel_number": "as written", "owner": "as written", "location": "as written"}
+  ],
+  "extraction_confidence": "high or medium or low"
+}

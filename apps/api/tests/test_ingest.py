@@ -228,40 +228,59 @@ def test_sniff_matches_extension_rejects_mismatched_content():
 # ── Path ingest ───────────────────────────────────────────────────────────────
 
 
-def test_path_missing_both_params_returns_422(auth_client, monkeypatch):
+# /path is admin-only and restricted to INGEST_ROOT (see ingest_from_path).
+
+
+def test_path_requires_admin(auth_client, monkeypatch):
     monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="batch-p"))
-    resp = auth_client.post("/api/ingest/path", json={})
+    resp = auth_client.post("/api/ingest/path", json={"path": "/data/ingest"})
+    assert resp.status_code == 403
+
+
+def test_path_missing_both_params_returns_422(admin_client, monkeypatch):
+    monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="batch-p"))
+    resp = admin_client.post("/api/ingest/path", json={})
     assert resp.status_code == 422
 
 
-def test_path_nonexistent_directory(auth_client, monkeypatch):
+def test_path_outside_ingest_root_is_refused(admin_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest_router, "INGEST_ROOT", (tmp_path / "root").resolve())
+    monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="batch-p"))
+    resp = admin_client.post("/api/ingest/path", json={"path": "/etc"})
+    assert resp.status_code == 403
+
+
+def test_path_nonexistent_directory(admin_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest_router, "INGEST_ROOT", tmp_path.resolve())
     monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="batch-p"))
     monkeypatch.setattr(ingest_router, "_register_and_enqueue", AsyncMock())
 
-    resp = auth_client.post("/api/ingest/path", json={"path": "/nonexistent/path/definitely"})
-    assert resp.status_code in (404, 422)
+    resp = admin_client.post("/api/ingest/path", json={"path": str(tmp_path / "definitely-missing")})
+    assert resp.status_code == 404
 
 
-def test_path_empty_directory(auth_client, tmp_path, monkeypatch):
+def test_path_empty_directory(admin_client, tmp_path, monkeypatch):
     src = tmp_path / "empty_src"
     src.mkdir()
+    monkeypatch.setattr(ingest_router, "INGEST_ROOT", tmp_path.resolve())
     monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="batch-p"))
 
-    resp = auth_client.post("/api/ingest/path", json={"path": str(src)})
+    resp = admin_client.post("/api/ingest/path", json={"path": str(src)})
     assert resp.status_code == 422
     assert "No supported files" in resp.json()["detail"]
 
 
-def test_path_directory_with_images(auth_client, tmp_path, monkeypatch):
+def test_path_directory_with_images(admin_client, tmp_path, monkeypatch):
     src = tmp_path / "docs"
     src.mkdir()
     (src / "scan.png").write_bytes(b"\x89PNG")
     (src / "scan2.jpg").write_bytes(b"\xff\xd8\xff")
 
+    monkeypatch.setattr(ingest_router, "INGEST_ROOT", tmp_path.resolve())
     monkeypatch.setattr(ingest_router, "_create_batch", AsyncMock(return_value="batch-p"))
     monkeypatch.setattr(ingest_router, "_register_and_enqueue", AsyncMock())
 
-    resp = auth_client.post("/api/ingest/path", json={"path": str(src)})
+    resp = admin_client.post("/api/ingest/path", json={"path": str(src)})
 
     assert resp.status_code == 200
     assert resp.json()["batch_id"] == "batch-p"

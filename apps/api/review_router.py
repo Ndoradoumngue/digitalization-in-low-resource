@@ -364,6 +364,7 @@ async def flag_review(
         ip_address=client_ip(request),
     )
     await invalidate_cache("review")
+    return {"ok": True}
 
 
 @router.post("/{table_name}/{doc_id}/retry")
