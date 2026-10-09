@@ -1,7 +1,46 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AccessGrant } from "@sdai/types";
-import { useDocumentAccess, useCreateDocumentAccess, useDeleteDocumentAccess, useGrantees } from "../hooks/useAccess";
+import {
+  CONFIDENTIALITY_LEVELS,
+  PERMISSION_LEVELS,
+  type AccessGrant,
+  type Confidentiality,
+  type PermissionLevel,
+} from "@sdai/types";
+import {
+  useDocumentAccess,
+  useCreateDocumentAccess,
+  useDeleteGrant,
+  useGrantees,
+  useSetConfidentiality,
+  useUpdateAccessGrant,
+} from "../hooks/useAccess";
+import { useAuth } from "../context/AuthContext";
+import ConfidentialityBadge from "./ConfidentialityBadge";
+
+export function PermissionSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: PermissionLevel;
+  onChange: (level: PermissionLevel) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as PermissionLevel)}
+      disabled={disabled}
+      className="h-7 rounded-md border border-gray-300 px-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50"
+    >
+      {PERMISSION_LEVELS.map((level) => (
+        <option key={level} value={level}>{t(`access.permission.${level}`)}</option>
+      ))}
+    </select>
+  );
+}
 
 function GrantRow({
   grant,
@@ -15,6 +54,9 @@ function GrantRow({
   canManage: boolean;
 }) {
   const { t } = useTranslation();
+  const updateMutation = useUpdateAccessGrant();
+  // Series/type grants are managed on the access admin page, not per document.
+  const own = grant.scope === "document";
   return (
     <div className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
       <div className="flex-1 min-w-0">
@@ -22,8 +64,26 @@ function GrantRow({
           {grant.grantee_type === "group" ? t("access.group") : t("access.person")}
         </span>
         <span className="text-sm text-gray-800 truncate">{grant.grantee_name}</span>
+        {!own && (
+          <span className="ml-2 text-[11px] text-gray-400">
+            {grant.scope === "series"
+              ? t("access.viaSeries", { name: grant.series_name ?? "?" })
+              : t("access.viaType")}
+          </span>
+        )}
       </div>
-      {canManage && (
+      {canManage && own ? (
+        <PermissionSelect
+          value={grant.permission}
+          onChange={(permission) => updateMutation.mutate({ grantId: grant.id, permission })}
+          disabled={updateMutation.isPending}
+        />
+      ) : (
+        <span className="flex-shrink-0 text-[11px] font-medium text-gray-500">
+          {t(`access.permission.${grant.permission}`)}
+        </span>
+      )}
+      {canManage && own && (
         <button
           onClick={onRemove}
           disabled={removing}
@@ -50,13 +110,14 @@ function AccessGrantPicker({
   const { t } = useTranslation();
   const [granteeType, setGranteeType] = useState<"group" | "user">("group");
   const [granteeId, setGranteeId]     = useState("");
+  const [permission, setPermission]   = useState<PermissionLevel>("download");
   const { data: grantees } = useGrantees();
   const createMutation = useCreateDocumentAccess(tableName, id);
 
   function submit() {
     if (!granteeId) return;
     createMutation.mutate(
-      { grantee_type: granteeType, grantee_id: granteeId },
+      { grantee_type: granteeType, grantee_id: granteeId, permission },
       { onSuccess: onDone },
     );
   }
@@ -89,6 +150,7 @@ function AccessGrantPicker({
             </option>
           ))}
         </select>
+        <PermissionSelect value={permission} onChange={setPermission} />
       </div>
 
       {createMutation.isError && (
@@ -114,10 +176,63 @@ function AccessGrantPicker({
   );
 }
 
-export default function AccessSection({ tableName, id }: { tableName: string; id: string }) {
+function ConfidentialityControl({
+  tableName,
+  id,
+  value,
+  canManage,
+}: {
+  tableName: string;
+  id: string;
+  value: Confidentiality;
+  canManage: boolean;
+}) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const mutation = useSetConfidentiality(tableName, id);
+  // A non-admin can't classify above their own clearance (backend rule).
+  const maxIndex = user?.role === "admin"
+    ? CONFIDENTIALITY_LEVELS.length - 1
+    : CONFIDENTIALITY_LEVELS.indexOf(user?.clearance ?? "internal");
+
+  return (
+    <div className="flex items-center justify-between gap-2 mb-3">
+      <span className="text-xs text-gray-500">{t("confidentiality.label")}</span>
+      {canManage ? (
+        <select
+          value={value}
+          onChange={(e) => mutation.mutate(e.target.value as Confidentiality)}
+          disabled={mutation.isPending}
+          className="h-7 rounded-md border border-gray-300 px-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        >
+          {CONFIDENTIALITY_LEVELS.map((level, i) => (
+            <option key={level} value={level} disabled={i > maxIndex}>
+              {t(`confidentiality.${level}`)}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <ConfidentialityBadge level={value} />
+      )}
+      {mutation.isError && (
+        <p className="text-xs text-red-600">{(mutation.error as Error).message}</p>
+      )}
+    </div>
+  );
+}
+
+export default function AccessSection({
+  tableName,
+  id,
+  confidentiality,
+}: {
+  tableName: string;
+  id: string;
+  confidentiality?: Confidentiality;
+}) {
   const { t } = useTranslation();
   const { data, isLoading } = useDocumentAccess(tableName, id);
-  const deleteMutation = useDeleteDocumentAccess(tableName, id);
+  const deleteMutation = useDeleteGrant();
   const [showPicker, setShowPicker] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
@@ -144,6 +259,16 @@ export default function AccessSection({ tableName, id }: { tableName: string; id
           </button>
         )}
       </div>
+
+      {confidentiality && (
+        <ConfidentialityControl tableName={tableName} id={id} value={confidentiality} canManage={canManage} />
+      )}
+
+      {data?.my_permission && (
+        <p className="text-xs text-gray-500 mb-2">
+          {t("access.yourAccess", { level: t(`access.permission.${data.my_permission}`) })}
+        </p>
+      )}
 
       {showPicker && (
         <AccessGrantPicker tableName={tableName} id={id} onDone={() => setShowPicker(false)} />

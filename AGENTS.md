@@ -20,7 +20,7 @@ sdai_digitalization/
 ├── apps/
 │   ├── api/            # FastAPI backend
 │   │   ├── api_server.py        # App entry point + auth routes + X-Process-Time middleware
-│   │   ├── auth.py              # DB-backed auth: CurrentUser, get_current_user, require_admin
+│   │   ├── auth.py              # DB-backed auth: CurrentUser, get_current_user, require_* role guards
 │   │   ├── audit.py             # log_action() - never raises, writes to sdai_audit_log
 │   │   ├── ingest_router.py     # /api/ingest/* + _engine() + DDL helpers + SHA-256 dedup
 │   │   ├── documents_router.py  # /api/db/*
@@ -36,7 +36,9 @@ sdai_digitalization/
 │   │       ├── test_middleware.py   # X-Process-Time header + slow-request WARNING log
 │   │       ├── test_performance.py  # benchmark tests - opt-in with pytest -m benchmark
 │   │       ├── test_rate_limit.py   # SlowAPI key builder
-│   │       └── test_review.py       # approve, reject, flag, count
+│   │       ├── test_review.py       # approve, reject, flag, count
+│   │       ├── test_permissions.py  # role/flag/permission-level matrix + leak tests (mocked)
+│   │       └── test_access_pg.py    # access control on a real PostgreSQL (opt-in: -m pg + TEST_DATABASE_URL)
 │   └── frontend/       # @sdai/frontend - React 18 + Vite + Tailwind + TanStack Query
 ├── docker-compose.yml
 ├── Dockerfile.frontend
@@ -111,6 +113,9 @@ pytest tests/ -m "not benchmark" -v
 # Benchmark tests only
 pytest tests/ -m benchmark -v
 
+# Access control against a real, THROWAWAY PostgreSQL (the test wipes its schema)
+TEST_DATABASE_URL=postgresql+asyncpg://user:pw@localhost:5432/scratch pytest tests/ -m pg -v
+
 # From repo root
 pnpm test:api
 ```
@@ -135,8 +140,8 @@ pre-commit run --all-files  # run manually
 
 ### API (`apps/api/`)
 
-- All data routes require `Depends(get_current_user)` - never expose data without auth.
-- Admin-only routes additionally require `Depends(require_admin)` from `auth.py`.
+- All data routes require `Depends(get_current_user)` - never expose data without auth. Prefer the role guards from `auth.py`, which all build on it: `require_user` (archive reads - any person, never an API key), `require_contributor` (upload/ingestion tracking - never a reader), `require_reviewer` (document actions), `require_access_manager`, `require_extraction_editor`, `require_admin`.
+- Every query or check on a document goes through `documents_router._access_where_clause(table, user, permission)` / `_document_visible` / `_require_document_permission` with the level the action needs (`read`, `download`, `edit`) - never filter visibility in Python. Cached endpoints whose answer depends on visibility must be cleared (`_ACCESS_CACHE_NAMESPACES`) when grants, confidentiality or series change.
 - Auth uses httpOnly cookies (`access_token=Bearer <jwt>`). No Authorization headers. Users are stored in PostgreSQL (`sdai_users`); JWT `jti` blocklist in `sdai_token_blocklist`.
 - CORS is **disabled in Docker** (nginx proxies internally). Enable via `CORS_ORIGINS` env var for local dev only.
 - `log_action()` in `audit.py` is called after state-changing operations. It swallows all exceptions - never let it propagate to callers.
@@ -165,7 +170,8 @@ pre-commit run --all-files  # run manually
 
 - `AuthContext` initialises by calling `GET /api/auth/me` on mount - sets `isLoading: true` until resolved.
 - `ProtectedRoute` shows a spinner during auth init, then redirects to `/login` if no user.
-- `AdminRoute` additionally redirects authenticated non-admin users to `/` (not `/login`). Use it for admin-only pages in `App.tsx`.
+- `AdminRoute` additionally redirects authenticated non-admin users to `/` (not `/login`). Use it for admin-only pages in `App.tsx`. `ContributorRoute` keeps read-only users off pages that upload or review.
+- Hide actions the backend would refuse with `useDocumentPermissions(table, id)` (`hooks/useAccess.ts`) and `utils/permissions.ts` - the backend stays the authority.
 - `DashboardPage` fetches both OCR and VLM document lists simultaneously; only the active tab's list is displayed.
 - Tab state lives in `DashboardPage` - switching tabs clears `selected`.
 - The admin-only Audit Log link in the sidebar is rendered only when `user?.role === "admin"`.
@@ -184,7 +190,7 @@ pre-commit run --all-files  # run manually
 ### New frontend page
 
 1. Create `apps/frontend/src/pages/MyPage.tsx`.
-2. Add a `<Route>` in `apps/frontend/src/App.tsx` wrapped in `<ProtectedRoute>` (auth-gated) or `<AdminRoute>` (admin-only).
+2. Add a `<Route>` in `apps/frontend/src/App.tsx` wrapped in `<ProtectedRoute>` (auth-gated), `<ContributorRoute>` (not for readers) or `<AdminRoute>` (admin-only).
 3. Add a TanStack Query hook in `apps/frontend/src/hooks/` if the page fetches data.
 4. Add navigation in the sidebar in `DashboardPage.tsx` or a new layout component. Wrap admin-only sidebar links in `{user?.role === "admin" && (…)}`.
 
@@ -202,7 +208,7 @@ pre-commit run --all-files  # run manually
 - Do not use `allow_origins=["*"]` with `allow_credentials=True` in CORS - browsers reject it.
 - Do not add `rootDir` to `packages/api-client/tsconfig.json`.
 - Do not run `pnpm approve-builds` interactively during Docker builds - esbuild is pre-approved via `"pnpm": { "onlyBuiltDependencies": ["esbuild"] }` in root `package.json`.
-- Do not skip `Depends(get_current_user)` on new data routes.
+- Do not skip `Depends(get_current_user)` (or a `require_*` guard built on it) on new data routes.
 - Do not import `_engine` from `ingest_router` at module level in `auth.py` or `audit.py` - always import lazily inside the function body to avoid circular imports.
 - Do not let `log_action()` failures propagate - the helper swallows exceptions by design.
 - Keep schemas in `packages/types`, not duplicated in `api-client` or `frontend`.

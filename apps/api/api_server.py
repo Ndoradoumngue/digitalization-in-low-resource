@@ -40,6 +40,7 @@ from audit import client_ip, log_action
 from auth import (
     CurrentUser,
     get_current_user,
+    require_user,
 )
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -182,7 +183,8 @@ async def login(
             text(
                 "SELECT u.id, u.email, u.full_name, u.role, u.hashed_password, u.is_active,"
                 "       t.slug AS tenant_slug, t.name AS tenant_name, t.is_active AS tenant_is_active,"
-                "       u.can_manage_access, u.can_edit_extraction"
+                "       u.can_manage_access, u.can_edit_extraction,"
+                "       u.can_manage_lifecycle, u.can_share, u.clearance"
                 " FROM sdai_users u"
                 " JOIN sdai_tenants t ON t.id = u.tenant_id"
                 " WHERE u.email = :e"
@@ -219,6 +221,9 @@ async def login(
         "tenant_name": user[7],
         "can_manage_access": user[9],
         "can_edit_extraction": user[10],
+        "can_manage_lifecycle": user[11],
+        "can_share": user[12],
+        "clearance": user[13],
         "node_id": NODE_ID,
         "node_role": NODE_ROLE,
     }
@@ -279,6 +284,9 @@ async def me(current_user: CurrentUser = Depends(get_current_user)):
         "tenant_name": current_user.tenant_name,
         "can_manage_access": current_user.can_manage_access,
         "can_edit_extraction": current_user.can_edit_extraction,
+        "can_manage_lifecycle": current_user.can_manage_lifecycle,
+        "can_share": current_user.can_share,
+        "clearance": current_user.clearance,
         "node_id": NODE_ID,
         "node_role": NODE_ROLE,
     }
@@ -312,7 +320,7 @@ def _load_vlm_all(locale: str = "en") -> dict:
 
 
 @app.get("/api/documents", tags=["ocr"], summary="List documents (OCR)")
-def list_documents(current_user: str = Depends(get_current_user)):
+def list_documents(current_user: CurrentUser = Depends(require_user)):
     """
     Return all document filenames in the anonymized_docs directory with a
     `hasResult` flag indicating whether a pre-computed OCR JSON result exists.
@@ -329,7 +337,7 @@ def list_documents(current_user: str = Depends(get_current_user)):
 
 
 @app.get("/api/documents/{filename}", tags=["ocr"], summary="OCR result for one document")
-def get_document_result(filename: str, current_user: str = Depends(get_current_user)):
+def get_document_result(filename: str, current_user: CurrentUser = Depends(require_user)):
     """
     Return the full OCR result JSON for one document.
     Contains text, confidence, and processing time for each engine (Tesseract, EasyOCR, Surya)
@@ -344,7 +352,7 @@ def get_document_result(filename: str, current_user: str = Depends(get_current_u
 
 
 @app.get("/api/results", tags=["ocr"], summary="All OCR results")
-def get_all_ocr_results(current_user: str = Depends(get_current_user)):
+def get_all_ocr_results(current_user: CurrentUser = Depends(require_user)):
     """Return the combined _all_results.json file containing OCR results for every document."""
     all_path = JSON_DIR / "_all_results.json"
     if not all_path.exists():
@@ -358,7 +366,7 @@ def get_all_ocr_results(current_user: str = Depends(get_current_user)):
 
 
 @app.get("/api/vlm/documents", tags=["vlm"], summary="List documents (VLM)")
-def list_vlm_documents(current_user: str = Depends(get_current_user)):
+def list_vlm_documents(current_user: CurrentUser = Depends(require_user)):
     """
     Return all document filenames with a `hasResult` flag indicating whether a
     VLM extraction result exists. Used by the VLM Extraction dashboard tab.
@@ -369,7 +377,7 @@ def list_vlm_documents(current_user: str = Depends(get_current_user)):
 
 
 @app.get("/api/vlm/documents/{filename}", tags=["vlm"], summary="VLM result for one document")
-def get_vlm_result(filename: str, current_user: str = Depends(get_current_user)):
+def get_vlm_result(filename: str, current_user: CurrentUser = Depends(require_user)):
     """
     Return the raw VLM extraction result for one document.
     The result is a discriminated union on the confidence tier
@@ -384,7 +392,7 @@ def get_vlm_result(filename: str, current_user: str = Depends(get_current_user))
 
 
 @app.get("/api/vlm/results", tags=["vlm"], summary="All VLM results")
-def get_all_vlm_results(current_user: str = Depends(get_current_user)):
+def get_all_vlm_results(current_user: CurrentUser = Depends(require_user)):
     """Return all VLM extraction results as a filename-keyed map."""
     return _load_vlm_all(current_user.locale)
 
@@ -393,7 +401,7 @@ def get_all_vlm_results(current_user: str = Depends(get_current_user)):
 
 
 @app.get("/images/raw/{filename}", tags=["images"], summary="Original document image")
-def serve_raw_image(filename: str, current_user: str = Depends(get_current_user)):
+def serve_raw_image(filename: str, current_user: CurrentUser = Depends(require_user)):
     """Serve the original (un-preprocessed) document image from anonymized_docs/."""
     path = DOCS_DIR / filename
     if not path.exists():
@@ -402,7 +410,7 @@ def serve_raw_image(filename: str, current_user: str = Depends(get_current_user)
 
 
 @app.get("/images/preprocessed/{filename}", tags=["images"], summary="Preprocessed document image")
-def serve_preprocessed_image(filename: str, current_user: str = Depends(get_current_user)):
+def serve_preprocessed_image(filename: str, current_user: CurrentUser = Depends(require_user)):
     """Serve the binarised/preprocessed image used as OCR engine input."""
     stem = _stem(filename)
     ext = Path(filename).suffix

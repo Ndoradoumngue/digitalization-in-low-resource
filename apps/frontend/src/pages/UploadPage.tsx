@@ -21,6 +21,7 @@ import NavSidebar from "../components/NavSidebar";
 import { useAuth } from "../context/AuthContext";
 import { useConfirm } from "../context/ConfirmContext";
 import { dbImageUrl } from "@sdai/api-client";
+import { canEditExtraction as canEditExtractionFor } from "../utils/permissions";
 import type { DocumentStatus, BatchSummary, Page } from "@sdai/types";
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ function FailedPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId:
   const [manualOpen, setManualOpen] = useState(false);
   const retryMutation = useRetryPage(batchDocumentId);
   const { user } = useAuth();
-  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction;
+  const canEditExtraction = canEditExtractionFor(user);
 
   return (
     <div className="rounded-lg border border-red-200 bg-red-50/60 px-3 py-2">

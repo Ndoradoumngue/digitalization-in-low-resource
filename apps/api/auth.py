@@ -2,8 +2,17 @@
 Shared JWT auth dependency - PostgreSQL-backed user lookup with role support.
 
 Provides:
-  get_current_user  - FastAPI dependency; returns CurrentUser or raises 401
-  require_admin     - FastAPI dependency; returns CurrentUser or raises 403
+  get_current_user     - FastAPI dependency; returns CurrentUser or raises 401
+  require_admin        - FastAPI dependency; returns CurrentUser or raises 403
+  require_user         - any signed-in person (admin/reviewer/reader), never an API key
+  require_contributor  - may upload/track ingestion (admin/reviewer/API key), never a reader
+  require_reviewer     - may act on documents (admin/reviewer), never a reader or API key
+
+Roles: admin, reviewer, reader (read-only), and the synthetic api_key.
+Delegated flags (can_manage_access, can_edit_extraction,
+can_manage_lifecycle) only take effect for reviewers - a reader stays
+read-only whatever its flags say - except can_share, which a reader may
+hold (sharing a document it can see changes nothing in the archive).
 """
 
 import hashlib
@@ -40,12 +49,19 @@ class CurrentUser:
     can_edit_extraction: bool
     group_ids: list[str]
     locale: str
+    can_manage_lifecycle: bool = False
+    can_share: bool = False
+    clearance: str = "internal"
+
+    @property
+    def is_reader(self) -> bool:
+        return self.role == "reader"
 
     @property
     def can_manage_document_access(self) -> bool:
         """Admins can always tag documents with access grants; a reviewer
         needs the delegated can_manage_access flag."""
-        return self.role == "admin" or self.can_manage_access
+        return self.role == "admin" or (self.role == "reviewer" and self.can_manage_access)
 
     @property
     def can_edit_extraction_data(self) -> bool:
@@ -55,7 +71,20 @@ class CurrentUser:
         can_edit_extraction flag. Distinct from can_manage_access - one
         governs who can see a document, the other who can change its
         content."""
-        return self.role == "admin" or self.can_edit_extraction
+        return self.role == "admin" or (self.role == "reviewer" and self.can_edit_extraction)
+
+    @property
+    def can_manage_document_lifecycle(self) -> bool:
+        """Archivist actions (retention, trash restore, destruction
+        proposals, legal hold) - admin, or a reviewer delegated
+        can_manage_lifecycle."""
+        return self.role == "admin" or (self.role == "reviewer" and self.can_manage_lifecycle)
+
+    @property
+    def can_share_documents(self) -> bool:
+        """Creating external share links - admin, or any person (reviewer
+        or reader) delegated can_share. Never an API key."""
+        return self.role == "admin" or (self.role in ("reviewer", "reader") and self.can_share)
 
 
 async def get_current_user(
@@ -106,7 +135,7 @@ async def get_current_user(
                 "SELECT u.id, u.email, u.full_name, u.role, u.is_active,"
                 "       t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,"
                 "       t.is_active AS tenant_is_active, u.can_manage_access,"
-                "       u.can_edit_extraction"
+                "       u.can_edit_extraction, u.can_manage_lifecycle, u.can_share, u.clearance"
                 " FROM sdai_users u"
                 " JOIN sdai_tenants t ON t.id = u.tenant_id"
                 " WHERE u.id = CAST(:id AS uuid)"
@@ -138,6 +167,9 @@ async def get_current_user(
         can_edit_extraction=user[10],
         group_ids=group_ids,
         locale=locale,
+        can_manage_lifecycle=user[11],
+        can_share=user[12],
+        clearance=user[13],
     )
 
 
@@ -150,10 +182,10 @@ async def _get_current_user_from_api_key(api_key: str, locale: str) -> CurrentUs
     resist brute-forcing.
 
     role='api_key' deliberately never satisfies require_admin,
-    require_access_manager, or require_extraction_editor (all check for
-    'admin' or a delegated flag this synthetic user never has) - an API key
-    can only ever reach plain Depends(get_current_user) endpoints
-    (upload + status polling), never admin/review actions."""
+    require_user, require_reviewer, require_access_manager, or
+    require_extraction_editor - an API key can only ever reach
+    require_contributor endpoints (upload + ingestion status polling),
+    never the archive itself or admin/review actions."""
     hashed_key = hashlib.sha256(api_key.encode()).hexdigest()
 
     # Lazy import - same circular-dependency reasoning as get_current_user's
@@ -192,6 +224,9 @@ async def _get_current_user_from_api_key(api_key: str, locale: str) -> CurrentUs
         can_edit_extraction=False,
         group_ids=[],
         locale=locale,
+        # Never sees archive content (require_user rejects it) - the
+        # lowest clearance keeps that true even if a route forgets.
+        clearance="public",
     )
 
 
@@ -229,4 +264,38 @@ async def require_extraction_editor(
         raise HTTPException(
             status_code=403, detail=t("auth.extraction_editor_required", current_user.locale)
         )
+    return current_user
+
+
+async def require_user(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """FastAPI dependency - any signed-in person (admin, reviewer or
+    reader). Rejects API keys, which are upload-only and never browse the
+    archive."""
+    if current_user.role not in ("admin", "reviewer", "reader"):
+        raise HTTPException(status_code=403, detail=t("auth.user_required", current_user.locale))
+    return current_user
+
+
+async def require_contributor(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """FastAPI dependency - may upload documents and follow their
+    ingestion (admin, reviewer, or an API key). Rejects readers."""
+    if current_user.role not in ("admin", "reviewer", "api_key"):
+        raise HTTPException(
+            status_code=403, detail=t("auth.contributor_required", current_user.locale)
+        )
+    return current_user
+
+
+async def require_reviewer(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """FastAPI dependency - may act on documents (review, flag, retry,
+    file into a series, link, steer page extraction): admin or reviewer.
+    Rejects readers and API keys."""
+    if current_user.role not in ("admin", "reviewer"):
+        raise HTTPException(status_code=403, detail=t("auth.reviewer_required", current_user.locale))
     return current_user

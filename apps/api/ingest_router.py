@@ -42,7 +42,13 @@ import httpx
 import numpy as np
 import pytesseract
 from audit import log_action
-from auth import CurrentUser, get_current_user, require_admin, require_extraction_editor
+from auth import (
+    CurrentUser,
+    require_admin,
+    require_contributor,
+    require_extraction_editor,
+    require_reviewer,
+)
 from cache import invalidate_cache
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from i18n import DEFAULT_LOCALE, t
@@ -228,7 +234,7 @@ CREATE TABLE IF NOT EXISTS sdai_users (
     email           TEXT    UNIQUE NOT NULL,
     hashed_password TEXT    NOT NULL,
     full_name       TEXT,
-    role            TEXT    DEFAULT 'reviewer' CHECK (role IN ('admin', 'reviewer')),
+    role            TEXT    DEFAULT 'reviewer' CHECK (role IN ('admin', 'reviewer', 'reader')),
     created_at      TIMESTAMPTZ DEFAULT now(),
     is_active       BOOLEAN DEFAULT true
 );
@@ -252,14 +258,35 @@ ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_manage_access BOOLEAN NOT NU
 -- everyone. Admins can always edit extraction data regardless of this flag.
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_edit_extraction BOOLEAN NOT NULL DEFAULT false;
 
+-- Read-only role: browses, searches and downloads whatever it can see,
+-- never uploads, reviews or edits. Re-created (not just added) so an
+-- installation that predates 'reader' gets the widened list - the inline
+-- CHECK above is named sdai_users_role_check by PostgreSQL.
+ALTER TABLE sdai_users DROP CONSTRAINT IF EXISTS sdai_users_role_check;
+ALTER TABLE sdai_users ADD CONSTRAINT sdai_users_role_check
+    CHECK (role IN ('admin', 'reviewer', 'reader'));
+
+-- Delegated archivist permission (retention, trash restore, destruction
+-- proposals, legal hold) and permission to create external share links.
+-- Admins hold both regardless of these flags.
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_manage_lifecycle BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_share BOOLEAN NOT NULL DEFAULT false;
+
+-- Highest document confidentiality level this user may see (see each
+-- dynamic table's confidentiality column). Admins see every level.
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS clearance TEXT NOT NULL DEFAULT 'internal';
+ALTER TABLE sdai_users DROP CONSTRAINT IF EXISTS sdai_users_clearance_check;
+ALTER TABLE sdai_users ADD CONSTRAINT sdai_users_clearance_check
+    CHECK (clearance IN ('public', 'internal', 'confidential', 'secret'));
+
 -- Long-lived bearer credential for external/programmatic callers (partner
 -- integrations) that need to upload documents without a human login
 -- session - see get_current_user's Authorization-header branch in auth.py
 -- and create_api_key.py. Tenant-scoped like every other actor here, and
 -- never carries admin/reviewer privilege: get_current_user gives it
--- role='api_key', which every require_admin/require_access_manager/
--- require_extraction_editor check already rejects, so a key can only ever
--- reach plain Depends(get_current_user) endpoints (upload + status
+-- role='api_key', which every require_admin/require_user/require_reviewer/
+-- require_access_manager/require_extraction_editor check rejects, so a key
+-- can only ever reach require_contributor endpoints (upload + status
 -- polling). Only a hash of the key is ever stored, same reasoning as
 -- sdai_users.hashed_password - key_prefix is just enough of the plaintext
 -- (shown once at creation) to let an admin recognize a key in a listing.
@@ -369,6 +396,7 @@ CREATE TABLE IF NOT EXISTS sdai_document_access (
 CREATE INDEX IF NOT EXISTS idx_sdai_document_access_doc
     ON sdai_document_access (tenant_id, table_name, document_id);
 
+
 -- Atomic per-tenant-per-year counter backing each document's persistent,
 -- citable record_id (e.g. "LAND-2026-000123") - see _next_record_id.
 CREATE TABLE IF NOT EXISTS sdai_record_id_counters (
@@ -392,6 +420,48 @@ CREATE TABLE IF NOT EXISTS sdai_series (
     created_at  TIMESTAMPTZ DEFAULT now(),
     UNIQUE (tenant_id, name)
 );
+
+-- A grant targets one document (scope 'document'), every document filed
+-- in one series ('series', series_id) or every document of one type
+-- ('doc_type', table_name = that type's per-tenant table). A document is
+-- restricted as soon as any grant targets it at any scope - see
+-- documents_router._access_where_clause. permission is cumulative:
+-- read (view/search) < download (export, original file) < edit (change
+-- content, review, file, link). Rows that predate scopes keep their
+-- meaning: scope 'document' and permission 'edit' (the ADD COLUMN default
+-- below fills them), since a grant used to mean full access within the
+-- holder's role - new grants default to 'read'.
+ALTER TABLE sdai_document_access ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'document';
+ALTER TABLE sdai_document_access ADD COLUMN IF NOT EXISTS series_id UUID REFERENCES sdai_series(id) ON DELETE CASCADE;
+ALTER TABLE sdai_document_access ADD COLUMN IF NOT EXISTS permission TEXT NOT NULL DEFAULT 'edit';
+ALTER TABLE sdai_document_access ALTER COLUMN permission SET DEFAULT 'read';
+ALTER TABLE sdai_document_access ALTER COLUMN table_name DROP NOT NULL;
+ALTER TABLE sdai_document_access ALTER COLUMN document_id DROP NOT NULL;
+ALTER TABLE sdai_document_access DROP CONSTRAINT IF EXISTS sdai_document_access_permission_check;
+ALTER TABLE sdai_document_access ADD CONSTRAINT sdai_document_access_permission_check
+    CHECK (permission IN ('read', 'download', 'edit'));
+ALTER TABLE sdai_document_access DROP CONSTRAINT IF EXISTS sdai_document_access_scope_check;
+ALTER TABLE sdai_document_access ADD CONSTRAINT sdai_document_access_scope_check CHECK (
+    (scope = 'document' AND table_name IS NOT NULL AND document_id IS NOT NULL AND series_id IS NULL)
+    OR (scope = 'series' AND series_id IS NOT NULL AND table_name IS NULL AND document_id IS NULL)
+    OR (scope = 'doc_type' AND table_name IS NOT NULL AND document_id IS NULL AND series_id IS NULL)
+);
+
+-- One grant per grantee and target, per scope (replaces the original
+-- table-wide UNIQUE constraint, dropped by _ACCESS_UNIQUE_DDL).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_document_access_unique_document
+    ON sdai_document_access (tenant_id, table_name, document_id, grantee_type, grantee_id)
+    WHERE scope = 'document';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_document_access_unique_series
+    ON sdai_document_access (tenant_id, series_id, grantee_type, grantee_id)
+    WHERE scope = 'series';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_document_access_unique_doc_type
+    ON sdai_document_access (tenant_id, table_name, grantee_type, grantee_id)
+    WHERE scope = 'doc_type';
+CREATE INDEX IF NOT EXISTS idx_sdai_document_access_series
+    ON sdai_document_access (tenant_id, series_id) WHERE scope = 'series';
+CREATE INDEX IF NOT EXISTS idx_sdai_document_access_doc_type
+    ON sdai_document_access (tenant_id, table_name) WHERE scope = 'doc_type';
 
 CREATE TABLE IF NOT EXISTS batches (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -470,6 +540,12 @@ ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS source_page_number INT
 -- but its document is sent to review instead of being auto-approved.
 ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS quality_flags JSONB;
 
+-- GET /api/db/image finds which upload a requested file belongs to (to
+-- apply that document's access rules) by these paths.
+CREATE INDEX IF NOT EXISTS idx_batch_documents_image_path ON batch_documents (image_path);
+CREATE INDEX IF NOT EXISTS idx_batch_documents_source_path ON batch_documents (source_path);
+CREATE INDEX IF NOT EXISTS idx_batch_document_pages_image_path ON batch_document_pages (image_path);
+
 -- One row per server this database has been run by, in a hybrid local +
 -- cloud deployment (README.md, GED section). Node-local bookkeeping - refreshed
 -- by _register_node on every startup, never synced between nodes.
@@ -512,6 +588,28 @@ END $$;
 """
 
 
+# Drops sdai_document_access's original table-wide UNIQUE constraint
+# (tenant_id, table_name, document_id, grantee_type, grantee_id) - it can't
+# hold once series/doc_type grants leave document_id NULL, and the per-scope
+# partial unique indexes in _INIT_DDL replace it. Its name was generated by
+# PostgreSQL (and truncated), so it's looked up rather than hardcoded. Own
+# statement for the same reason as _TENANT_TABLE_RENAME_DDL. Idempotent:
+# nothing is left to drop on later startups.
+_ACCESS_UNIQUE_DDL = r"""
+DO $$
+DECLARE
+    c RECORD;
+BEGIN
+    FOR c IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'sdai_document_access'::regclass AND contype = 'u'
+    LOOP
+        EXECUTE format('ALTER TABLE sdai_document_access DROP CONSTRAINT %I', c.conname);
+    END LOOP;
+END $$;
+"""
+
+
 async def _init_db() -> None:
     async with _engine().begin() as conn:
         # asyncpg's extended query protocol can't prepare multiple commands
@@ -524,6 +622,7 @@ async def _init_db() -> None:
         # on the 'default' tenant existing) and cannot be split on ";" like
         # the loop above - see _TENANT_TABLE_RENAME_DDL's docstring.
         await conn.execute(text(_TENANT_TABLE_RENAME_DDL))
+        await conn.execute(text(_ACCESS_UNIQUE_DDL))
         # Must exist before any backfill or _ensure_table installs the
         # trigger on a table - see _TOUCH_ROW_FN_DDL's docstring.
         await conn.execute(text(_TOUCH_ROW_FN_DDL))
@@ -751,6 +850,19 @@ async def _ensure_ged_indexes_and_trigger(conn, table_name: str) -> None:
         await conn.execute(
             text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{col} ON "{table_name}" ({col})')
         )
+    # Access checks on ingestion pages and page images look the filed
+    # document up by the upload it came from (documents_router.
+    # _filed_document_permitted) - the column is added here too for tables
+    # so old they predate it.
+    await conn.execute(
+        text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS batch_document_id UUID')
+    )
+    await conn.execute(
+        text(
+            f"CREATE INDEX IF NOT EXISTS idx_{table_name}_batch_document_id"
+            f' ON "{table_name}" (batch_document_id)'
+        )
+    )
     await conn.execute(
         text(
             f'CREATE OR REPLACE TRIGGER sdai_touch_row BEFORE INSERT OR UPDATE ON "{table_name}"'
@@ -1406,6 +1518,51 @@ async def _resolve_tenant_for_page(page_id: str) -> tuple[str, str] | None:
         )
         record = row.one_or_none()
     return (record[0], record[1]) if record else None
+
+
+async def _batch_document_for_page(page_id: str) -> str | None:
+    async with _engine().connect() as conn:
+        row = await conn.execute(
+            text(
+                "SELECT batch_document_id::text FROM batch_document_pages WHERE id = CAST(:id AS uuid)"
+            ),
+            {"id": page_id},
+        )
+        record = row.one_or_none()
+    return record[0] if record else None
+
+
+async def _guard_batch_document(
+    batch_document_id: str, current_user: CurrentUser, permission: str, not_found_key: str
+) -> tuple[str, str]:
+    """404 unless this upload belongs to the caller's tenant and - once it
+    has produced a filed document - the caller holds `permission` on that
+    document (see documents_router._filed_document_permitted). Returns
+    (tenant_id, tenant_slug)."""
+    from documents_router import _filed_document_permitted
+
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if (
+        tenant is None
+        or tenant[0] != current_user.tenant_id
+        or not await _filed_document_permitted([batch_document_id], current_user, permission)
+    ):
+        raise HTTPException(status_code=404, detail=t(not_found_key, current_user.locale))
+    return tenant
+
+
+async def _guard_page(page_id: str, current_user: CurrentUser, permission: str) -> None:
+    """Same as _guard_batch_document, starting from one page."""
+    from documents_router import _filed_document_permitted
+
+    owner = await _resolve_tenant_for_page(page_id)
+    if owner is None or owner[0] != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    batch_document_id = await _batch_document_for_page(page_id)
+    if batch_document_id and not await _filed_document_permitted(
+        [batch_document_id], current_user, permission
+    ):
+        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
 
 
 async def _resolve_preset_for_batch(batch_id: str) -> str | None:
@@ -2366,9 +2523,11 @@ async def _grant_uploader_access(
     await conn.execute(
         text("""
             INSERT INTO sdai_document_access
-                (tenant_id, table_name, document_id, grantee_type, grantee_id)
-            VALUES (CAST(:tid AS uuid), :t, CAST(:id AS uuid), 'user', CAST(:uid AS uuid))
-            ON CONFLICT (tenant_id, table_name, document_id, grantee_type, grantee_id) DO NOTHING
+                (tenant_id, table_name, document_id, grantee_type, grantee_id, scope, permission)
+            VALUES (CAST(:tid AS uuid), :t, CAST(:id AS uuid), 'user', CAST(:uid AS uuid),
+                    'document', 'edit')
+            ON CONFLICT (tenant_id, table_name, document_id, grantee_type, grantee_id)
+                WHERE scope = 'document' DO NOTHING
         """),
         {"tid": tenant_id, "t": table_name, "id": doc_id, "uid": uploaded_by},
     )
@@ -3844,7 +4003,7 @@ router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
 
 @router.get("/presets")
-async def get_prompt_presets(current_user: CurrentUser = Depends(get_current_user)):
+async def get_prompt_presets(current_user: CurrentUser = Depends(require_contributor)):
     """List this tenant's active prompt presets (id, key, label) - lets both
     the frontend and external API callers discover the valid values for
     POST /ingest/upload's 'preset' field. Never returns prompt text itself -
@@ -3887,7 +4046,7 @@ async def upload_files(
     request: Request,
     files: list[UploadFile] = File(...),
     preset: str | None = Form(None),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_contributor),
 ):
     """Accept one or more image/PDF files, return a batch_id immediately.
     'preset' optionally selects one of the tenant's admin-defined prompt
@@ -4060,7 +4219,7 @@ def _download_google_drive_folder_sync(folder_id: str, dest_dir: Path) -> list[P
 @router.get("/batches")
 async def list_batches(
     limit: int = 20,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_contributor),
 ):
     """
     Return the most recent ingestion batches with aggregate progress, so
@@ -4176,7 +4335,7 @@ async def delete_batch(
 @router.get("/status/{batch_id}")
 async def get_batch_status(
     batch_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_contributor),
 ):
     """Return overall batch progress and per-document status."""
     async with _session()() as sess:
@@ -4238,13 +4397,11 @@ async def get_batch_status(
 @router.get("/pages/{batch_document_id}")
 async def list_pages(
     batch_document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_contributor),
 ):
     """Per-page status for one document - powers the page-level progress
     bar and failed-pages list for multi-page documents."""
-    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail=t("ingest.no_pages_found", current_user.locale))
+    await _guard_batch_document(batch_document_id, current_user, "read", "ingest.no_pages_found")
 
     async with _session()() as sess:
         result = await sess.execute(
@@ -4302,15 +4459,13 @@ class ManualPageEntry(BaseModel):
 async def retry_page(
     request: Request,
     page_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Kick off a re-run of VLM extraction for one failed page in the
     background and return immediately; merges into the parent document
     (even if already finalized) once it completes. Poll
     GET /api/ingest/pages/{batch_document_id} for the result."""
-    tenant = await _resolve_tenant_for_page(page_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _guard_page(page_id, current_user, "edit")
     await _retry_single_page(page_id, current_user.locale)
     return {"ok": True, "status": "processing"}
 
@@ -4320,7 +4475,7 @@ async def retry_page(
 async def reload_page(
     request: Request,
     page_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Re-derive this page from its original source document from
     scratch - re-running PDF-page extraction and preprocessing (including
@@ -4330,9 +4485,7 @@ async def reload_page(
     GET /api/ingest/pages/{batch_document_id} for the result. Requires
     the document to have been ingested after source-tracking was added -
     older documents don't have a recorded source path."""
-    tenant = await _resolve_tenant_for_page(page_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _guard_page(page_id, current_user, "edit")
     await _reload_single_page(page_id, current_user.locale)
     return {"ok": True, "status": "processing"}
 
@@ -4348,9 +4501,7 @@ async def manual_enter_page(
     """Store a human-entered result for one page (bypassing the VLM) and
     merge it into the parent document. Requires the extraction-editing
     permission (admin, or a reviewer delegated can_edit_extraction)."""
-    tenant = await _resolve_tenant_for_page(page_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _guard_page(page_id, current_user, "edit")
     await _manual_enter_page(page_id, body.fields, current_user.locale)
     return {"ok": True}
 
@@ -4360,13 +4511,11 @@ async def manual_enter_page(
 async def skip_page(
     request: Request,
     page_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Mark a page as not relevant (cover sheet, blank, out-of-scope
     layout, ...) so it's excluded from the document's reconciled result."""
-    tenant = await _resolve_tenant_for_page(page_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _guard_page(page_id, current_user, "edit")
     await _skip_page(page_id, current_user.locale)
     return {"ok": True}
 
@@ -4376,7 +4525,7 @@ async def skip_page(
 async def cancel_page(
     request: Request,
     page_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Stop a page's in-flight VLM call right now, rather than waiting for
     it to time out on its own - the extraction stage can take several
@@ -4384,9 +4533,7 @@ async def cancel_page(
     one that was stuck or no longer wanted. The page is left in a normal
     'failed' state afterward (Cancelled by user), same as any other
     failure - Retry, Reload from source, or Skip all still work on it."""
-    tenant = await _resolve_tenant_for_page(page_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    await _guard_page(page_id, current_user, "edit")
     cancelled = await _cancel_page_task(page_id)
     return {"ok": True, "cancelled": cancelled}
 
@@ -4396,15 +4543,13 @@ async def cancel_page(
 async def pause_document(
     request: Request,
     batch_document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Pause an in-progress document: cancel whatever page is being
     extracted for it right now (left 'failed', "Cancelled by user", same
     as cancel_page) and stop any further page of this document from being
     dispatched until "Resume remaining" is clicked again."""
-    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(status_code=404, detail=t("ingest.document_not_found", current_user.locale))
+    await _guard_batch_document(batch_document_id, current_user, "edit", "ingest.document_not_found")
     cancelled = await _pause_document(batch_document_id)
     return {"ok": True, "cancelled": cancelled}
 
@@ -4414,17 +4559,15 @@ async def pause_document(
 async def resume_document(
     request: Request,
     batch_document_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Resume every pending/failed page of a document in the background -
     e.g. after an interrupted run (API restart mid-processing). Pages are
     processed one at a time; poll GET /api/ingest/pages/{batch_document_id}
     for progress. Already-completed pages are left untouched."""
-    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
-    if tenant is None or tenant[0] != current_user.tenant_id:
-        raise HTTPException(
-            status_code=404, detail=t("ingest.no_pending_or_failed_pages", current_user.locale)
-        )
+    await _guard_batch_document(
+        batch_document_id, current_user, "edit", "ingest.no_pending_or_failed_pages"
+    )
     count = await _resume_document_pages(batch_document_id)
     if count == -1:
         # Not an error - a previous resume for this same document is still

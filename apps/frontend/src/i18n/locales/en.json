@@ -144,7 +144,15 @@
     "restrictTo": "+ Restrict to…",
     "loading": "Loading…",
     "openToAll": "Visible to everyone in your organization. No restrictions applied.",
-    "restrictedNote": "Restricted - visible only to admins and:"
+    "restrictedNote": "Restricted - visible only to admins and:",
+    "permission": {
+      "read": "Read",
+      "download": "Download",
+      "edit": "Edit"
+    },
+    "viaSeries": "via series “{{name}}”",
+    "viaType": "via document type",
+    "yourAccess": "Your access: {{level}}"
   },
   "upload": {
     "status": {
@@ -356,7 +364,7 @@
   },
   "accessAdmin": {
     "header": "Access & Groups",
-    "subtitle": "Manage groups, series, and who can restrict documents to a group or a specific person.",
+    "subtitle": "Manage groups, users (role, clearance, delegated permissions), series, and who can see whole series or document types.",
     "export": {
       "heading": "Export archive",
       "descriptionPrefix": "Downloads every document in this tenant - all extracted fields plus a ",
@@ -407,7 +415,28 @@
       "canManageAccess": "Can manage document access",
       "canEditExtraction": "Can edit extraction data",
       "removeFromGroup": "Remove from {{group}}",
-      "addToGroup": "+ Add to group…"
+      "addToGroup": "+ Add to group…",
+      "role": "Role",
+      "clearance": "Clearance",
+      "canManageLifecycle": "Can manage retention & lifecycle",
+      "canShare": "Can create share links",
+      "readerFlagHint": "Read-only accounts can't hold this permission"
+    },
+    "seriesGrants": {
+      "heading": "Series access",
+      "description": "Restrict every document of a series to the people or groups listed here (plus admins and any document-level grants). A series with no grant stays open to everyone.",
+      "selectTarget": "Select a series…",
+      "none": "No series is restricted."
+    },
+    "typeGrants": {
+      "heading": "Document type access",
+      "description": "Restrict every document of a type to the people or groups listed here (plus admins and any document-level grants). A type with no grant stays open to everyone.",
+      "selectTarget": "Select a document type…",
+      "none": "No document type is restricted."
+    },
+    "scopedGrants": {
+      "loading": "Loading…",
+      "confirmRemove": "Remove this grant? If it is the last one, the documents it covers become visible to everyone again."
     }
   },
   "audit": {
@@ -428,7 +457,10 @@
       "series_assigned": "series assigned",
       "integrity_check_failed": "integrity check failed",
       "document_fields_edited": "document fields edited",
-      "archive_exported": "archive exported"
+      "archive_exported": "archive exported",
+      "confidentiality_changed": "confidentiality changed",
+      "document_access_changed": "document access level changed",
+      "user_permissions_changed": "user permissions changed"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -600,5 +632,17 @@
     "json": "Whole document - JSON",
     "sql": "Whole document - SQL",
     "csv": "{{field}} - CSV spreadsheet"
+  },
+  "roles": {
+    "admin": "admin",
+    "reviewer": "reviewer",
+    "reader": "reader"
+  },
+  "confidentiality": {
+    "label": "Confidentiality",
+    "public": "Public",
+    "internal": "Internal",
+    "confidential": "Confidential",
+    "secret": "Secret"
   }
 }

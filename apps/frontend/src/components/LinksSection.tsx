@@ -10,11 +10,13 @@ function LinkRow({
   onRemove,
   removing,
   basePath,
+  canEdit,
 }: {
   link: DocumentLink;
   onRemove: () => void;
   removing: boolean;
   basePath: string;
+  canEdit: boolean;
 }) {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -41,15 +43,17 @@ function LinkRow({
           <span className="text-xs text-gray-400 ml-2">{link.other_document_type}</span>
         )}
       </button>
-      <button
-        onClick={onRemove}
-        disabled={removing}
-        className="flex-shrink-0 text-xs text-gray-400 hover:text-red-600 disabled:opacity-40 transition-colors"
-        title={t("links.removeLink")}
-        aria-label={t("links.removeLink")}
-      >
-        ✕
-      </button>
+      {canEdit && (
+        <button
+          onClick={onRemove}
+          disabled={removing}
+          className="flex-shrink-0 text-xs text-gray-400 hover:text-red-600 disabled:opacity-40 transition-colors"
+          title={t("links.removeLink")}
+          aria-label={t("links.removeLink")}
+        >
+          ✕
+        </button>
+      )}
     </div>
   );
 }
@@ -58,10 +62,13 @@ export default function LinksSection({
   tableName,
   id,
   basePath = "/documents",
+  canEdit = true,
 }: {
   tableName: string;
   id: string;
   basePath?: string;
+  // link/unlink needs edit permission on this document (backend-enforced)
+  canEdit?: boolean;
 }) {
   const { t } = useTranslation();
   const { data, isLoading } = useDocumentLinks(tableName, id);
@@ -84,12 +91,14 @@ export default function LinksSection({
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
           {t("links.heading")}
         </h3>
-        <button
-          onClick={() => setShowPicker((s) => !s)}
-          className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
-        >
-          {showPicker ? t("links.cancel") : t("links.addLink")}
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setShowPicker((s) => !s)}
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+          >
+            {showPicker ? t("links.cancel") : t("links.addLink")}
+          </button>
+        )}
       </div>
 
       {showPicker && (
@@ -110,7 +119,7 @@ export default function LinksSection({
             <div>
               <div className="text-[11px] font-medium text-gray-400 mb-1">{t("links.relatesTo")}</div>
               {outgoing.map((l) => (
-                <LinkRow key={l.id} link={l} onRemove={() => remove(l.id)} removing={removingId === l.id} basePath={basePath} />
+                <LinkRow canEdit={canEdit} key={l.id} link={l} onRemove={() => remove(l.id)} removing={removingId === l.id} basePath={basePath} />
               ))}
             </div>
           )}
@@ -118,7 +127,7 @@ export default function LinksSection({
             <div>
               <div className="text-[11px] font-medium text-gray-400 mb-1">{t("links.referencedBy")}</div>
               {incoming.map((l) => (
-                <LinkRow key={l.id} link={l} onRemove={() => remove(l.id)} removing={removingId === l.id} basePath={basePath} />
+                <LinkRow canEdit={canEdit} key={l.id} link={l} onRemove={() => remove(l.id)} removing={removingId === l.id} basePath={basePath} />
               ))}
             </div>
           )}

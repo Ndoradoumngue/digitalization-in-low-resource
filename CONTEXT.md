@@ -9,11 +9,11 @@ This file captures what has been built, why, and what is known to be incomplete 
 ### Authentication
 
 - JWT-based login via httpOnly cookie (`access_token=Bearer <token>`, `SameSite=Lax`).
-- PostgreSQL-backed user management: `sdai_users` table with email, bcrypt password, role (`admin` | `reviewer`), and `is_active` flag.
+- PostgreSQL-backed user management: `sdai_users` table with email, bcrypt password, role (`admin` | `reviewer` | `reader`), delegated flags, `clearance`, and `is_active` flag. See "Access Control" below.
 - JWT includes a `jti` (UUID v4) for token blocklisting; logout writes `jti` to `sdai_token_blocklist`.
 - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
-- `CurrentUser` dataclass (`id`, `email`, `full_name`, `role`, `tenant_id`, `tenant_slug`, `tenant_name`) returned by `get_current_user` dependency - the tenant fields come from a join to `sdai_tenants`, so a user always resolves to exactly one tenant.
-- `require_admin` FastAPI dependency - raises HTTP 403 for non-admin users (admin is tenant-scoped, not global).
+- `CurrentUser` dataclass (`id`, `email`, `full_name`, `role`, `tenant_id`, `tenant_slug`, `tenant_name`, delegated flags, `group_ids`, `clearance`) returned by `get_current_user` dependency - the tenant fields come from a join to `sdai_tenants`, so a user always resolves to exactly one tenant.
+- Role guards in `auth.py`: `require_admin` (admin is tenant-scoped, not global), `require_user` (any person - rejects API keys), `require_contributor` (upload/ingestion tracking - rejects readers), `require_reviewer` (document actions - rejects readers and API keys), `require_access_manager`, `require_extraction_editor`.
 - `create_admin.py` seed script: `python create_admin.py --email admin@example.com --password secret --tenant default` (`--tenant` required; the tenant must already exist).
 - React: `AuthContext` + `ProtectedRoute` + `AdminRoute` + `LoginPage`.
 - All API data routes require a valid JWT - unauthenticated requests get HTTP 401.
@@ -44,7 +44,7 @@ This file captures what has been built, why, and what is known to be incomplete 
 - Per-tenant VLM config: `prompt_file` / `list_fields` / `page_timeout_seconds` / `split_page_columns` on `sdai_tenants` override the deployment-wide env vars (`VLM_PROMPT_FILE` etc.) for that tenant only, resolved via `ingest_router._get_tenant_config()` (30s in-process cache). NULL columns fall back to the env-var defaults - this is what makes the `default` tenant behave byte-identically to the pre-tenancy single-config deployment.
 - Content-hash dedup and the ingest pipeline's Stage 1-3 (`_stage1_process`/`_stage2_worker`/`_stage3_process`) all thread `tenant_id`/`tenant_slug` end-to-end so a new document always lands in the uploader's own tenant's table.
 - IDOR fix: `ingest_router.py`'s page/document/batch endpoints (previously reachable by any authenticated user via a guessed UUID, since they query `batches`/`batch_documents`/`batch_document_pages` directly rather than through the discovery layer) now check the resolved tenant against `current_user.tenant_id` and 404 on mismatch.
-- Cache isolation: `cache._path_key_builder` includes `current_user.tenant_slug` in the Redis key (previously path-only, which would have let one tenant's cached `/api/db/types`/`/api/db/schema`/`/api/review/count` response leak to another tenant).
+- Cache isolation: `cache._path_key_builder` keys on tenant **and user** (`<ns>:<tenant>:<user_id>:<path>`) - every cached endpoint (`/api/db/types`, `/reviewers`, `/schema`, `/api/review/count`) answers with what the caller may see, so neither another tenant nor another user of the same tenant can be served someone else's counts.
 - Provisioning is CLI-only: `create_tenant.py --slug <slug> --name <name> [--prompt-file ...] [--list-fields ...] [--page-timeout-seconds ...] [--split-page-columns]`, then `create_admin.py --tenant <slug>`. No in-app "create tenant" UI in this version. `default` is a reserved slug.
 
 ### Generalized Search
@@ -68,6 +68,19 @@ This file captures what has been built, why, and what is known to be incomplete 
 - `_access_where_clause(table, user, include_deleted=False)` always includes `_live_where_clause(table)` (hides `deleted_at IS NOT NULL` and `lifecycle_status = 'destroyed'`), **including for admins** - so it is no longer `""` for admins unless `include_deleted=True`.
 - Sync groundwork: `sdai_touch_row()` trigger (`_TOUCH_ROW_FN_DDL`) sets `updated_at` and `origin_node` (from the `sdai.node_id` setting) on every row of the dynamic tables and of `_SYNCED_STATIC_TABLES`; skipped when `sdai.applying_sync = on`. `sdai.node_id` is set per pooled connection (`_set_node_id_on_connect`) and as a database default (`_register_node`, needs DB ownership - warns otherwise). `hlc` stays NULL until sync exists.
 - Node identity: `NODE_ID` (validated `[a-z0-9][a-z0-9_-]{0,39}`) / `NODE_ROLE` (`local`|`cloud`), `sdai_nodes` (node-local, not synced), returned by `/api/auth/me` and login, shown as a sidebar badge.
+
+### Access Control (GED Phase 1)
+
+- **Roles**: `admin` (sees and does everything in its tenant), `reviewer`, `reader` (read-only: browses, searches, downloads what it can see - never uploads, reviews, edits, files or links; kept off `/upload` and `/review` by `ContributorRoute`), and the synthetic `api_key` (upload + ingestion status only - no archive access, no page actions).
+- **Delegated flags** on `sdai_users`: `can_manage_access` (document grants + confidentiality), `can_edit_extraction` (field edits), `can_manage_lifecycle` (archivist actions, used from GED Phase 6), `can_share` (share links, GED Phase 5). They only take effect for reviewers - a reader stays read-only - except `can_share`. Effective values: `CurrentUser.can_manage_document_access` / `can_edit_extraction_data` / `can_manage_document_lifecycle` / `can_share_documents`.
+- **Grants** (`sdai_document_access`): `scope` = `document` (table_name + document_id), `series` (series_id - every document filed in it) or `doc_type` (table_name - every document of that type); `permission` = `read` < `download` < `edit` (cumulative). A document that no grant targets at any scope is open to its whole tenant; as soon as one does, only admins and holders of a targeting grant see it, at the level that grant gives (union of all targeting grants). Uniqueness is per scope (partial unique indexes); grants that predate scopes were migrated to `document`/`edit` (they used to mean full access within the role), new grants default to `read`, the uploader auto-grant is `edit`.
+- **Confidentiality / clearance**: each document has `confidentiality` (`public` < `internal` < `confidential` < `secret`, default `internal`); each user has `clearance` (default `internal`). A document above the user's clearance is invisible whatever the grants; admins bypass. `PATCH /api/db/documents/{t}/{id}/confidentiality` (access managers; a non-admin can't classify above their own clearance), audited as `confidentiality_changed`.
+- **Role caps**: reader ≤ `download`, reviewer ≤ `edit`. Levels per action: `read` = list/search/detail/links/images/pages; `download` = per-document export (original download in Phase 5); `edit` = field edits (plus `can_edit_extraction`), approve/reject/flag/retry, series assignment, link create/delete, page retry/reload/skip/cancel/manual/pause/resume. The review queue and count list only documents the user can `edit` (so always empty for readers).
+- **SQL**: `documents_router._access_where_clause(table, user, permission="read", include_deleted=False)` - one boolean expression (EXISTS sub-queries over the three scopes, tenant-filtered, plus the live filter and the clearance check); `"FALSE"` when the role can never reach the level. `_document_visible(..., permission)`, `_require_document_permission` (404 if invisible, 403 if visible below the needed level), `_effective_permission` (returned as `my_permission` by `GET .../access` so the UI hides what the backend would refuse - `useDocumentPermissions`).
+- **Grant endpoints**: document grants `POST/GET /api/db/documents/{t}/{id}/access` (listing includes inherited series/type grants), `PATCH /api/db/access/{id}` (level), `DELETE /api/db/access/{id}`; series/type grants `GET/POST /api/db/grants` (admin-only). Users: `PATCH /api/admin/users/{id}` sets `role` (reviewer/reader only - admins are never demoted there), flags and `clearance`, audited as `user_permissions_changed`.
+- **Files and pipeline**: `GET /api/db/image?path=...[&table=&id=]` - with `table`+`id` (what the frontend sends) the named document must be readable and reference the file; otherwise the file is traced to its upload(s) in the caller's tenant: once filed, the filed document decides; still in the pipeline, contributors only; unknown to any upload, only through a readable document referencing it; anything else 404. Ingest pages and page actions follow the same rule via `_filed_document_permitted` (read for `GET /pages/{bd}`, edit for actions).
+- **Other leak fixes**: links to a document the caller can't see come back anonymous (no id, table, title, type or note); `/api/admin/audit-log` only shows the admin's own tenant (actions by its users or on its tables).
+- **Tests**: `tests/test_permissions.py` (mocked role/flag matrix, clause structure, endpoint levels) and `tests/test_access_pg.py` (23 tests against a real PostgreSQL: listing, search, counts, queue, links, export, images, pages, scoped grants, confidentiality, constraints - opt-in, `TEST_DATABASE_URL=... pytest -m pg`, wipes that database).
 
 ### Document Upload & Ingestion
 
@@ -104,7 +117,7 @@ This file captures what has been built, why, and what is known to be incomplete 
 - `sdai_audit_log` PostgreSQL table: `id`, `user_id`, `user_email`, `action`, `table_name`, `document_id`, `details` (JSONB), `ip_address`, `created_at`.
 - 8 action types logged automatically: `document_ingested`, `document_approved`, `document_rejected`, `document_flagged`, `user_login`, `user_logout`, `schema_created`, `schema_altered`.
 - `audit.py` helper: `log_action()` never raises - failures are swallowed to stderr, never affecting callers.
-- `GET /api/admin/audit-log` - admin-only endpoint with pagination (`page`, `page_size`) and filters (`action`, `date_from`, `date_to`, `user_id`).
+- `GET /api/admin/audit-log` - admin-only endpoint with pagination (`page`, `page_size`) and filters (`action`, `date_from`, `date_to`, `user_id`). Tenant-scoped: an admin only sees entries by its tenant's users or on its tenant's tables.
 - `AuditPage` at `/admin/audit` (admin-only, guarded by `AdminRoute`):
   - Action badge with color coding per action type.
   - Date range and action type filters.
@@ -184,7 +197,9 @@ This file captures what has been built, why, and what is known to be incomplete 
 | Tenant deactivate/delete flow | `sdai_tenants.is_active` exists but nothing sets it to `false` - retiring a tenant currently means a manual SQL `UPDATE` |
 | Index names on long table names | `idx_<table>_<col>` can exceed Postgres's 63-char limit and get truncated - on a very long `t_<tenant>_<type>` name two GED indexes may collide and one is silently skipped (same pre-existing pattern as `series_id`/`uploaded_by` indexes) |
 | Trashed rows still count as duplicates | `_find_duplicate` and the admin full export don't apply the live filter yet - decided in GED Phase 6 |
-| `serve_processed_image` (`/api/db/image`) not tenant-scoped | Serves a file by raw path within known ingest directories, with no check that the path belongs to the caller's tenant - lower severity since paths aren't guessable, but a gap flagged and not yet fixed |
+| Batch list / status visible tenant-wide | `GET /api/ingest/batches` and `/status/{batch_id}` still show every contributor of the tenant all batches (counts, filenames, document types) - the pipeline is shared by design; page contents, images and actions do follow the filed document's access |
+| API keys can no longer steer page extraction | Since GED Phase 1 an API key reaches only upload, presets, batches, status and page listing - retry/reload/skip/cancel/pause/resume need a reviewer |
+| Audit entries of API keys | API-key actions carry no `sdai_users` id, so the tenant-scoped audit view only shows them when they name one of the tenant's tables |
 
 ---
 
@@ -219,11 +234,17 @@ apps/api/
     test_performance.py             # benchmark tests (excluded from CI with -m "not benchmark")
     test_rate_limit.py              # SlowAPI rate-limit key builder
     test_review.py                  # /api/review/* approve/reject/flag/count
+    test_permissions.py             # GED Phase 1 role/flag/permission-level matrix + leak tests (mocked)
+    test_access_pg.py               # GED Phase 1 access control against a real PostgreSQL (opt-in, -m pg)
 
 apps/frontend/src/
   context/AuthContext.tsx           # global auth state (user, login, logout)
   components/auth/ProtectedRoute.tsx
   components/auth/AdminRoute.tsx    # redirects non-admins to /
+  components/auth/ContributorRoute.tsx # keeps readers off /upload and /review
+  components/AccessSection.tsx      # grants (own + inherited), levels, confidentiality, "your access"
+  components/ConfidentialityBadge.tsx
+  utils/permissions.ts              # UI mirror of role/flag/level rules (hide what the backend refuses)
   pages/LoginPage.tsx
   pages/DashboardPage.tsx           # main app shell - sidebar + tab switcher + panels
   pages/UploadPage.tsx              # file upload UI
@@ -248,7 +269,7 @@ apps/frontend/src/
   utils/format.ts                   # labelFor(), summarizeExtra() - shared across pages/components
 
 packages/types/src/
-  auth.ts                           # UserSchema, LoginResponseSchema
+  auth.ts                           # UserSchema (roles, flags, clearance), CONFIDENTIALITY_LEVELS
   ocr.ts                            # OcrDocument, DocumentEntry, EngineResult schemas
   vlm.ts                            # ExtractionResult discriminated union + parseVlmResult()
   documents_db.ts                   # DbDocument (with extra_fields), DbType schemas
@@ -257,6 +278,7 @@ packages/types/src/
   schema.ts                         # SchemaInfo schemas
   audit.ts                          # AuditLogEntry, AuditLogPage schemas
   links.ts                          # DocumentLink, CreateLinkBody schemas
+  access.ts                         # groups, admin users, grants (scope + permission level)
 
 packages/api-client/src/
   index.ts                          # all fetch functions, imageUrl helper, fetchAuditLog()
@@ -278,4 +300,4 @@ install.sh                          # offline server: install from bundle + dock
 4. **Field correction** - allow users to edit extracted fields in `DocumentDetailPage` and save to the database.
 5. **Email notifications** - notify reviewers when new documents are ingested and pending review.
 6. **Auto-suggest document links** - when a VLM-extracted field (e.g. `reference_number`) matches an existing record, suggest a link during review instead of requiring the reviewer to search for it manually via `DocumentLinkPicker`.
-7. **Tenant deactivate/delete flow** and **tenant-scoping `/api/db/image`** - see Known Limitations.
+7. **Tenant deactivate/delete flow** - see Known Limitations.

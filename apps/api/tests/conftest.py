@@ -74,6 +74,42 @@ EXTRACTION_EDITOR = CurrentUser(
 )
 
 
+# Read-only role - browses/searches/downloads what it can see, never
+# uploads, reviews or edits, whatever delegated flags it carries (all set
+# here to prove they're ignored for a reader, except can_share).
+READER = CurrentUser(
+    id="00000000-0000-0000-0000-000000000005",
+    email="reader@example.com",
+    full_name="Test Reader",
+    role="reader",
+    tenant_id=TENANT_ID,
+    tenant_slug=TENANT_SLUG,
+    tenant_name=TENANT_NAME,
+    can_manage_access=True,
+    can_edit_extraction=True,
+    group_ids=[],
+    locale="en",
+    can_manage_lifecycle=True,
+    can_share=True,
+)
+
+# Synthetic user an external API key resolves to - upload-only.
+API_KEY_USER = CurrentUser(
+    id="00000000-0000-0000-0000-000000000006",
+    email="api-key:partner",
+    full_name=None,
+    role="api_key",
+    tenant_id=TENANT_ID,
+    tenant_slug=TENANT_SLUG,
+    tenant_name=TENANT_NAME,
+    can_manage_access=False,
+    can_edit_extraction=False,
+    group_ids=[],
+    locale="en",
+    clearance="public",
+)
+
+
 # ── DB mock helper ────────────────────────────────────────────────────────────
 
 
@@ -208,6 +244,25 @@ def extraction_editor_client(dirs):
     Only get_current_user is overridden - require_extraction_editor's real
     logic still runs and evaluates can_edit_extraction_data itself."""
     api_server.app.dependency_overrides[get_current_user] = lambda: EXTRACTION_EDITOR
+    with TestClient(api_server.app, raise_server_exceptions=True) as c:
+        yield c
+    api_server.app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def reader_client(dirs):
+    """TestClient authenticated as a read-only user (see READER) - only
+    get_current_user is overridden, so every real role guard still runs."""
+    api_server.app.dependency_overrides[get_current_user] = lambda: READER
+    with TestClient(api_server.app, raise_server_exceptions=True) as c:
+        yield c
+    api_server.app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def api_key_client(dirs):
+    """TestClient authenticated as an external API key (see API_KEY_USER)."""
+    api_server.app.dependency_overrides[get_current_user] = lambda: API_KEY_USER
     with TestClient(api_server.app, raise_server_exceptions=True) as c:
         yield c
     api_server.app.dependency_overrides.clear()

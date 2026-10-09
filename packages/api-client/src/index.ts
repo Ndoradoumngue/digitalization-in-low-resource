@@ -56,6 +56,10 @@ import {
   type Reviewer,
   type Series,
   type User,
+  ScopedGrantsResponseSchema,
+  type ScopedGrantsResponse,
+  type PermissionLevel,
+  type Confidentiality,
 } from "@sdai/types";
 
 // ── Core fetch helper ─────────────────────────────────────────────────────────
@@ -450,6 +454,7 @@ export async function fetchDocumentAccess(
 export interface CreateAccessGrantBody {
   grantee_type: "group" | "user";
   grantee_id: string;
+  permission?: PermissionLevel;
 }
 
 export async function createDocumentAccess(
@@ -480,6 +485,52 @@ export async function deleteDocumentAccess(grantId: string): Promise<void> {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
+}
+
+async function sendJson(url: string, method: string, body?: unknown): Promise<Response> {
+  const res = await fetch(url, withAuth({
+    method,
+    ...(body !== undefined
+      ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : {}),
+  }));
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return res;
+}
+
+export async function updateAccessGrant(grantId: string, permission: PermissionLevel): Promise<void> {
+  await sendJson(`/api/db/access/${encodeURIComponent(grantId)}`, "PATCH", { permission });
+}
+
+/** Series-level or document-type-level grants of this tenant (admin only). */
+export async function fetchScopedGrants(scope: "series" | "doc_type"): Promise<ScopedGrantsResponse> {
+  return fetchJson(`/api/db/grants?scope=${scope}`, ScopedGrantsResponseSchema);
+}
+
+export interface CreateScopedGrantBody extends CreateAccessGrantBody {
+  scope: "series" | "doc_type";
+  series_id?: string;
+  table_name?: string;
+}
+
+export async function createScopedGrant(body: CreateScopedGrantBody): Promise<{ id: string }> {
+  const res = await sendJson("/api/db/grants", "POST", body);
+  return CreateAccessGrantResponseSchema.parse(await res.json());
+}
+
+export async function setDocumentConfidentiality(
+  tableName: string,
+  id: string,
+  confidentiality: Confidentiality,
+): Promise<void> {
+  await sendJson(
+    `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}/confidentiality`,
+    "PATCH",
+    { confidentiality },
+  );
 }
 
 // ── Fonds/series hierarchy ─────────────────────────────────────────────────────
@@ -611,8 +662,14 @@ export async function deleteDocument(tableName: string, id: string): Promise<voi
   }
 }
 
-export function dbImageUrl(sourcePath: string): string {
-  return `/api/db/image?path=${encodeURIComponent(sourcePath)}`;
+/** URL of a pipeline file (page image, original PDF). Pass the document it
+ * belongs to whenever it is known - the server then checks that document's
+ * access directly instead of tracing the file back to its upload. */
+export function dbImageUrl(sourcePath: string, doc?: { table: string; id: string }): string {
+  const base = `/api/db/image?path=${encodeURIComponent(sourcePath)}`;
+  return doc
+    ? `${base}&table=${encodeURIComponent(doc.table)}&id=${encodeURIComponent(doc.id)}`
+    : base;
 }
 
 // ── Admin endpoints ───────────────────────────────────────────────────────────
@@ -697,6 +754,20 @@ export async function updateUserExtractionEditor(
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
+}
+
+export interface UpdateUserBody {
+  role?: "reviewer" | "reader";
+  can_manage_access?: boolean;
+  can_edit_extraction?: boolean;
+  can_manage_lifecycle?: boolean;
+  can_share?: boolean;
+  clearance?: Confidentiality;
+}
+
+/** Partial update of a user's role, delegated flags or clearance (admin only). */
+export async function updateAdminUser(userId: string, body: UpdateUserBody): Promise<void> {
+  await sendJson(`/api/admin/users/${encodeURIComponent(userId)}`, "PATCH", body);
 }
 
 export async function addUserToGroup(userId: string, groupId: string): Promise<void> {

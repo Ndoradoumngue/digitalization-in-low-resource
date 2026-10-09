@@ -772,21 +772,41 @@ def test_get_document_access_returns_grants(auth_client, mock_db, monkeypatch):
     )
     grant_row = {
         "id": "grant-1",
+        "scope": "document",
+        "table_name": "my_table",
+        "document_id": "doc-1",
+        "series_id": None,
         "grantee_type": "group",
         "grantee_id": "group-1",
+        "permission": "download",
         "granted_by": None,
         "granted_at": _dt.datetime(2026, 1, 1),
     }
+    series_grant = {
+        **grant_row,
+        "id": "grant-2",
+        "scope": "series",
+        "table_name": None,
+        "document_id": None,
+        "series_id": "series-1",
+        "permission": "read",
+    }
     mock_db.execute.side_effect = [
-        make_result(one_or_none=(1,)),  # _document_visible
-        make_result(rows=[grant_row]),  # SELECT grants
+        # _effective_permission: read + download, not edit
+        make_result(one_or_none={"read": True, "download": True, "edit": False}),
+        make_result(rows=[grant_row, series_grant]),  # SELECT grants (all scopes)
         make_result(rows=[("group-1", "HR")]),  # resolve group names
+        make_result(rows=[("series-1", "Land deeds")]),  # resolve series names
     ]
     resp = auth_client.get("/api/db/documents/my_table/doc-1/access")
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["grants"]) == 1
+    assert len(body["grants"]) == 2
     assert body["grants"][0]["grantee_name"] == "HR"
+    assert body["grants"][0]["permission"] == "download"
+    assert body["grants"][1]["scope"] == "series"
+    assert body["grants"][1]["series_name"] == "Land deeds"
+    assert body["my_permission"] == "download"
     assert body["can_manage"] is False  # plain reviewer
 
 
@@ -834,14 +854,22 @@ def test_delete_document_access_not_found(access_manager_client, mock_db):
 
 
 def test_delete_document_access_success(access_manager_client, mock_db):
-    deleted_row = {
+    grant_row = {
+        "id": "grant-1",
+        "scope": "document",
         "table_name": "my_table",
         "document_id": "doc-1",
+        "series_id": None,
         "grantee_type": "group",
         "grantee_id": "group-1",
+        "permission": "read",
+        "granted_by": None,
+        "granted_at": None,
     }
     mock_db.execute.side_effect = [
-        make_result(one_or_none=deleted_row),  # DELETE ... RETURNING
+        make_result(one_or_none=grant_row),  # SELECT grant
+        make_result(one_or_none=(1,)),  # manager can see the document
+        make_result(),  # DELETE
         make_result(),  # log_action
     ]
     resp = access_manager_client.delete("/api/db/access/grant-1")
@@ -1024,13 +1052,14 @@ def test_serve_image_path_traversal_denied(auth_client, tmp_path, monkeypatch):
     assert resp.status_code == 403
 
 
-def test_serve_image_not_found(auth_client, tmp_path, monkeypatch):
+def test_serve_image_not_found(auth_client, mock_db, tmp_path, monkeypatch):
     import documents_router as dr
 
     # The allowed roots are computed at import, so point them at tmp_path
     # directly - patching DATA_DIR alone leaves the path outside them (403).
     monkeypatch.setattr(dr, "_SAFE_FILE_ROOTS", [tmp_path.resolve()])
     (tmp_path / "images").mkdir()
+    monkeypatch.setattr(dr, "_file_permitted", AsyncMock(return_value=True))
 
     resp = auth_client.get(f"/api/db/image?path={tmp_path}/images/missing.png")
     assert resp.status_code == 404

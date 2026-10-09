@@ -3,6 +3,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import AdminRoute from "./components/auth/AdminRoute";
+import ContributorRoute from "./components/auth/ContributorRoute";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import UploadPage from "./pages/UploadPage";
@@ -35,9 +36,9 @@ export default function App() {
         <Route
           path="/upload"
           element={
-            <ProtectedRoute>
+            <ContributorRoute>
               <UploadPage />
-            </ProtectedRoute>
+            </ContributorRoute>
           }
         />
 
@@ -98,9 +99,9 @@ export default function App() {
         <Route
           path="/review"
           element={
-            <ProtectedRoute>
+            <ContributorRoute>
               <ReviewPage />
-            </ProtectedRoute>
+            </ContributorRoute>
           }
         />
 

@@ -144,7 +144,15 @@
     "restrictTo": "+ Restreindre à…",
     "loading": "Chargement…",
     "openToAll": "Visible par tous dans votre organisation. Aucune restriction appliquée.",
-    "restrictedNote": "Restreint - visible uniquement par les administrateurs et :"
+    "restrictedNote": "Restreint - visible uniquement par les administrateurs et :",
+    "permission": {
+      "read": "Lecture",
+      "download": "Téléchargement",
+      "edit": "Modification"
+    },
+    "viaSeries": "via la série « {{name}} »",
+    "viaType": "via le type de document",
+    "yourAccess": "Votre accès : {{level}}"
   },
   "upload": {
     "status": {
@@ -356,7 +364,7 @@
   },
   "accessAdmin": {
     "header": "Accès & Groupes",
-    "subtitle": "Gérez les groupes, les séries, et qui peut restreindre des documents à un groupe ou une personne spécifique.",
+    "subtitle": "Gérez les groupes, les utilisateurs (rôle, habilitation, permissions déléguées), les séries, et qui peut voir des séries ou des types de documents entiers.",
     "export": {
       "heading": "Exporter l'archive",
       "descriptionPrefix": "Télécharge tous les documents de ce tenant - tous les champs extraits ainsi qu'un dossier ",
@@ -407,7 +415,28 @@
       "canManageAccess": "Peut gérer l'accès aux documents",
       "canEditExtraction": "Peut modifier les données extraites",
       "removeFromGroup": "Retirer de {{group}}",
-      "addToGroup": "+ Ajouter à un groupe…"
+      "addToGroup": "+ Ajouter à un groupe…",
+      "role": "Rôle",
+      "clearance": "Habilitation",
+      "canManageLifecycle": "Peut gérer la conservation et le cycle de vie",
+      "canShare": "Peut créer des liens de partage",
+      "readerFlagHint": "Les comptes en lecture seule ne peuvent pas recevoir cette permission"
+    },
+    "seriesGrants": {
+      "heading": "Accès par série",
+      "description": "Réserve tous les documents d'une série aux personnes ou groupes listés ici (en plus des administrateurs et des autorisations par document). Une série sans autorisation reste ouverte à tous.",
+      "selectTarget": "Choisir une série…",
+      "none": "Aucune série n'est restreinte."
+    },
+    "typeGrants": {
+      "heading": "Accès par type de document",
+      "description": "Réserve tous les documents d'un type aux personnes ou groupes listés ici (en plus des administrateurs et des autorisations par document). Un type sans autorisation reste ouvert à tous.",
+      "selectTarget": "Choisir un type de document…",
+      "none": "Aucun type de document n'est restreint."
+    },
+    "scopedGrants": {
+      "loading": "Chargement…",
+      "confirmRemove": "Retirer cette autorisation ? Si c'est la dernière, les documents concernés redeviennent visibles par tous."
     }
   },
   "audit": {
@@ -428,7 +457,10 @@
       "series_assigned": "série assignée",
       "integrity_check_failed": "échec de vérification d'intégrité",
       "document_fields_edited": "champs de document modifiés",
-      "archive_exported": "archive exportée"
+      "archive_exported": "archive exportée",
+      "confidentiality_changed": "confidentialité modifiée",
+      "document_access_changed": "niveau d'accès modifié",
+      "user_permissions_changed": "permissions utilisateur modifiées"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -600,5 +632,17 @@
     "json": "Document complet - JSON",
     "sql": "Document complet - SQL",
     "csv": "{{field}} - tableur CSV"
+  },
+  "roles": {
+    "admin": "administrateur",
+    "reviewer": "réviseur",
+    "reader": "lecteur"
+  },
+  "confidentiality": {
+    "label": "Confidentialité",
+    "public": "Public",
+    "internal": "Interne",
+    "confidential": "Confidentiel",
+    "secret": "Secret"
   }
 }

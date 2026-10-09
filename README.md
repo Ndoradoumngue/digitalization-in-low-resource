@@ -31,7 +31,7 @@ On top of the extraction pipeline, the platform is being extended into a complet
 | Capture & AI indexing | Upload, server-folder and Google Drive import, partner API keys, per-page progress; metadata extracted by the on-premise VLM |
 | Identification | Persistent, citable record number per document (e.g. `LAND-2026-000123`) |
 | Multi-organisation | One installation, several ministries/departments, physically separate tables per tenant |
-| Access control | Admin / reviewer roles, user groups, per-document access grants, documents private to their uploader after review, delegated permissions |
+| Access control | Admin, reviewer and read-only reader roles; user groups; access grants per document, per series or per document type with permission levels (read / download / edit); confidentiality levels (public → secret) checked against each user's clearance; documents private to their uploader after review; delegated permissions (access management, extraction editing, archivist, sharing) |
 | Classification | Archival series (fonds) and chain-of-custody links between documents |
 | Search | French full-text search across every extracted field, with filters |
 | Integrity & audit | Original file kept and SHA-256-verified for every upload (scheduled fixity check), full audit log |
@@ -47,7 +47,6 @@ On top of the extraction pipeline, the platform is being extended into a complet
 
 | Area | Planned |
 |---|---|
-| Access rights | Read-only and archivist roles, permissions per series / document type, permission levels, confidentiality levels with user clearance |
 | Versioning & traceability | File versions with restore, before/after history of every field change, tamper-evident (hash-chained) audit log, view/download logging |
 | Hybrid local + cloud | Local server stays primary and works offline; a cloud copy (standard VM, no GPU) is synchronized both ways automatically; conflicts are flagged, never lost; documents uploaded remotely are processed by the local GPU; encrypted off-site backups |
 | Classification | Hierarchical classification scheme (*plan de classement*), tags, automatic filing, link suggestions |
@@ -617,7 +616,7 @@ docker compose exec api python create_admin.py \
   --tenant land --role reviewer
 ```
 
-`--role` defaults to `admin` if omitted. `create_admin.py` also upserts by email - re-running it for an existing user updates their password/role/tenant and re-activates the account.
+`--role` is `admin`, `reviewer` or `reader` (read-only: browse, search and download what it is allowed to see) and defaults to `admin` if omitted. Afterwards an admin can switch a user between reviewer and reader, set their clearance and delegated permissions on the **Access & Groups** page. `create_admin.py` also upserts by email - re-running it for an existing user updates their password/role/tenant and re-activates the account.
 
 ### Verifying isolation
 
@@ -649,7 +648,7 @@ curl -sk https://<host>/api/ingest/upload \
   -F "preset=short-form"
 ```
 
-An API key is always scoped to one tenant and can **only** reach `POST /api/ingest/upload`, `GET /api/ingest/status/{batch_id}`, and `GET /api/ingest/presets` - `get_current_user` resolves it to a synthetic user with `role="api_key"`, which every admin/reviewer permission check in the app already rejects (same `require_admin` / `require_access_manager` / `require_extraction_editor` guards a human reviewer account is subject to). It can never log in, browse the review queue, or reach any admin endpoint.
+An API key is always scoped to one tenant and can **only** reach `POST /api/ingest/upload`, `GET /api/ingest/presets`, `GET /api/ingest/batches`, `GET /api/ingest/status/{batch_id}` and `GET /api/ingest/pages/{id}` - `get_current_user` resolves it to a synthetic user with `role="api_key"`, which only `require_contributor` accepts; every archive, review, page-action and admin guard (`require_user`, `require_reviewer`, `require_admin`, `require_access_manager`, `require_extraction_editor`) rejects it. It can never log in, browse or search the archive, or reach any admin endpoint.
 
 ### Why minting a key is a CLI-only action
 

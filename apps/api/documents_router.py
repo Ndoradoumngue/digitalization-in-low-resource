@@ -12,7 +12,11 @@ Endpoints:
   DELETE /api/db/links/{link_id}              - remove a link
   GET    /api/db/documents/{tbl}/{id}/access  - access grants on one document
   POST   /api/db/documents/{tbl}/{id}/access  - grant a group/user access (restricts it)
-  DELETE /api/db/access/{grant_id}            - remove an access grant
+  PATCH  /api/db/access/{grant_id}            - change a grant's permission level
+  DELETE /api/db/access/{grant_id}            - remove an access grant (any scope)
+  PATCH  /api/db/documents/{tbl}/{id}/confidentiality - classify public..secret (access managers)
+  GET    /api/db/grants?scope=series|doc_type - series-/type-level grants (admin-only)
+  POST   /api/db/grants                       - grant on a whole series or type (admin-only)
   GET    /api/db/grantees                     - groups/users available to tag a document with
   GET    /api/db/series                       - list this tenant's series
   POST   /api/db/series                       - create a series (admin-only)
@@ -32,12 +36,13 @@ from pathlib import Path
 from audit import client_ip, log_action
 from auth import (
     CurrentUser,
-    get_current_user,
     require_access_manager,
     require_admin,
     require_extraction_editor,
+    require_reviewer,
+    require_user,
 )
-from cache import _path_key_builder
+from cache import _path_key_builder, invalidate_cache
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from datetime import datetime, timezone
 
@@ -227,11 +232,28 @@ def _display_col(cols: dict[str, str]) -> str | None:
 
 
 # ── Document-level access control ─────────────────────────────────────────────
-# A document with no rows in sdai_document_access is visible to everyone in
-# its tenant (the default/common case, unchanged from before this feature).
-# A document with any rows is restricted to admins plus whoever/whatever
-# group is explicitly granted - access is always explicit tagging, never
-# automatic/blanket group visibility (see CONTEXT.md "Access Control").
+# A grant (sdai_document_access) targets one document, one series or one
+# document type, and carries a cumulative permission level (read <
+# download < edit). A document no grant targets at any scope is open to
+# its whole tenant, as before. A document some grant targets is restricted
+# to admins plus the users/groups holding a targeting grant - at the level
+# that grant gives. On top of that, a document's confidentiality must not
+# exceed the user's clearance, grant or not, and a role caps the level a
+# user can ever reach (reader: download). Admins see every live row. See
+# CONTEXT.md "Access Control".
+
+# Cached endpoints whose answer depends on what the caller can see - cleared
+# whenever a grant, a confidentiality level or a series assignment changes.
+_ACCESS_CACHE_NAMESPACES = ("types", "reviewers", "review", "schema")
+
+# Cumulative permission levels, lowest first.
+PERMISSION_LEVELS = ("read", "download", "edit")
+
+# Document confidentiality levels / user clearances, lowest first.
+CONFIDENTIALITY_LEVELS = ("public", "internal", "confidential", "secret")
+
+# Highest permission level each non-admin role can reach on any document.
+_ROLE_MAX_PERMISSION = {"reviewer": "edit", "reader": "download"}
 
 
 def _live_where_clause(table: str) -> str:
@@ -243,42 +265,77 @@ def _live_where_clause(table: str) -> str:
     return f"(\"{table}\".deleted_at IS NULL AND \"{table}\".lifecycle_status IS DISTINCT FROM 'destroyed')"
 
 
+def _sql_list(values) -> str:
+    """SQL literal list from internal constants only (never user input)."""
+    return ", ".join(f"'{v}'" for v in values)
+
+
 def _access_where_clause(
-    table: str, current_user: CurrentUser, *, include_deleted: bool = False
+    table: str,
+    current_user: CurrentUser,
+    permission: str = "read",
+    *,
+    include_deleted: bool = False,
 ) -> str:
     """Boolean SQL expression, safe to AND into any WHERE clause (or use
-    standalone) selecting from `table`, that's true iff current_user may
-    see a given row: the row is live (see _live_where_clause - skipped
-    with include_deleted=True, which then gives admins "", callers should
-    skip appending it when empty rather than adding a redundant
-    "AND ''"/"AND TRUE") and, for non-admins, granted to them (admins
-    see every live row). `table` is embedded as a literal -
-    always an internally-generated sanitized identifier here, never raw
-    user input, matching how table names are already embedded elsewhere
-    in this module (e.g. `FROM "{table}"`). Callers MUST also merge
+    standalone) selecting from `table`, that's true iff current_user holds
+    at least `permission` (read/download/edit) on a given row:
+
+        live  AND  (admin  OR  (confidentiality <= clearance
+                               AND role allows `permission`
+                               AND (no grant targets the row at any scope
+                                    OR a grant >= `permission` targets it
+                                       for the user or one of their groups)))
+
+    `live` (see _live_where_clause) is skipped with include_deleted=True,
+    which then gives admins "" - callers should skip appending it when
+    empty rather than adding a redundant "AND ''"/"AND TRUE". A role that
+    can never reach `permission` (a reader asking for edit, an API key)
+    gets "FALSE". `table` is embedded as a literal - always an
+    internally-generated sanitized identifier here, never raw user input,
+    matching how table names are already embedded elsewhere in this module
+    (e.g. `FROM "{table}"`), and every other literal comes from the
+    constant tuples above. Callers MUST also merge
     _access_params(current_user) into the query's params dict whenever
     this returns non-empty."""
     live = "" if include_deleted else _live_where_clause(table)
     if current_user.role == "admin":
         return live
-    # The correlated `id` reference below MUST be qualified - sdai_document_access
-    # has its own `id` primary-key column, so a bare `id` resolves to that
-    # instead of correlating to the outer document row, silently turning both
-    # branches false (NOT EXISTS always true, i.e. no restriction ever takes
-    # effect). `"{table}".id` uses the double-quoted table name as the FROM
-    # clause's implicit alias, which every caller relies on (none of them
-    # alias the outer table explicitly).
-    doc_id_ref = f'"{table}".id'
+    if permission not in PERMISSION_LEVELS:
+        raise ValueError(f"unknown permission level {permission!r}")
+    role_max = _ROLE_MAX_PERMISSION.get(current_user.role)
+    if role_max is None or PERMISSION_LEVELS.index(permission) > PERMISSION_LEVELS.index(role_max):
+        return "FALSE"
+
+    clearance = (
+        current_user.clearance if current_user.clearance in CONFIDENTIALITY_LEVELS else "public"
+    )
+    allowed_levels = CONFIDENTIALITY_LEVELS[: CONFIDENTIALITY_LEVELS.index(clearance) + 1]
+    satisfying = PERMISSION_LEVELS[PERMISSION_LEVELS.index(permission) :]
+
+    # The correlated references below MUST be qualified - sdai_document_access
+    # has its own `id` and `series_id` columns, so a bare `id` resolves to
+    # the grant's own column instead of correlating to the outer document
+    # row, silently turning both branches false (NOT EXISTS always true,
+    # i.e. no restriction ever takes effect). `"{table}".id` uses the
+    # double-quoted table name as the FROM clause's implicit alias, which
+    # every caller relies on (none of them alias the outer table explicitly).
+    doc = f'"{table}"'
+    targets = f"""da.tenant_id = CAST(:__access_tenant_id AS uuid)
+              AND ((da.scope = 'document' AND da.table_name = '{table}' AND da.document_id = {doc}.id)
+                OR (da.scope = 'series' AND da.series_id = {doc}.series_id)
+                OR (da.scope = 'doc_type' AND da.table_name = '{table}'))"""
     access = f"""(
-        NOT EXISTS (
-            SELECT 1 FROM sdai_document_access da
-            WHERE da.table_name = '{table}' AND da.document_id = {doc_id_ref}
-        )
-        OR EXISTS (
-            SELECT 1 FROM sdai_document_access da
-            WHERE da.table_name = '{table}' AND da.document_id = {doc_id_ref}
-              AND ((da.grantee_type = 'user' AND da.grantee_id = CAST(:__access_user_id AS uuid))
-                OR (da.grantee_type = 'group' AND da.grantee_id = ANY(CAST(:__access_group_ids AS uuid[]))))
+        COALESCE({doc}.confidentiality, 'internal') IN ({_sql_list(allowed_levels)})
+        AND (
+            NOT EXISTS (SELECT 1 FROM sdai_document_access da WHERE {targets})
+            OR EXISTS (
+                SELECT 1 FROM sdai_document_access da
+                WHERE {targets}
+                  AND da.permission IN ({_sql_list(satisfying)})
+                  AND ((da.grantee_type = 'user' AND da.grantee_id = CAST(:__access_user_id AS uuid))
+                    OR (da.grantee_type = 'group' AND da.grantee_id = ANY(CAST(:__access_group_ids AS uuid[]))))
+            )
         )
     )"""
     return f"{live} AND {access}" if live else access
@@ -291,20 +348,215 @@ def _access_params(current_user: CurrentUser) -> dict:
     return {
         "__access_user_id": current_user.id,
         "__access_group_ids": current_user.group_ids or [],
+        "__access_tenant_id": current_user.tenant_id,
     }
 
 
-async def _document_visible(conn, table: str, doc_id: str, current_user: CurrentUser) -> bool:
-    """Direct existence+visibility check for one document - used wherever
+async def _document_visible(
+    conn, table: str, doc_id: str, current_user: CurrentUser, permission: str = "read"
+) -> bool:
+    """Direct existence+permission check for one document - used wherever
     a single table+id is acted on outside the UNION list/queue queries
-    (detail view, links, review actions)."""
-    access_clause = _access_where_clause(table, current_user)
+    (detail view, links, review actions). `permission` is the level the
+    action needs (read to view, download to export, edit to change)."""
+    access_clause = _access_where_clause(table, current_user, permission)
     where = "id = CAST(:id AS uuid)"
     if access_clause:
         where += f" AND {access_clause}"
     params = {"id": doc_id, **_access_params(current_user)}
     result = await conn.execute(text(f'SELECT 1 FROM "{table}" WHERE {where}'), params)
     return result.one_or_none() is not None
+
+
+async def _require_document_permission(
+    conn, table: str, doc_id: str, current_user: CurrentUser, permission: str
+) -> None:
+    """Raise unless current_user holds `permission` on the document: 404
+    when they can't see it at all (its existence isn't revealed), 403 when
+    they can see it but not at that level."""
+    if await _document_visible(conn, table, doc_id, current_user, permission):
+        return
+    if permission != "read" and await _document_visible(conn, table, doc_id, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail=t(f"documents.permission_{permission}_required", current_user.locale),
+        )
+    raise HTTPException(status_code=404, detail=t("common.document_not_found", current_user.locale))
+
+
+async def _effective_permission(
+    conn, table: str, doc_id: str, current_user: CurrentUser
+) -> str | None:
+    """Highest permission level current_user holds on one document
+    (read/download/edit), or None when they can't see it at all - lets
+    the UI show only the actions the backend will accept. One round trip:
+    each level's clause is evaluated as a column over the same row."""
+    levels = [
+        (level, _access_where_clause(table, current_user, level) or "TRUE")
+        for level in PERMISSION_LEVELS
+    ]
+    cols = ", ".join(f'({clause}) AS "{level}"' for level, clause in levels)
+    result = await conn.execute(
+        text(f'SELECT {cols} FROM "{table}" WHERE id = CAST(:id AS uuid)'),
+        {"id": doc_id, **_access_params(current_user)},
+    )
+    row = result.mappings().one_or_none()
+    if row is None:
+        return None
+    granted = [level for level in PERMISSION_LEVELS if row[level]]
+    return granted[-1] if granted else None
+
+
+async def _filed_rows_permitted(
+    conn,
+    current_user: CurrentUser,
+    tables: list[str],
+    where,
+    params: dict,
+    permission: str,
+) -> bool | None:
+    """Evaluate `permission` on every row of `tables` matching `where` - a
+    SQL condition, or a function of the table name returning one (None to
+    skip that table) - with the same params for every table. None when no
+    row matches at all, otherwise whether at least one matching row is
+    permitted."""
+    parts = []
+    for table in tables:
+        cond = where(table) if callable(where) else where
+        if cond is None:
+            continue
+        clause = _access_where_clause(table, current_user, permission) or "TRUE"
+        parts.append(f'SELECT ({clause}) AS ok FROM "{table}" WHERE {cond}')
+    if not parts:
+        return None
+    rows = await conn.execute(
+        text("\nUNION ALL\n".join(parts)), {**params, **_access_params(current_user)}
+    )
+    oks = [bool(r[0]) for r in rows]
+    if not oks:
+        return None
+    return any(oks)
+
+
+async def _filed_document_permitted(
+    batch_document_ids: list[str], current_user: CurrentUser, permission: str
+) -> bool:
+    """Ingestion endpoints (pages, page actions) work on a batch_documents
+    upload, not on a filed document. While the upload is still in the
+    pipeline nothing is filed and the shared pipeline rules apply (any
+    contributor of the tenant) - but once it has produced a document, the
+    upload is that document's content and follows its access rules."""
+    if not batch_document_ids:
+        return True
+    async with _engine().connect() as conn:
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+        permitted = await _filed_rows_permitted(
+            conn,
+            current_user,
+            sorted(tables_cols),
+            lambda table: (
+                "batch_document_id = ANY(CAST(:__bd_ids AS uuid[]))"
+                if "batch_document_id" in tables_cols[table]
+                else None
+            ),
+            {"__bd_ids": batch_document_ids},
+            permission,
+        )
+    return permitted is not False
+
+
+def _doc_file_match(cols: dict[str, str]) -> str:
+    """SQL condition: the row references one of :__paths as any of its
+    files - only over the file columns this table actually has (tables
+    from before multi-page/original tracking lack some)."""
+    conds = [f"{c} = ANY(:__paths)" for c in ("source_image_path", "source_pdf_path", "original_path") if c in cols]
+    if "page_image_paths" in cols:
+        conds += [
+            "page_image_paths @> jsonb_build_array(CAST(:__path0 AS text))",
+            "page_image_paths @> jsonb_build_array(CAST(:__path1 AS text))",
+        ]
+    return "(" + " OR ".join(conds) + ")"
+
+
+async def _file_permitted(
+    conn,
+    current_user: CurrentUser,
+    paths: list[str],
+    table: str | None,
+    doc_id: str | None,
+) -> bool:
+    """May current_user view this pipeline file (page image, original
+    upload, source PDF)? `paths` is the path as requested and as resolved.
+
+    1. Fast path - the caller names the document (table + id) it is
+       showing: allowed when that document is readable and references the
+       file.
+    2. Otherwise the file is traced to the upload(s) that produced it
+       (batch_documents / batch_document_pages, in the caller's tenant).
+       If any of them has been filed, the filed document(s) decide; if none
+       has, the file is still in the shared pipeline - contributors only.
+    3. A file no upload knows about (documents that predate page
+       tracking) is allowed only when a readable document references it.
+    Anything else is refused - including another tenant's files."""
+    tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+    match_params = {"__paths": paths, "__path0": paths[0], "__path1": paths[-1]}
+
+    if table and doc_id:
+        safe = _sanitize(table)
+        if safe in tables_cols:
+            clause = _access_where_clause(safe, current_user)
+            where = f"id = CAST(:__doc_id AS uuid) AND {_doc_file_match(tables_cols[safe])}"
+            if clause:
+                where += f" AND {clause}"
+            row = await conn.execute(
+                text(f'SELECT 1 FROM "{safe}" WHERE {where}'),
+                {"__doc_id": doc_id, **match_params, **_access_params(current_user)},
+            )
+            if row.one_or_none() is not None:
+                return True
+
+    bd_rows = await conn.execute(
+        text("""
+            SELECT bd.id::text FROM batch_documents bd
+            JOIN batches b ON b.id = bd.batch_id
+            WHERE b.tenant_id = CAST(:tid AS uuid)
+              AND (bd.image_path = ANY(:paths) OR bd.source_path = ANY(:paths))
+            UNION
+            SELECT bd.id::text FROM batch_document_pages p
+            JOIN batch_documents bd ON bd.id = p.batch_document_id
+            JOIN batches b ON b.id = bd.batch_id
+            WHERE b.tenant_id = CAST(:tid AS uuid) AND p.image_path = ANY(:paths)
+        """),
+        {"tid": current_user.tenant_id, "paths": paths},
+    )
+    bd_ids = [r[0] for r in bd_rows]
+
+    if bd_ids:
+        permitted = await _filed_rows_permitted(
+            conn,
+            current_user,
+            sorted(tables_cols),
+            lambda table: (
+                "batch_document_id = ANY(CAST(:__bd_ids AS uuid[]))"
+                if "batch_document_id" in tables_cols[table]
+                else None
+            ),
+            {"__bd_ids": bd_ids},
+            "read",
+        )
+        if permitted is None:
+            return current_user.role in ("admin", "reviewer")
+        return permitted
+
+    permitted = await _filed_rows_permitted(
+        conn,
+        current_user,
+        sorted(tables_cols),
+        lambda table: _doc_file_match(tables_cols[table]),
+        match_params,
+        "read",
+    )
+    return bool(permitted)
 
 
 def _per_table_select(
@@ -479,7 +731,7 @@ router = APIRouter(prefix="/api/db", tags=["documents-db"])
 
 @router.get("/types", summary="List document types")
 @cache(expire=60, namespace="types", key_builder=_path_key_builder)
-async def list_types(current_user: CurrentUser = Depends(get_current_user)):
+async def list_types(current_user: CurrentUser = Depends(require_user)):
     """
     Discover all ingest-created tables via information_schema and return
     each table's name, document type label, row count, and last ingestion
@@ -521,7 +773,7 @@ async def list_types(current_user: CurrentUser = Depends(get_current_user)):
 
 @router.get("/reviewers", summary="List reviewers")
 @cache(expire=60, namespace="reviewers", key_builder=_path_key_builder)
-async def list_reviewers(current_user: CurrentUser = Depends(get_current_user)):
+async def list_reviewers(current_user: CurrentUser = Depends(require_user)):
     """
     Every user who has reviewed at least one document in this tenant, with
     their name/email resolved from sdai_users. Powers the reviewer filter
@@ -575,7 +827,7 @@ async def list_documents(
     q: str | None = None,
     reviewed_by: str | None = None,
     series: str | None = None,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ):
     """
     Paginated document list.
@@ -637,7 +889,7 @@ def _serialize_row(row) -> dict:
 async def get_document_detail(
     table_name: str,
     doc_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ):
     """
     Return every column value for one document.
@@ -680,7 +932,7 @@ async def export_document(
     doc_id: str,
     format: str = Query("json", pattern="^(json|sql|csv)$"),
     field: str | None = Query(None, max_length=128),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ):
     """Download one document's data - the per-document counterpart of the
     admin archive export (GET /api/admin/export), same JSON and SQL shapes,
@@ -700,13 +952,9 @@ async def export_document(
             raise HTTPException(
                 status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
             )
-        access_clause = _access_where_clause(safe, current_user)
-        where = "id = CAST(:id AS uuid)"
-        if access_clause:
-            where += f" AND {access_clause}"
+        await _require_document_permission(conn, safe, doc_id, current_user, "download")
         result = await conn.execute(
-            text(f'SELECT * FROM "{safe}" WHERE {where}'),
-            {"id": doc_id, **_access_params(current_user)},
+            text(f'SELECT * FROM "{safe}" WHERE id = CAST(:id AS uuid)'), {"id": doc_id}
         )
         row = result.mappings().one_or_none()
 
@@ -792,10 +1040,7 @@ async def update_document_fields(
             raise HTTPException(
                 status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
             )
-        if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(
-                status_code=404, detail=t("common.document_not_found", current_user.locale)
-            )
+        await _require_document_permission(conn, safe, doc_id, current_user, "edit")
 
         cols = tables_cols[safe]
         editable, set_parts, params = _build_field_set_clause(cols, body.fields)
@@ -934,16 +1179,19 @@ async def _enrich_links(
         other_table = r["to_table"] if outgoing else r["from_table"]
         other_id = str(r["to_id"] if outgoing else r["from_id"])
         other = other_docs.get((other_table, other_id))
+        # A linked document the caller can't see stays an anonymous
+        # placeholder: no title, no type, no id, no note (a note is free
+        # text about it) - only that some link exists and its relation.
         links.append(
             {
                 "id": str(r["id"]),
                 "relation": r["relation"],
-                "note": r["note"],
+                "note": r["note"] if other else None,
                 "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                 "created_by": str(r["created_by"]) if r["created_by"] else None,
                 "direction": "outgoing" if outgoing else "incoming",
-                "other_table": other_table,
-                "other_id": other_id,
+                "other_table": other_table if other else "",
+                "other_id": other_id if other else "",
                 "other_document_type": other["document_type"] if other else None,
                 "other_display": other["display"] if other else None,
                 "other_source_image_path": other["source_image_path"] if other else None,
@@ -957,7 +1205,7 @@ async def _enrich_links(
 async def get_document_links(
     table_name: str,
     doc_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ):
     """Return every chain-of-custody link involving this document, in
     either direction, enriched with basic info about the linked document."""
@@ -986,7 +1234,7 @@ async def create_document_link(
     table_name: str,
     doc_id: str,
     body: CreateLinkBody,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Create a chain-of-custody link from this document to another (e.g.
     a sale deed 'concerns' the original title deed). Both documents must
@@ -1014,10 +1262,7 @@ async def create_document_link(
                 detail=t("common.table_not_found", current_user.locale, table=to_safe),
             )
 
-        if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(
-                status_code=404, detail=t("common.document_not_found", current_user.locale)
-            )
+        await _require_document_permission(conn, safe, doc_id, current_user, "edit")
         if not await _document_visible(conn, to_safe, body.to_id, current_user):
             raise HTTPException(
                 status_code=404,
@@ -1081,16 +1326,16 @@ async def create_document_link(
 async def delete_document_link(
     request: Request,
     link_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Remove a chain-of-custody link. Any tenant user may do this (not
     admin-only) - removing a link only retracts an assertion between two
     still-intact documents, no extracted data is destroyed, and it's
     trivially re-creatable; this matches flag/approve/reject's permission
-    level, not hard-delete's. Requires the caller to be able to see at
-    least one side of the link - this endpoint only has a link_id, not a
-    table+id the way create/list do, so there's no single "the document
-    you're viewing" to check visibility against."""
+    level, not hard-delete's. Requires the caller to hold edit permission
+    on at least one side of the link - this endpoint only has a link_id,
+    not a table+id the way create/list do, so there's no single "the
+    document you're viewing" to check against."""
     async with _engine().begin() as conn:
         link_row = await conn.execute(
             text("""
@@ -1106,13 +1351,13 @@ async def delete_document_link(
                 status_code=404, detail=t("common.link_not_found", current_user.locale)
             )
 
-        can_see_from = await _document_visible(
-            conn, link["from_table"], str(link["from_id"]), current_user
+        can_edit_from = await _document_visible(
+            conn, link["from_table"], str(link["from_id"]), current_user, "edit"
         )
-        can_see_to = await _document_visible(
-            conn, link["to_table"], str(link["to_id"]), current_user
+        can_edit_to = await _document_visible(
+            conn, link["to_table"], str(link["to_id"]), current_user, "edit"
         )
-        if not (can_see_from or can_see_to):
+        if not (can_edit_from or can_edit_to):
             raise HTTPException(
                 status_code=404, detail=t("common.link_not_found", current_user.locale)
             )
@@ -1177,18 +1422,106 @@ async def list_grantees(current_user: CurrentUser = Depends(require_access_manag
 class CreateAccessGrantBody(BaseModel):
     grantee_type: str = Field(..., pattern="^(group|user)$")
     grantee_id: str
+    permission: str = Field("read", pattern="^(read|download|edit)$")
+
+
+class CreateScopedGrantBody(CreateAccessGrantBody):
+    scope: str = Field(..., pattern="^(series|doc_type)$")
+    series_id: str | None = None
+    table_name: str | None = None
+
+
+class UpdateGrantBody(BaseModel):
+    permission: str = Field(..., pattern="^(read|download|edit)$")
+
+
+_GRANT_COLS = (
+    "id, scope, table_name, document_id, series_id, grantee_type, grantee_id,"
+    " permission, granted_by, granted_at"
+)
+
+
+async def _serialize_grants(conn, rows) -> list[dict]:
+    """Grant rows -> JSON, with grantee (group/user) and series names
+    resolved in one query per kind rather than per grant."""
+    group_ids = [str(r["grantee_id"]) for r in rows if r["grantee_type"] == "group"]
+    user_ids = [str(r["grantee_id"]) for r in rows if r["grantee_type"] == "user"]
+    series_ids = [str(r["series_id"]) for r in rows if r["series_id"]]
+    group_names: dict[str, str] = {}
+    user_names: dict[str, str] = {}
+    series_names: dict[str, str] = {}
+    if group_ids:
+        g_rows = await conn.execute(
+            text("SELECT id, name FROM sdai_groups WHERE id = ANY(:ids)"), {"ids": group_ids}
+        )
+        group_names = {str(r[0]): r[1] for r in g_rows}
+    if user_ids:
+        u_rows = await conn.execute(
+            text("SELECT id, email, full_name FROM sdai_users WHERE id = ANY(:ids)"),
+            {"ids": user_ids},
+        )
+        user_names = {str(r[0]): (r[2] or r[1]) for r in u_rows}
+    if series_ids:
+        s_rows = await conn.execute(
+            text("SELECT id, name FROM sdai_series WHERE id = ANY(:ids)"), {"ids": series_ids}
+        )
+        series_names = {str(r[0]): r[1] for r in s_rows}
+
+    grants = []
+    for r in rows:
+        gid = str(r["grantee_id"])
+        name = group_names.get(gid) if r["grantee_type"] == "group" else user_names.get(gid)
+        series_id = str(r["series_id"]) if r["series_id"] else None
+        grants.append(
+            {
+                "id": str(r["id"]),
+                "scope": r["scope"],
+                "table_name": r["table_name"],
+                "series_id": series_id,
+                "series_name": series_names.get(series_id) if series_id else None,
+                "grantee_type": r["grantee_type"],
+                "grantee_id": gid,
+                "grantee_name": name or "(removed)",
+                "permission": r["permission"],
+                "granted_by": str(r["granted_by"]) if r["granted_by"] else None,
+                "granted_at": r["granted_at"].isoformat() if r["granted_at"] else None,
+            }
+        )
+    return grants
+
+
+async def _check_grantee(conn, current_user: CurrentUser, grantee_type: str, grantee_id: str) -> None:
+    """404 unless the group/user exists in the caller's own tenant."""
+    table = "sdai_groups" if grantee_type == "group" else "sdai_users"
+    row = await conn.execute(
+        text(
+            f"SELECT 1 FROM {table} WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+        ),
+        {"id": grantee_id, "tid": current_user.tenant_id},
+    )
+    if row.one_or_none() is None:
+        raise HTTPException(
+            status_code=404,
+            detail=t(
+                "common.group_not_found" if grantee_type == "group" else "common.user_not_found",
+                current_user.locale,
+            ),
+        )
 
 
 @router.get("/documents/{table_name}/{doc_id}/access", summary="List access grants")
 async def get_document_access(
     table_name: str,
     doc_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ):
-    """Who can see this document, beyond admins and (if it has no grants
-    at all) everyone in the tenant. Visible read-only to anyone who can
+    """Every grant that restricts this document - its own (scope
+    'document') and those it inherits from its series or its document type
+    - plus the caller's own effective permission on it, so the UI can hide
+    actions the backend would refuse. Visible read-only to anyone who can
     already see the document - editing is gated separately, see POST/DELETE
-    below."""
+    below. An empty list means the document is open to the whole tenant
+    (within each user's clearance)."""
     safe = _sanitize(table_name)
 
     async with _engine().connect() as conn:
@@ -1197,7 +1530,8 @@ async def get_document_access(
             raise HTTPException(
                 status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
             )
-        if not await _document_visible(conn, safe, doc_id, current_user):
+        my_permission = await _effective_permission(conn, safe, doc_id, current_user)
+        if my_permission is None:
             raise HTTPException(
                 status_code=404, detail=t("common.document_not_found", current_user.locale)
             )
@@ -1205,11 +1539,16 @@ async def get_document_access(
         rows = (
             (
                 await conn.execute(
-                    text("""
-                SELECT id, grantee_type, grantee_id, granted_by, granted_at
+                    text(f"""
+                SELECT {_GRANT_COLS}
                 FROM sdai_document_access
-                WHERE tenant_id = CAST(:tid AS uuid) AND table_name = :t AND document_id = CAST(:id AS uuid)
-                ORDER BY granted_at
+                WHERE tenant_id = CAST(:tid AS uuid)
+                  AND ((scope = 'document' AND table_name = :t AND document_id = CAST(:id AS uuid))
+                    OR (scope = 'series'
+                        AND series_id = (SELECT series_id FROM "{safe}" WHERE id = CAST(:id AS uuid)))
+                    OR (scope = 'doc_type' AND table_name = :t))
+                ORDER BY CASE scope WHEN 'document' THEN 0 WHEN 'series' THEN 1 ELSE 2 END,
+                         granted_at
             """),
                     {"tid": current_user.tenant_id, "t": safe, "id": doc_id},
                 )
@@ -1217,38 +1556,13 @@ async def get_document_access(
             .mappings()
             .all()
         )
+        grants = await _serialize_grants(conn, rows)
 
-        group_ids = [str(r["grantee_id"]) for r in rows if r["grantee_type"] == "group"]
-        user_ids = [str(r["grantee_id"]) for r in rows if r["grantee_type"] == "user"]
-        group_names: dict[str, str] = {}
-        user_names: dict[str, str] = {}
-        if group_ids:
-            g_rows = await conn.execute(
-                text("SELECT id, name FROM sdai_groups WHERE id = ANY(:ids)"), {"ids": group_ids}
-            )
-            group_names = {str(r[0]): r[1] for r in g_rows}
-        if user_ids:
-            u_rows = await conn.execute(
-                text("SELECT id, email, full_name FROM sdai_users WHERE id = ANY(:ids)"),
-                {"ids": user_ids},
-            )
-            user_names = {str(r[0]): (r[2] or r[1]) for r in u_rows}
-
-    grants = []
-    for r in rows:
-        gid = str(r["grantee_id"])
-        name = group_names.get(gid) if r["grantee_type"] == "group" else user_names.get(gid)
-        grants.append(
-            {
-                "id": str(r["id"]),
-                "grantee_type": r["grantee_type"],
-                "grantee_id": gid,
-                "grantee_name": name or "(removed)",
-                "granted_by": str(r["granted_by"]) if r["granted_by"] else None,
-                "granted_at": r["granted_at"].isoformat() if r["granted_at"] else None,
-            }
-        )
-    return {"grants": grants, "can_manage": current_user.can_manage_document_access}
+    return {
+        "grants": grants,
+        "can_manage": current_user.can_manage_document_access,
+        "my_permission": my_permission,
+    }
 
 
 @router.post("/documents/{table_name}/{doc_id}/access", summary="Grant access to a document")
@@ -1259,9 +1573,10 @@ async def create_document_access(
     current_user: CurrentUser = Depends(require_access_manager),
 ):
     """Restrict a document by granting a group or a specific person
-    access to it. The first grant on a previously-open document is what
-    makes it restricted at all - see sdai_document_access's docstring in
-    ingest_router._INIT_DDL."""
+    access to it at a permission level (read/download/edit). The first
+    grant on a previously-open document is what makes it restricted at all
+    - see sdai_document_access's docstring in ingest_router._INIT_DDL.
+    Granting an existing grantee again changes its level."""
     safe = _sanitize(table_name)
 
     async with _engine().begin() as conn:
@@ -1276,40 +1591,18 @@ async def create_document_access(
             raise HTTPException(
                 status_code=404, detail=t("common.document_not_found", current_user.locale)
             )
-
-        if body.grantee_type == "group":
-            grantee_row = await conn.execute(
-                text(
-                    "SELECT 1 FROM sdai_groups WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
-                ),
-                {"id": body.grantee_id, "tid": current_user.tenant_id},
-            )
-        else:
-            grantee_row = await conn.execute(
-                text(
-                    "SELECT 1 FROM sdai_users WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
-                ),
-                {"id": body.grantee_id, "tid": current_user.tenant_id},
-            )
-        if grantee_row.one_or_none() is None:
-            raise HTTPException(
-                status_code=404,
-                detail=t(
-                    (
-                        "common.group_not_found"
-                        if body.grantee_type == "group"
-                        else "common.user_not_found"
-                    ),
-                    current_user.locale,
-                ),
-            )
+        await _check_grantee(conn, current_user, body.grantee_type, body.grantee_id)
 
         result = await conn.execute(
             text("""
                 INSERT INTO sdai_document_access
-                    (tenant_id, table_name, document_id, grantee_type, grantee_id, granted_by)
-                VALUES (CAST(:tid AS uuid), :t, CAST(:id AS uuid), :gt, CAST(:gid AS uuid), CAST(:by AS uuid))
-                ON CONFLICT (tenant_id, table_name, document_id, grantee_type, grantee_id) DO NOTHING
+                    (tenant_id, table_name, document_id, grantee_type, grantee_id, granted_by,
+                     scope, permission)
+                VALUES (CAST(:tid AS uuid), :t, CAST(:id AS uuid), :gt, CAST(:gid AS uuid),
+                        CAST(:by AS uuid), 'document', :perm)
+                ON CONFLICT (tenant_id, table_name, document_id, grantee_type, grantee_id)
+                    WHERE scope = 'document'
+                    DO UPDATE SET permission = EXCLUDED.permission
                 RETURNING id
             """),
             {
@@ -1319,25 +1612,10 @@ async def create_document_access(
                 "gt": body.grantee_type,
                 "gid": body.grantee_id,
                 "by": current_user.id,
+                "perm": body.permission,
             },
         )
         grant_id = result.scalar()
-        if grant_id is None:
-            existing = await conn.execute(
-                text("""
-                    SELECT id FROM sdai_document_access
-                    WHERE tenant_id = CAST(:tid AS uuid) AND table_name = :t AND document_id = CAST(:id AS uuid)
-                      AND grantee_type = :gt AND grantee_id = CAST(:gid AS uuid)
-                """),
-                {
-                    "tid": current_user.tenant_id,
-                    "t": safe,
-                    "id": doc_id,
-                    "gt": body.grantee_type,
-                    "gid": body.grantee_id,
-                },
-            )
-            grant_id = existing.scalar()
 
     await log_action(
         action="document_access_granted",
@@ -1345,9 +1623,186 @@ async def create_document_access(
         user_email=current_user.email,
         table_name=safe,
         document_id=doc_id,
-        details={"grantee_type": body.grantee_type, "grantee_id": body.grantee_id},
+        details={
+            "scope": "document",
+            "grantee_type": body.grantee_type,
+            "grantee_id": body.grantee_id,
+            "permission": body.permission,
+        },
     )
+    await invalidate_cache(*_ACCESS_CACHE_NAMESPACES)
     return {"id": str(grant_id)}
+
+
+@router.get("/grants", summary="List series-level or type-level grants")
+async def list_scoped_grants(
+    scope: str = Query(..., pattern="^(series|doc_type)$"),
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """Every grant of one scope in this tenant - powers the series and
+    document-type grant editors on the access admin page."""
+    async with _engine().connect() as conn:
+        rows = (
+            (
+                await conn.execute(
+                    text(f"""
+                SELECT {_GRANT_COLS} FROM sdai_document_access
+                WHERE tenant_id = CAST(:tid AS uuid) AND scope = :scope
+                ORDER BY granted_at
+            """),
+                    {"tid": current_user.tenant_id, "scope": scope},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return {"grants": await _serialize_grants(conn, rows)}
+
+
+@router.post("/grants", summary="Grant access to a whole series or document type")
+async def create_scoped_grant(
+    body: CreateScopedGrantBody,
+    current_user: CurrentUser = Depends(require_admin),
+):
+    """Restrict every document of a series (scope 'series', series_id) or
+    of a document type (scope 'doc_type', table_name) to the grantee - and
+    to whoever else holds a grant on them. Admin-only: a single grant here
+    can close off a whole part of the archive. Granting an existing
+    grantee again changes its level."""
+    async with _engine().begin() as conn:
+        if body.scope == "series":
+            if not body.series_id:
+                raise HTTPException(
+                    status_code=422, detail=t("documents.grant_target_required", current_user.locale)
+                )
+            row = await conn.execute(
+                text(
+                    "SELECT 1 FROM sdai_series WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                ),
+                {"id": body.series_id, "tid": current_user.tenant_id},
+            )
+            if row.one_or_none() is None:
+                raise HTTPException(
+                    status_code=404, detail=t("common.series_not_found", current_user.locale)
+                )
+            target_table, target_series = None, body.series_id
+            conflict = "(tenant_id, series_id, grantee_type, grantee_id) WHERE scope = 'series'"
+        else:
+            if not body.table_name:
+                raise HTTPException(
+                    status_code=422, detail=t("documents.grant_target_required", current_user.locale)
+                )
+            safe = _sanitize(body.table_name)
+            tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+            if safe not in tables_cols:
+                raise HTTPException(
+                    status_code=404,
+                    detail=t("common.table_not_found", current_user.locale, table=safe),
+                )
+            target_table, target_series = safe, None
+            conflict = "(tenant_id, table_name, grantee_type, grantee_id) WHERE scope = 'doc_type'"
+
+        await _check_grantee(conn, current_user, body.grantee_type, body.grantee_id)
+
+        result = await conn.execute(
+            text(f"""
+                INSERT INTO sdai_document_access
+                    (tenant_id, scope, table_name, series_id, grantee_type, grantee_id,
+                     granted_by, permission)
+                VALUES (CAST(:tid AS uuid), :scope, :t, CAST(:sid AS uuid), :gt,
+                        CAST(:gid AS uuid), CAST(:by AS uuid), :perm)
+                ON CONFLICT {conflict} DO UPDATE SET permission = EXCLUDED.permission
+                RETURNING id
+            """),
+            {
+                "tid": current_user.tenant_id,
+                "scope": body.scope,
+                "t": target_table,
+                "sid": target_series,
+                "gt": body.grantee_type,
+                "gid": body.grantee_id,
+                "by": current_user.id,
+                "perm": body.permission,
+            },
+        )
+        grant_id = result.scalar()
+
+    await log_action(
+        action="document_access_granted",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        table_name=target_table,
+        details={
+            "scope": body.scope,
+            "series_id": target_series,
+            "grantee_type": body.grantee_type,
+            "grantee_id": body.grantee_id,
+            "permission": body.permission,
+        },
+    )
+    await invalidate_cache(*_ACCESS_CACHE_NAMESPACES)
+    return {"id": str(grant_id)}
+
+
+async def _load_grant_for_change(conn, grant_id: str, current_user: CurrentUser):
+    """The grant row, if it belongs to the caller's tenant and the caller
+    may manage it: document grants need the access-management permission
+    and visibility of the document, series/type grants need an admin."""
+    row = (
+        (
+            await conn.execute(
+                text(f"""
+            SELECT {_GRANT_COLS} FROM sdai_document_access
+            WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)
+        """),
+                {"id": grant_id, "tid": current_user.tenant_id},
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=t("common.grant_not_found", current_user.locale))
+    if row["scope"] != "document":
+        if current_user.role != "admin":
+            raise HTTPException(status_code=403, detail=t("auth.admin_required", current_user.locale))
+    elif current_user.role != "admin" and not await _document_visible(
+        conn, row["table_name"], str(row["document_id"]), current_user
+    ):
+        raise HTTPException(status_code=404, detail=t("common.grant_not_found", current_user.locale))
+    return row
+
+
+@router.patch("/access/{grant_id}", summary="Change an access grant's permission level")
+async def update_document_access(
+    grant_id: str,
+    body: UpdateGrantBody,
+    current_user: CurrentUser = Depends(require_access_manager),
+):
+    async with _engine().begin() as conn:
+        row = await _load_grant_for_change(conn, grant_id, current_user)
+        await conn.execute(
+            text("UPDATE sdai_document_access SET permission = :perm WHERE id = CAST(:id AS uuid)"),
+            {"perm": body.permission, "id": grant_id},
+        )
+
+    await log_action(
+        action="document_access_changed",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        table_name=row["table_name"],
+        document_id=str(row["document_id"]) if row["document_id"] else None,
+        details={
+            "scope": row["scope"],
+            "series_id": str(row["series_id"]) if row["series_id"] else None,
+            "grantee_type": row["grantee_type"],
+            "grantee_id": str(row["grantee_id"]),
+            "from": row["permission"],
+            "to": body.permission,
+        },
+    )
+    await invalidate_cache(*_ACCESS_CACHE_NAMESPACES)
+    return {"ok": True}
 
 
 @router.delete("/access/{grant_id}", summary="Remove an access grant")
@@ -1355,20 +1810,12 @@ async def delete_document_access(
     grant_id: str,
     current_user: CurrentUser = Depends(require_access_manager),
 ):
+    """Remove a grant of any scope. Removing the last grant that targets a
+    document opens it to the whole tenant again."""
     async with _engine().begin() as conn:
-        result = await conn.execute(
-            text("""
-                DELETE FROM sdai_document_access
-                WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)
-                RETURNING table_name, document_id, grantee_type, grantee_id
-            """),
-            {"id": grant_id, "tid": current_user.tenant_id},
-        )
-        row = result.mappings().one_or_none()
-
-    if row is None:
-        raise HTTPException(
-            status_code=404, detail=t("common.grant_not_found", current_user.locale)
+        row = await _load_grant_for_change(conn, grant_id, current_user)
+        await conn.execute(
+            text("DELETE FROM sdai_document_access WHERE id = CAST(:id AS uuid)"), {"id": grant_id}
         )
 
     await log_action(
@@ -1376,10 +1823,81 @@ async def delete_document_access(
         user_id=current_user.id,
         user_email=current_user.email,
         table_name=row["table_name"],
-        document_id=str(row["document_id"]),
-        details={"grantee_type": row["grantee_type"], "grantee_id": str(row["grantee_id"])},
+        document_id=str(row["document_id"]) if row["document_id"] else None,
+        details={
+            "scope": row["scope"],
+            "series_id": str(row["series_id"]) if row["series_id"] else None,
+            "grantee_type": row["grantee_type"],
+            "grantee_id": str(row["grantee_id"]),
+        },
     )
+    await invalidate_cache(*_ACCESS_CACHE_NAMESPACES)
     return {"ok": True}
+
+
+class SetConfidentialityBody(BaseModel):
+    confidentiality: str = Field(..., pattern="^(public|internal|confidential|secret)$")
+
+
+@router.patch(
+    "/documents/{table_name}/{doc_id}/confidentiality", summary="Set a document's confidentiality"
+)
+async def set_document_confidentiality(
+    request: Request,
+    table_name: str,
+    doc_id: str,
+    body: SetConfidentialityBody,
+    current_user: CurrentUser = Depends(require_access_manager),
+):
+    """Classify a document public / internal / confidential / secret. Only
+    users whose clearance reaches a level can see documents at that level
+    (admins see all) - so, like a grant, this is access management:
+    admin or can_manage_access. A non-admin can't classify above their own
+    clearance, which would hide the document from themselves."""
+    safe = _sanitize(table_name)
+    level = body.confidentiality
+    if current_user.role != "admin" and CONFIDENTIALITY_LEVELS.index(
+        level
+    ) > CONFIDENTIALITY_LEVELS.index(
+        current_user.clearance if current_user.clearance in CONFIDENTIALITY_LEVELS else "public"
+    ):
+        raise HTTPException(
+            status_code=403, detail=t("documents.confidentiality_above_clearance", current_user.locale)
+        )
+
+    async with _engine().begin() as conn:
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+        if safe not in tables_cols:
+            raise HTTPException(
+                status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
+            )
+        if not await _document_visible(conn, safe, doc_id, current_user):
+            raise HTTPException(
+                status_code=404, detail=t("common.document_not_found", current_user.locale)
+            )
+        previous = (
+            await conn.execute(
+                text(f'SELECT confidentiality FROM "{safe}" WHERE id = CAST(:id AS uuid) FOR UPDATE'),
+                {"id": doc_id},
+            )
+        ).scalar()
+        await conn.execute(
+            text(f'UPDATE "{safe}" SET confidentiality = :level WHERE id = CAST(:id AS uuid)'),
+            {"level": level, "id": doc_id},
+        )
+
+    if previous != level:
+        await log_action(
+            action="confidentiality_changed",
+            user_id=current_user.id,
+            user_email=current_user.email,
+            table_name=safe,
+            document_id=doc_id,
+            details={"from": previous, "to": level},
+            ip_address=client_ip(request),
+        )
+        await invalidate_cache(*_ACCESS_CACHE_NAMESPACES)
+    return {"ok": True, "confidentiality": level}
 
 
 # ── Fonds/series hierarchy ──────────────────────────────────────────────────
@@ -1399,7 +1917,7 @@ class AssignSeriesBody(BaseModel):
 
 
 @router.get("/series", summary="List series")
-async def list_series(current_user: CurrentUser = Depends(get_current_user)):
+async def list_series(current_user: CurrentUser = Depends(require_user)):
     async with _engine().connect() as conn:
         rows = await conn.execute(
             text("""
@@ -1480,11 +1998,12 @@ async def assign_document_series(
     table_name: str,
     doc_id: str,
     body: AssignSeriesBody,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
-    """Open to any tenant user who can already see the document -
-    organizational filing, not a security control (unlike access grants,
-    gated behind require_access_manager)."""
+    """Open to any reviewer holding edit permission on the document -
+    organizational filing, not access management (unlike access grants,
+    gated behind require_access_manager). Moving a document between series
+    can change who sees it when either series carries grants."""
     safe = _sanitize(table_name)
 
     async with _engine().begin() as conn:
@@ -1493,10 +2012,7 @@ async def assign_document_series(
             raise HTTPException(
                 status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
             )
-        if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(
-                status_code=404, detail=t("common.document_not_found", current_user.locale)
-            )
+        await _require_document_permission(conn, safe, doc_id, current_user, "edit")
 
         if body.series_id is not None:
             series_row = await conn.execute(
@@ -1525,13 +2041,14 @@ async def assign_document_series(
         document_id=doc_id,
         details={"series_id": body.series_id},
     )
+    await invalidate_cache(*_ACCESS_CACHE_NAMESPACES)
     return {"ok": True}
 
 
 @router.get("/schema")
 @limiter.limit("30/minute")
 @cache(expire=30, namespace="schema", key_builder=_path_key_builder)
-async def get_schema(request: Request, current_user: CurrentUser = Depends(get_current_user)):
+async def get_schema(request: Request, current_user: CurrentUser = Depends(require_user)):
     """
     Return full schema: tables, columns (with type/nullable), row counts,
     last ingested, and foreign key relationships.
@@ -1631,18 +2148,26 @@ async def get_schema(request: Request, current_user: CurrentUser = Depends(get_c
 @router.get("/image")
 async def serve_processed_image(
     path: str,
-    current_user: str = Depends(get_current_user),
+    table: str | None = None,
+    id: str | None = None,
+    current_user: CurrentUser = Depends(require_user),
 ):
     """
     Serve a document-pipeline file by absolute path - a processed page
     image, an original uploaded PDF, or a source file ingested via a
     server path or Google Drive.
     Validates that the requested path resolves within one of the known
-    ingest directories to prevent path-traversal attacks.
+    ingest directories to prevent path-traversal attacks, then that the
+    caller may see the document the file belongs to (see _file_permitted) -
+    pass `table` and `id` when showing a known document, for a direct check.
+    A file the caller may not see answers 404, same as a missing one.
     """
     file_path = Path(path).resolve()
     if not any(file_path.is_relative_to(root) for root in _SAFE_FILE_ROOTS):
         raise HTTPException(status_code=403, detail=t("common.access_denied", current_user.locale))
-    if not file_path.exists():
+    paths = list(dict.fromkeys([path, str(file_path)]))
+    async with _engine().connect() as conn:
+        permitted = await _file_permitted(conn, current_user, paths, table, id)
+    if not permitted or not file_path.exists():
         raise HTTPException(status_code=404, detail=t("common.file_not_found", current_user.locale))
     return FileResponse(file_path)

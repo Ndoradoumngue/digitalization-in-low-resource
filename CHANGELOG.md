@@ -9,6 +9,29 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 1 (access rights)
+- Read-only `reader` role (browse, search, download what it can see - never upload, review, edit, file or link) and delegated flags `can_manage_lifecycle` / `can_share`; per-user `clearance` (`public` < `internal` < `confidential` < `secret`). `create_admin.py --role reader`.
+- Access grants by **series** and by **document type** in addition to per document, each with a permission level `read` < `download` < `edit`. Admin endpoints `GET/POST /api/db/grants`; `PATCH /api/db/access/{id}` changes a grant's level; re-granting the same grantee updates its level.
+- Document confidentiality: `PATCH /api/db/documents/{t}/{id}/confidentiality` (access managers), audited as `confidentiality_changed`; a document above the user's clearance is invisible whatever the grants.
+- `GET .../access` lists the document's own and inherited (series/type) grants and the caller's effective level (`my_permission`).
+- `PATCH /api/admin/users/{id}` sets role (reviewer/reader), all delegated flags and clearance, audited as `user_permissions_changed`; `/api/auth/me` and login return the new flags and clearance.
+- UI (fr/en): user editor with role, clearance and four flags; series and document-type grant editors; permission-level selectors; inherited grants and "your access" in the access panel; confidentiality badge and selector; actions hidden when the backend would refuse them; readers kept off Upload and Review.
+- Tests: role/flag/permission matrix and leak tests (`test_permissions.py`), plus 23 opt-in tests against a real PostgreSQL (`test_access_pg.py`, `-m pg` with `TEST_DATABASE_URL`).
+
+### Changed - GED Phase 1
+- `_access_where_clause(table, user, permission="read")` rewritten: tenant-filtered EXISTS over document/series/type grants at the needed level, plus clearance and role caps; still a single SQL boolean expression.
+- Existing grants migrated to scope `document`, level `edit` (unchanged behaviour); new grants default to `read`; the uploader auto-grant is `edit`. Uniqueness is now per scope (partial unique indexes replace the old table-wide constraint).
+- Field edits, review actions, series assignment, links and page actions now need `edit` on the document; per-document export needs `download`. The review queue and count only list documents the user can edit.
+- API keys are now upload/status only: archive endpoints and page actions (retry, reload, skip, cancel, pause, resume) reject them.
+- Cache keys include the user (cached counts depend on each user's access).
+
+### Security - GED Phase 1
+- `/api/db/image` now checks that the caller may see the document the file belongs to (or, for files still in the ingestion pipeline, is a contributor of the same tenant); previously any file under the ingest directories was served to any authenticated user.
+- Ingestion pages of a filed document follow that document's access.
+- Links to a document the caller can't see no longer reveal its id, type, title or the link note.
+- The admin audit log only shows the admin's own tenant.
+- Cached `/types`, `/reviewers`, `/schema` and `/review/count` answers are no longer shared between users of a tenant.
+
 ### Added - GED Phase 0 (foundation)
 - Document-level GED columns on every per-type table (`lifecycle_status`, `confidentiality`, `original_path`, `original_hash`, `current_version`, `deleted_at`/`deleted_by`, `retention_until`, `legal_hold`, `locked_by`/`locked_until`) plus sync columns (`updated_at`, `origin_node`, `hlc`) - added to new tables by `_ensure_table` and to existing ones at startup by `_backfill_ged_columns`.
 - The untouched uploaded file is now recorded for every document (`original_path` + `original_hash`), image uploads included; existing documents are backfilled from `batch_documents.source_path`. The fixity check re-hashes it, so image-sourced documents get a real corruption check instead of an existence-only check.

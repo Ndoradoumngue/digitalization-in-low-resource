@@ -26,25 +26,25 @@ _dummy_func.__name__ = "my_func"
 def test_key_uses_path_when_request_present():
     req = _fake_request("/api/db/schema")
     key = _path_key_builder(_dummy_func, "schema", request=req, response=None, args=(), kwargs={})
-    assert key == "schema:-:/api/db/schema"
+    assert key == "schema:-:-:/api/db/schema"
 
 
 def test_key_includes_query_string():
     req = _fake_request("/api/db/documents", "page=2&page_size=10")
     key = _path_key_builder(_dummy_func, "docs", request=req, response=None, args=(), kwargs={})
-    assert key == "docs:-:/api/db/documents?page=2&page_size=10"
+    assert key == "docs:-:-:/api/db/documents?page=2&page_size=10"
 
 
 def test_key_no_query_string_omits_questionmark():
     req = _fake_request("/api/review/count", "")
     key = _path_key_builder(_dummy_func, "review", request=req, response=None, args=(), kwargs={})
     assert "?" not in key
-    assert key == "review:-:/api/review/count"
+    assert key == "review:-:-:/api/review/count"
 
 
 def test_key_fallback_when_no_request():
     key = _path_key_builder(_dummy_func, "ns", request=None, response=None, args=(), kwargs={})
-    assert key == "ns:-:my_module.my_func"
+    assert key == "ns:-:-:my_module.my_func"
 
 
 def test_key_scoped_by_tenant():
@@ -56,6 +56,7 @@ def test_key_scoped_by_tenant():
     @dataclass
     class _FakeUser:
         tenant_slug: str
+        id: str = "u1"
 
     req = _fake_request("/api/db/schema")
     k_land = _path_key_builder(
@@ -75,7 +76,7 @@ def test_key_scoped_by_tenant():
         kwargs={"current_user": _FakeUser("oil")},
     )
     assert k_land != k_oil
-    assert k_land == "schema:land:/api/db/schema"
+    assert k_land == "schema:land:u1:/api/db/schema"
 
 
 def test_different_paths_produce_different_keys():
@@ -84,6 +85,27 @@ def test_different_paths_produce_different_keys():
     k1 = _path_key_builder(_dummy_func, "x", request=req1, response=None, args=(), kwargs={})
     k2 = _path_key_builder(_dummy_func, "x", request=req2, response=None, args=(), kwargs={})
     assert k1 != k2
+
+
+def test_key_scoped_by_user():
+    """Two users of one tenant see different things (grants, clearance,
+    role) - each gets their own cache entry (GED Phase 1)."""
+    from dataclasses import dataclass
+
+    @dataclass
+    class _FakeUser:
+        tenant_slug: str
+        id: str
+
+    req = _fake_request("/api/review/count")
+    keys = {
+        _path_key_builder(
+            _dummy_func, "review", request=req, response=None, args=(),
+            kwargs={"current_user": _FakeUser("land", uid)},
+        )
+        for uid in ("reader-1", "reviewer-2")
+    }
+    assert len(keys) == 2
 
 
 def test_same_path_same_key_regardless_of_caller():

@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
-import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
 import PanZoomImage from "../components/PanZoomImage";
 import { dbImageUrl } from "@sdai/api-client";
@@ -10,6 +9,8 @@ import FieldsPanel from "../components/FieldsPanel";
 import ExportMenu from "../components/ExportMenu";
 import LinksSection from "../components/LinksSection";
 import AccessSection from "../components/AccessSection";
+import ConfidentialityBadge, { asConfidentiality } from "../components/ConfidentialityBadge";
+import { useDocumentPermissions } from "../hooks/useAccess";
 import SeriesSection from "../components/SeriesSection";
 
 // The document-management record view: presents a document the way a real
@@ -35,6 +36,11 @@ const SKIP_FIELDS = new Set([
   "batch_id", "batch_document_id", "ingested_at", "confidence",
   "review_status", "content_hash", "reviewed_at", "reviewed_by",
   "record_id", "series_id", "document_type", "uploaded_by",
+  // GED document-level state - shown through dedicated controls (badge,
+  // access panel), never as an extracted field
+  "lifecycle_status", "confidentiality", "original_path", "original_hash",
+  "current_version", "deleted_at", "deleted_by", "retention_until", "legal_hold",
+  "locked_by", "locked_until", "updated_at", "origin_node", "hlc",
 ]);
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -48,8 +54,7 @@ export default function DocumentDetailPage() {
   const list = state.list ?? [];
   const idx = state.currentIndex ?? -1;
 
-  const { user } = useAuth();
-  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
+  const perms = useDocumentPermissions(tableName, id);
   const { data, isLoading, error } = useDbDocumentDetail(tableName, id);
 
   const pageImagePaths = Array.isArray(data?.page_image_paths)
@@ -78,10 +83,11 @@ export default function DocumentDetailPage() {
     });
   }
 
+  const docRef = { table: tableName, id };
   const imgSrc = pageImagePaths.length > 0
-    ? dbImageUrl(pageImagePaths[Math.min(activePage, pageImagePaths.length - 1)])
+    ? dbImageUrl(pageImagePaths[Math.min(activePage, pageImagePaths.length - 1)], docRef)
     : data?.source_image_path
-      ? dbImageUrl(String(data.source_image_path))
+      ? dbImageUrl(String(data.source_image_path), docRef)
       : null;
 
   // Build display rows - skip internal fields
@@ -113,6 +119,10 @@ export default function DocumentDetailPage() {
               : tableName.replace(/_/g, " ")}
           </span>
 
+          {asConfidentiality(data?.confidentiality) && (
+            <ConfidentialityBadge level={asConfidentiality(data?.confidentiality)!} />
+          )}
+
           {typeof data?.record_id === "string" && data.record_id && (
             <span className="inline-flex items-center px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-mono">
               {data.record_id}
@@ -122,7 +132,9 @@ export default function DocumentDetailPage() {
           {/* Spacer */}
           <div className="flex-1" />
 
-          {data && tableName && id && <ExportMenu tableName={tableName} id={id} listFields={listFields} />}
+          {data && tableName && id && perms.canDownload && (
+            <ExportMenu tableName={tableName} id={id} listFields={listFields} />
+          )}
 
           {/* Prev / Next */}
           {list.length > 0 && (
@@ -180,7 +192,7 @@ export default function DocumentDetailPage() {
                     ))}
                   {pdfPath && (
                     <a
-                      href={dbImageUrl(pdfPath)}
+                      href={dbImageUrl(pdfPath, docRef)}
                       target="_blank"
                       rel="noreferrer"
                       className="flex-shrink-0 ml-auto px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
@@ -214,19 +226,24 @@ export default function DocumentDetailPage() {
                   tableName={tableName}
                   id={id}
                   fieldRows={fieldRows}
-                  canEdit={canEditExtraction}
+                  canEdit={perms.canEditFields}
                 />
               )}
 
-              {tableName && id && <LinksSection tableName={tableName} id={id} />}
+              {tableName && id && <LinksSection tableName={tableName} id={id} canEdit={perms.canAct} />}
               {tableName && id && (
                 <SeriesSection
                   tableName={tableName}
                   id={id}
                   seriesId={typeof data?.series_id === "string" ? data.series_id : null}
+                  canEdit={perms.canAct}
                 />
               )}
-              {tableName && id && <AccessSection tableName={tableName} id={id} />}
+              {tableName && id && <AccessSection
+                  tableName={tableName}
+                  id={id}
+                  confidentiality={asConfidentiality(data?.confidentiality)}
+                />}
             </div>
           </div>
         )}

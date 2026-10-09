@@ -8,8 +8,10 @@ import {
   fetchGroups,
   removeUserFromGroup,
   runIntegrityCheck,
+  updateAdminUser,
   updateUserAccessManager,
   updateUserExtractionEditor,
+  type UpdateUserBody,
 } from "@sdai/api-client";
 import { saveBlob } from "../utils/download";
 
@@ -47,6 +49,18 @@ export function useAdminUsers() {
     queryKey: ["admin-users"],
     queryFn: fetchAdminUsers,
     staleTime: 30_000,
+  });
+}
+
+/** Partial update of a user's role, delegated flags or clearance. */
+export function useUpdateAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, body }: { userId: string; body: UpdateUserBody }) =>
+      updateAdminUser(userId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    },
   });
 }
 

@@ -146,7 +146,8 @@ def test_patch_review_doc_not_found(auth_client, mock_db, monkeypatch):
     # (from _get_tables_columns) already carries data_type - so only the
     # UPDATE query executes; log_action is never reached on a 404.
     mock_db.execute.side_effect = [
-        make_result(one_or_none=None),  # UPDATE ... RETURNING * → no row
+        make_result(one_or_none=None),  # edit-level visibility check → no row
+        make_result(one_or_none=None),  # read-level check → not visible at all → 404
     ]
 
     resp = auth_client.patch(

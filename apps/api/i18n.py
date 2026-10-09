@@ -62,6 +62,18 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Extraction-editing permission required",
         "fr": "Permission de modification des extractions requise",
     },
+    "auth.user_required": {
+        "en": "This action requires a user account, not an API key",
+        "fr": "Cette action nécessite un compte utilisateur, pas une clé API",
+    },
+    "auth.contributor_required": {
+        "en": "Read-only accounts cannot upload or follow ingestion",
+        "fr": "Les comptes en lecture seule ne peuvent pas téléverser ni suivre l'ingestion",
+    },
+    "auth.reviewer_required": {
+        "en": "Read-only accounts cannot perform this action",
+        "fr": "Les comptes en lecture seule ne peuvent pas effectuer cette action",
+    },
     "auth.incorrect_credentials": {
         "en": "Incorrect email or password",
         "fr": "E-mail ou mot de passe incorrect",
@@ -137,6 +149,22 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Aucun champ à mettre à jour",
     },
     # ── documents_router.py ─────────────────────────────────────────────
+    "documents.permission_download_required": {
+        "en": "You can view this document but not download or export it",
+        "fr": "Vous pouvez consulter ce document mais pas le télécharger ni l'exporter",
+    },
+    "documents.permission_edit_required": {
+        "en": "You can view this document but not modify it",
+        "fr": "Vous pouvez consulter ce document mais pas le modifier",
+    },
+    "documents.grant_target_required": {
+        "en": "A series grant needs series_id and a document-type grant needs table_name",
+        "fr": "Une autorisation sur une série exige series_id, une autorisation sur un type exige table_name",
+    },
+    "documents.confidentiality_above_clearance": {
+        "en": "You cannot classify a document above your own clearance",
+        "fr": "Vous ne pouvez pas classer un document au-dessus de votre propre habilitation",
+    },
     "documents.no_editable_fields": {
         "en": "No editable fields in request",
         "fr": "Aucun champ modifiable dans la requête",

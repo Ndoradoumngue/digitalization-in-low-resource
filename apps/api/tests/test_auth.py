@@ -21,6 +21,9 @@ def _user_row(active: bool = True, tenant_active: bool = True):
         tenant_active,  # tenant_is_active
         False,  # can_manage_access
         False,  # can_edit_extraction
+        False,  # can_manage_lifecycle
+        False,  # can_share
+        "internal",  # clearance
     )
 
 
@@ -34,6 +37,8 @@ def test_login_success(client, mock_db, monkeypatch):
     body = resp.json()
     assert body["email"] == "admin@example.com"
     assert body["role"] == "admin"
+    assert body["clearance"] == "internal"
+    assert body["can_share"] is False
     assert "access_token" in resp.cookies
 
 

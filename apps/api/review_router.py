@@ -12,14 +12,14 @@ Endpoints:
 """
 
 from audit import client_ip, log_action
-from auth import CurrentUser, get_current_user, require_admin
+from auth import CurrentUser, require_admin, require_reviewer, require_user
 from cache import _path_key_builder, invalidate_cache
 from documents_router import (
     _access_params,
     _access_where_clause,
     _build_field_set_clause,
     _delete_links_for_document,
-    _document_visible,
+    _require_document_permission,
     _extra_cols,
     _get_tables_columns,
     _sanitize,
@@ -76,7 +76,8 @@ def _queue_select(table: str, cols: dict[str, str], current_user: CurrentUser) -
         f"{extra_expr} AS extra_fields",
     ]
     where = "review_status = 'review_required'"
-    access_clause = _access_where_clause(table, current_user)
+    # The queue is work to do - only documents the user may act on (edit).
+    access_clause = _access_where_clause(table, current_user, "edit")
     if access_clause:
         where += f" AND {access_clause}"
     return f"SELECT {', '.join(sel)}\n" f'FROM "{table}"\n' f"WHERE {where}"
@@ -124,7 +125,7 @@ async def _pending_count(conn, tables_cols: dict, current_user: CurrentUser) -> 
     parts = []
     for t in tables_cols:
         where = "review_status = 'review_required'"
-        access_clause = _access_where_clause(t, current_user)
+        access_clause = _access_where_clause(t, current_user, "edit")
         if access_clause:
             where += f" AND {access_clause}"
         parts.append(f'SELECT COUNT(*) AS n FROM "{t}" WHERE {where}')
@@ -151,7 +152,7 @@ router = APIRouter(prefix="/api/review", tags=["review"])
 
 @router.get("/count", summary="Pending review count")
 @cache(expire=10, namespace="review", key_builder=_path_key_builder)
-async def review_count(current_user: CurrentUser = Depends(get_current_user)):
+async def review_count(current_user: CurrentUser = Depends(require_user)):
     """
     Return the total number of documents with `review_status = review_required`
     across all ingest-created tables. Called on dashboard load to populate the
@@ -167,7 +168,7 @@ async def review_queue(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     document_type: str | None = None,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_user),
 ):
     """
     Return documents with `review_status = review_required`, ordered oldest-first
@@ -202,7 +203,7 @@ async def patch_review(
     table_name: str,
     doc_id: str,
     body: ReviewPatch,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """
     Approve or reject a document.
@@ -220,10 +221,7 @@ async def patch_review(
             raise HTTPException(
                 status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
             )
-        if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(
-                status_code=404, detail=t("common.document_not_found", current_user.locale)
-            )
+        await _require_document_permission(conn, safe, doc_id, current_user, "edit")
 
         cols = tables_cols[safe]
 
@@ -325,7 +323,7 @@ async def flag_review(
     request: Request,
     table_name: str,
     doc_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Escalate a document to manual_entry - removes it from the review queue."""
     safe = _sanitize(table_name)
@@ -336,10 +334,7 @@ async def flag_review(
             raise HTTPException(
                 status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
             )
-        if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(
-                status_code=404, detail=t("common.document_not_found", current_user.locale)
-            )
+        await _require_document_permission(conn, safe, doc_id, current_user, "edit")
 
         result = await conn.execute(
             text(
@@ -373,7 +368,7 @@ async def retry_document(
     request: Request,
     table_name: str,
     doc_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
     """Re-run VLM extraction on a crashed document, reusing its already
     preprocessed image(s) - no re-upload needed. Only valid for documents
@@ -386,10 +381,7 @@ async def retry_document(
             raise HTTPException(
                 status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
             )
-        if not await _document_visible(conn, safe, doc_id, current_user):
-            raise HTTPException(
-                status_code=404, detail=t("common.document_not_found", current_user.locale)
-            )
+        await _require_document_permission(conn, safe, doc_id, current_user, "edit")
 
     batch_id = await _retry_document(
         safe, doc_id, current_user.tenant_id, current_user.tenant_slug, current_user.locale

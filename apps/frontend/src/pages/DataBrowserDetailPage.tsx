@@ -11,6 +11,8 @@ import { dbImageUrl, retryDocument, deleteDocument } from "@sdai/api-client";
 import FieldsPanel from "../components/FieldsPanel";
 import LinksSection from "../components/LinksSection";
 import AccessSection from "../components/AccessSection";
+import ConfidentialityBadge, { asConfidentiality } from "../components/ConfidentialityBadge";
+import { useDocumentPermissions } from "../hooks/useAccess";
 import SeriesSection from "../components/SeriesSection";
 
 // The Ops/QA detail view: every raw column, confidence/review-status
@@ -80,7 +82,7 @@ export default function DataBrowserDetailPage() {
     onError: (e: Error) => setActionError(e.message),
   });
 
-  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
+  const perms = useDocumentPermissions(tableName, id);
 
   const pageImagePaths = Array.isArray(data?.page_image_paths)
     ? (data.page_image_paths as unknown[]).map(String)
@@ -108,10 +110,11 @@ export default function DataBrowserDetailPage() {
     });
   }
 
+  const docRef = { table: tableName, id };
   const imgSrc = pageImagePaths.length > 0
-    ? dbImageUrl(pageImagePaths[Math.min(activePage, pageImagePaths.length - 1)])
+    ? dbImageUrl(pageImagePaths[Math.min(activePage, pageImagePaths.length - 1)], docRef)
     : data?.source_image_path
-      ? dbImageUrl(String(data.source_image_path))
+      ? dbImageUrl(String(data.source_image_path), docRef)
       : null;
 
   const confidence = data?.confidence ? String(data.confidence) : null;
@@ -142,6 +145,10 @@ export default function DataBrowserDetailPage() {
             {tableName.replace(/_/g, " ")}
           </span>
 
+          {asConfidentiality(data?.confidentiality) && (
+            <ConfidentialityBadge level={asConfidentiality(data?.confidentiality)!} />
+          )}
+
           {typeof data?.record_id === "string" && data.record_id && (
             <span className="inline-flex items-center px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-mono">
               {data.record_id}
@@ -160,9 +167,9 @@ export default function DataBrowserDetailPage() {
             </span>
           )}
 
-          {(reviewStatus === "manual_entry" || user?.role === "admin") && (
+          {((reviewStatus === "manual_entry" && perms.canAct) || user?.role === "admin") && (
             <div className="flex items-center gap-2">
-              {reviewStatus === "manual_entry" && (
+              {reviewStatus === "manual_entry" && perms.canAct && (
                 <button
                   onClick={() => retryMutation.mutate()}
                   disabled={retryMutation.isPending}
@@ -250,7 +257,7 @@ export default function DataBrowserDetailPage() {
                     ))}
                   {pdfPath && (
                     <a
-                      href={dbImageUrl(pdfPath)}
+                      href={dbImageUrl(pdfPath, docRef)}
                       target="_blank"
                       rel="noreferrer"
                       className="flex-shrink-0 ml-auto px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors"
@@ -278,18 +285,23 @@ export default function DataBrowserDetailPage() {
                   tableName={tableName}
                   id={id}
                   fieldRows={fieldRows}
-                  canEdit={canEditExtraction}
+                  canEdit={perms.canEditFields}
                 />
               )}
-              {tableName && id && <LinksSection tableName={tableName} id={id} basePath="/ops/data" />}
+              {tableName && id && <LinksSection tableName={tableName} id={id} basePath="/ops/data" canEdit={perms.canAct} />}
               {tableName && id && (
                 <SeriesSection
                   tableName={tableName}
                   id={id}
                   seriesId={typeof data?.series_id === "string" ? data.series_id : null}
+                  canEdit={perms.canAct}
                 />
               )}
-              {tableName && id && <AccessSection tableName={tableName} id={id} />}
+              {tableName && id && <AccessSection
+                  tableName={tableName}
+                  id={id}
+                  confidentiality={asConfidentiality(data?.confidentiality)}
+                />}
             </div>
           </div>
         )}

@@ -684,6 +684,7 @@ def test_manual_enter_page_success_as_extraction_editor(extraction_editor_client
     monkeypatch.setattr(
         ingest_router, "_resolve_tenant_for_page", AsyncMock(return_value=(TENANT_ID, TENANT_SLUG))
     )
+    monkeypatch.setattr(ingest_router, "_batch_document_for_page", AsyncMock(return_value=None))
     monkeypatch.setattr(ingest_router, "_manual_enter_page", AsyncMock())
     resp = extraction_editor_client.post(
         "/api/ingest/pages/page-1/manual", json={"fields": {"a": "b"}}

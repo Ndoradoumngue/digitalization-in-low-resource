@@ -79,7 +79,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--role",
         default="admin",
-        choices=["admin", "reviewer"],
+        choices=["admin", "reviewer", "reader"],
         help="Role within the tenant (default: admin, preserving this script's original behavior)",
     )
     args = parser.parse_args()

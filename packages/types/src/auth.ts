@@ -1,14 +1,23 @@
 import { z } from "zod";
 
+// Ordered lowest to highest - a user's clearance is the highest document
+// confidentiality level they may see (admins see every level).
+export const CONFIDENTIALITY_LEVELS = ["public", "internal", "confidential", "secret"] as const;
+export const ConfidentialitySchema = z.enum(CONFIDENTIALITY_LEVELS);
+export type Confidentiality = z.infer<typeof ConfidentialitySchema>;
+
 export const UserSchema = z.object({
   id:          z.string(),
   email:       z.string(),
   full_name:   z.string().nullable(),
-  role:        z.enum(["admin", "reviewer"]),
+  role:        z.enum(["admin", "reviewer", "reader"]),
   tenant_slug: z.string(),
   tenant_name: z.string(),
   can_manage_access: z.boolean(),
   can_edit_extraction: z.boolean(),
+  can_manage_lifecycle: z.boolean().default(false),
+  can_share: z.boolean().default(false),
+  clearance: ConfidentialitySchema.default("internal"),
   // Which server answered (hybrid local + cloud deployment, see README).
   node_id:     z.string().optional(),
   node_role:   z.enum(["local", "cloud"]).optional(),

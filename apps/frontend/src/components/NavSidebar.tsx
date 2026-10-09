@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { useDbTypes } from "../hooks/useDocumentsDb";
 import { useReviewCount } from "../hooks/useReview";
 import LanguageSwitcher from "./LanguageSwitcher";
+import { isReader } from "../utils/permissions";
 
 function navClass(active: boolean) {
   return `flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${active ? "bg-indigo-50 text-indigo-700" : "text-gray-700 hover:bg-gray-100"
@@ -57,6 +58,7 @@ export default function NavSidebar() {
         <div className="flex-1" />
 
         <div className="space-y-1 pt-2 border-t border-gray-100">
+          {!isReader(user) && (
           <Link
             to="/review"
             className={navClass(pathname === "/review")}
@@ -71,6 +73,7 @@ export default function NavSidebar() {
               </span>
             )}
           </Link>
+          )}
 
           <Link
             to="/schema"
@@ -129,6 +132,7 @@ export default function NavSidebar() {
             </Link>
           )}
 
+          {!isReader(user) && (
           <Link
             to="/upload"
             className="flex items-center justify-center gap-2 w-full rounded-lg px-3 py-2.5 mt-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-colors"
@@ -138,6 +142,7 @@ export default function NavSidebar() {
             </svg>
             {t("nav.uploadDocuments")}
           </Link>
+          )}
         </div>
       </nav>
 
@@ -152,7 +157,7 @@ export default function NavSidebar() {
                   ? "bg-indigo-100 text-indigo-700"
                   : "bg-gray-100 text-gray-600"
                 }`}>
-                {user.role}
+                {t(`roles.${user.role}`)}
               </span>
             )}
             {user?.node_role && (

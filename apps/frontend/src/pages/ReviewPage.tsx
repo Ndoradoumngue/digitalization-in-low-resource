@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { flagReview, patchReview, dbImageUrl } from "@sdai/api-client";
+import { canEditExtraction as canEditExtractionFor } from "../utils/permissions";
 import { useReviewQueue } from "../hooks/useReview";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
 import { useAuth } from "../context/AuthContext";
@@ -257,7 +258,7 @@ export default function ReviewPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { user } = useAuth();
-  const canEditExtraction = user?.role === "admin" || user?.can_edit_extraction || false;
+  const canEditExtraction = canEditExtractionFor(user);
 
   // Load entire queue (up to 100) for navigation
   const { data: queueData, isLoading: queueLoading } = useReviewQueue({ page_size: 100 });
@@ -437,7 +438,9 @@ export default function ReviewPage() {
   const oldestIngested = items[0]?.ingested_at;
   const pageIdx = Math.min(page, Math.max(0, pagePaths.length - 1));
   const pagePath = pagePaths[pageIdx] ?? current?.source_image_path ?? null;
-  const imgSrc = pagePath ? dbImageUrl(pagePath) : null;
+  const imgSrc = pagePath
+    ? dbImageUrl(pagePath, current ? { table: current.table_name, id: current.id } : undefined)
+    : null;
 
   // ── Render ───────────────────────────────────────────────────────────────────
 

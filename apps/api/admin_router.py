@@ -7,7 +7,7 @@ Endpoints:
   POST   /api/admin/groups               - create a group
   DELETE /api/admin/groups/{group_id}    - delete a group
   GET    /api/admin/users                - list this tenant's users, with group membership
-  PATCH  /api/admin/users/{user_id}      - toggle can_manage_access / can_edit_extraction
+  PATCH  /api/admin/users/{user_id}      - role (reviewer/reader), delegated flags, clearance
   POST   /api/admin/users/{user_id}/groups              - add a user to a group
   DELETE /api/admin/users/{user_id}/groups/{group_id}   - remove a user from a group
   POST   /api/admin/integrity-check      - on-demand fixity check for this tenant
@@ -47,11 +47,11 @@ async def get_audit_log(
     action: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-    _: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_admin),
 ):
     """
-    Return a paginated, filterable list of audit log entries, newest first.
-    Requires admin role.
+    Return a paginated, filterable list of this tenant's audit log
+    entries, newest first. Requires admin role.
 
     Query parameters:
       page / page_size  - pagination
@@ -59,10 +59,18 @@ async def get_audit_log(
       action            - exact action name (e.g. 'document_approved')
       date_from / date_to - ISO-8601 timestamps (inclusive)
     """
-    where: list[str] = []
+    # The log is one table for the whole installation - an admin only sees
+    # entries about their own tenant: actions by its users, or on its
+    # documents (every per-type table name starts with the tenant prefix).
+    where: list[str] = [
+        "(user_id IN (SELECT id FROM sdai_users WHERE tenant_id = CAST(:tid AS uuid))"
+        " OR starts_with(table_name, :table_prefix))"
+    ]
     params: dict = {
         "page_size": page_size,
         "offset": (page - 1) * page_size,
+        "tid": current_user.tenant_id,
+        "table_prefix": f"t_{current_user.tenant_slug}_",
     }
 
     if user_id:
@@ -184,8 +192,12 @@ async def delete_group(group_id: str, current_user: CurrentUser = Depends(requir
 
 
 class UpdateUserBody(BaseModel):
+    role: str | None = Field(None, pattern="^(reviewer|reader)$")
     can_manage_access: bool | None = None
     can_edit_extraction: bool | None = None
+    can_manage_lifecycle: bool | None = None
+    can_share: bool | None = None
+    clearance: str | None = Field(None, pattern="^(public|internal|confidential|secret)$")
 
 
 class GroupMembershipBody(BaseModel):
@@ -202,11 +214,12 @@ async def list_users(current_user: CurrentUser = Depends(require_admin)):
             text("""
                 SELECT u.id, u.email, u.full_name, u.role,
                        u.can_manage_access, u.can_edit_extraction,
-                       COALESCE(ARRAY_AGG(ug.group_id) FILTER (WHERE ug.group_id IS NOT NULL), '{}') AS group_ids
+                       COALESCE(ARRAY_AGG(ug.group_id) FILTER (WHERE ug.group_id IS NOT NULL), '{}') AS group_ids,
+                       u.can_manage_lifecycle, u.can_share, u.clearance
                 FROM sdai_users u
                 LEFT JOIN sdai_user_groups ug ON ug.user_id = u.id
                 WHERE u.tenant_id = CAST(:tid AS uuid)
-                GROUP BY u.id, u.email, u.full_name, u.role, u.can_manage_access, u.can_edit_extraction
+                GROUP BY u.id
                 ORDER BY u.email
             """),
             {"tid": current_user.tenant_id},
@@ -220,26 +233,29 @@ async def list_users(current_user: CurrentUser = Depends(require_admin)):
                 "can_manage_access": r[4],
                 "can_edit_extraction": r[5],
                 "group_ids": [str(g) for g in r[6]],
+                "can_manage_lifecycle": r[7],
+                "can_share": r[8],
+                "clearance": r[9],
             }
             for r in rows
         ]
 
 
-@router.patch("/users/{user_id}", summary="Update a user's delegated permissions")
+@router.patch("/users/{user_id}", summary="Update a user's role, delegated permissions or clearance")
 async def update_user(
     user_id: str, body: UpdateUserBody, current_user: CurrentUser = Depends(require_admin)
 ):
     """Partial update - only the fields present in the body are changed,
-    so a caller can toggle can_manage_access and can_edit_extraction
-    independently of each other."""
+    so each flag can be toggled independently of the others. `role` only
+    moves a user between reviewer and reader - admins are never demoted
+    (or created) here, so an admin can't lock the tenant out of its own
+    administration by mistake."""
     set_parts: list[str] = []
     params: dict = {"id": user_id, "tid": current_user.tenant_id}
-    if body.can_manage_access is not None:
-        set_parts.append("can_manage_access = :cma")
-        params["cma"] = body.can_manage_access
-    if body.can_edit_extraction is not None:
-        set_parts.append("can_edit_extraction = :cee")
-        params["cee"] = body.can_edit_extraction
+    changes = body.model_dump(exclude_none=True)
+    for field, value in changes.items():
+        set_parts.append(f"{field} = :{field}")
+        params[field] = value
     if not set_parts:
         raise HTTPException(
             status_code=422, detail=t("admin.no_fields_to_update", current_user.locale)
@@ -250,7 +266,8 @@ async def update_user(
             text(
                 f"UPDATE sdai_users SET {', '.join(set_parts)}"
                 f" WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
-                f" RETURNING id"
+                + (" AND role <> 'admin'" if "role" in changes else "")
+                + " RETURNING id"
             ),
             params,
         )
@@ -258,6 +275,13 @@ async def update_user(
             raise HTTPException(
                 status_code=404, detail=t("common.user_not_found", current_user.locale)
             )
+
+    await log_action(
+        action="user_permissions_changed",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        details={"target_user_id": user_id, **changes},
+    )
     return {"ok": True}
 
 

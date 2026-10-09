@@ -1,4 +1,14 @@
 import { z } from "zod";
+import { ConfidentialitySchema } from "./auth";
+
+// Cumulative grant levels, lowest first: read (view/search) < download
+// (export, original file) < edit (change content, review, file, link).
+export const PERMISSION_LEVELS = ["read", "download", "edit"] as const;
+export const PermissionLevelSchema = z.enum(PERMISSION_LEVELS);
+export type PermissionLevel = z.infer<typeof PermissionLevelSchema>;
+
+export const GrantScopeSchema = z.enum(["document", "series", "doc_type"]);
+export type GrantScope = z.infer<typeof GrantScopeSchema>;
 
 // ── Groups ────────────────────────────────────────────────────────────────────
 
@@ -20,9 +30,12 @@ export const AdminUserSchema = z.object({
   id: z.string(),
   email: z.string(),
   full_name: z.string().nullable(),
-  role: z.enum(["admin", "reviewer"]),
+  role: z.enum(["admin", "reviewer", "reader"]),
   can_manage_access: z.boolean(),
   can_edit_extraction: z.boolean(),
+  can_manage_lifecycle: z.boolean(),
+  can_share: z.boolean(),
+  clearance: ConfidentialitySchema,
   group_ids: z.array(z.string()),
 });
 export type AdminUser = z.infer<typeof AdminUserSchema>;
@@ -33,6 +46,11 @@ export const AdminUsersResponseSchema = z.array(AdminUserSchema);
 
 export const AccessGrantSchema = z.object({
   id: z.string(),
+  scope: GrantScopeSchema,
+  table_name: z.string().nullable(),
+  series_id: z.string().nullable(),
+  series_name: z.string().nullable(),
+  permission: PermissionLevelSchema,
   grantee_type: z.enum(["group", "user"]),
   grantee_id: z.string(),
   grantee_name: z.string(),
@@ -42,12 +60,18 @@ export const AccessGrantSchema = z.object({
 export type AccessGrant = z.infer<typeof AccessGrantSchema>;
 
 export const DocumentAccessResponseSchema = z.object({
+  // the document's own grants plus those inherited from its series / type
   grants: z.array(AccessGrantSchema),
   can_manage: z.boolean(),
+  // the caller's own highest level on this document
+  my_permission: PermissionLevelSchema,
 });
 export type DocumentAccessResponse = z.infer<typeof DocumentAccessResponseSchema>;
 
 export const CreateAccessGrantResponseSchema = z.object({ id: z.string() });
+
+export const ScopedGrantsResponseSchema = z.object({ grants: z.array(AccessGrantSchema) });
+export type ScopedGrantsResponse = z.infer<typeof ScopedGrantsResponseSchema>;
 
 // ── Grantees (minimal groups/users listing for the tagging picker) ──────────
 // Deliberately a smaller shape than GroupSchema/AdminUserSchema - no

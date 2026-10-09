@@ -135,7 +135,12 @@ def test_list_users_requires_admin(auth_client):
 
 
 def test_list_users_returns_items_with_groups(admin_client, mock_db):
-    rows = [("user-1", "a@example.com", "Alice", "reviewer", False, False, ["group-1", "group-2"])]
+    rows = [
+        (
+            "user-1", "a@example.com", "Alice", "reader", False, False, ["group-1", "group-2"],
+            False, True, "confidential",
+        )
+    ]
     mock_db.execute.return_value = make_result(rows=rows)
     resp = admin_client.get("/api/admin/users")
     assert resp.status_code == 200
@@ -143,6 +148,9 @@ def test_list_users_returns_items_with_groups(admin_client, mock_db):
     assert body[0]["email"] == "a@example.com"
     assert body[0]["can_edit_extraction"] is False
     assert body[0]["group_ids"] == ["group-1", "group-2"]
+    assert body[0]["role"] == "reader"
+    assert body[0]["can_share"] is True
+    assert body[0]["clearance"] == "confidential"
 
 
 def test_update_user_can_manage_access(admin_client, mock_db):

@@ -6,10 +6,13 @@ export default function SeriesSection({
   tableName,
   id,
   seriesId,
+  canEdit = true,
 }: {
   tableName: string;
   id: string;
   seriesId: string | null;
+  // filing needs edit permission on this document (backend-enforced)
+  canEdit?: boolean;
 }) {
   const { t } = useTranslation();
   const { data: series } = useSeries();
@@ -28,7 +31,7 @@ export default function SeriesSection({
         <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
           {t("series.heading")}
         </h3>
-        {!editing && (
+        {canEdit && !editing && (
           <button
             onClick={() => setEditing(true)}
             className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
