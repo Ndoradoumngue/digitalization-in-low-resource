@@ -155,6 +155,16 @@ export default function NavSidebar() {
                 {user.role}
               </span>
             )}
+            {user?.node_role && (
+              <span
+                title={user.node_id}
+                className={`inline-block mt-0.5 ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${user.node_role === "cloud"
+                    ? "bg-sky-100 text-sky-700"
+                    : "bg-emerald-100 text-emerald-700"
+                  }`}>
+                {t(user.node_role === "cloud" ? "nav.nodeCloud" : "nav.nodeLocal")}
+              </span>
+            )}
           </div>
           <button
             onClick={logout}

@@ -47,6 +47,7 @@ from fastapi_cache.decorator import cache
 from i18n import t
 from ingest_router import DOCS_DIR as _INGEST_DOCS_DIR
 from ingest_router import UPLOADS_DIR as _INGEST_UPLOADS_DIR
+from ingest_router import _GED_COL_NAMES
 from ingest_router import _engine  # lazy accessor - None until startup()
 from pydantic import BaseModel, Field
 from rate_limit import limiter
@@ -141,6 +142,7 @@ _BASE_COLS = frozenset(
         "series_id",
         "uploaded_by",
     }
+    | _GED_COL_NAMES
 )
 
 # Columns an extraction-editor is never allowed to overwrite directly -
@@ -156,6 +158,9 @@ _PROTECTED_FIELDS = frozenset(
         "table_name",
         "batch_id",
     }
+    # Lifecycle, confidentiality, versioning, lock and sync state each have
+    # their own dedicated, permission-checked actions - never a field edit.
+    | _GED_COL_NAMES
 )
 
 
@@ -229,19 +234,33 @@ def _display_col(cols: dict[str, str]) -> str | None:
 # automatic/blanket group visibility (see CONTEXT.md "Access Control").
 
 
-def _access_where_clause(table: str, current_user: CurrentUser) -> str:
+def _live_where_clause(table: str) -> str:
+    """Boolean SQL expression that's true iff a row of `table` is neither
+    in the trash (deleted_at) nor destroyed (lifecycle_status) - see
+    ingest_router._GED_COLS. Folded into _access_where_clause so every
+    user-facing query hides those rows by default, including for admins;
+    only an explicit trash/tombstone view should ever opt out."""
+    return f"(\"{table}\".deleted_at IS NULL AND \"{table}\".lifecycle_status IS DISTINCT FROM 'destroyed')"
+
+
+def _access_where_clause(
+    table: str, current_user: CurrentUser, *, include_deleted: bool = False
+) -> str:
     """Boolean SQL expression, safe to AND into any WHERE clause (or use
     standalone) selecting from `table`, that's true iff current_user may
-    see a given row. Admins get "" (no restriction - see everything);
-    callers should skip appending it when empty rather than adding a
-    redundant "AND ''"/"AND TRUE". `table` is embedded as a literal -
+    see a given row: the row is live (see _live_where_clause - skipped
+    with include_deleted=True, which then gives admins "", callers should
+    skip appending it when empty rather than adding a redundant
+    "AND ''"/"AND TRUE") and, for non-admins, granted to them (admins
+    see every live row). `table` is embedded as a literal -
     always an internally-generated sanitized identifier here, never raw
     user input, matching how table names are already embedded elsewhere
     in this module (e.g. `FROM "{table}"`). Callers MUST also merge
     _access_params(current_user) into the query's params dict whenever
     this returns non-empty."""
+    live = "" if include_deleted else _live_where_clause(table)
     if current_user.role == "admin":
-        return ""
+        return live
     # The correlated `id` reference below MUST be qualified - sdai_document_access
     # has its own `id` primary-key column, so a bare `id` resolves to that
     # instead of correlating to the outer document row, silently turning both
@@ -250,7 +269,7 @@ def _access_where_clause(table: str, current_user: CurrentUser) -> str:
     # clause's implicit alias, which every caller relies on (none of them
     # alias the outer table explicitly).
     doc_id_ref = f'"{table}".id'
-    return f"""(
+    access = f"""(
         NOT EXISTS (
             SELECT 1 FROM sdai_document_access da
             WHERE da.table_name = '{table}' AND da.document_id = {doc_id_ref}
@@ -262,6 +281,7 @@ def _access_where_clause(table: str, current_user: CurrentUser) -> str:
                 OR (da.grantee_type = 'group' AND da.grantee_id = ANY(CAST(:__access_group_ids AS uuid[]))))
         )
     )"""
+    return f"{live} AND {access}" if live else access
 
 
 def _access_params(current_user: CurrentUser) -> dict:

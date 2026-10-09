@@ -219,6 +219,8 @@ async def login(
         "tenant_name": user[7],
         "can_manage_access": user[9],
         "can_edit_extraction": user[10],
+        "node_id": NODE_ID,
+        "node_role": NODE_ROLE,
     }
 
 
@@ -277,6 +279,8 @@ async def me(current_user: CurrentUser = Depends(get_current_user)):
         "tenant_name": current_user.tenant_name,
         "can_manage_access": current_user.can_manage_access,
         "can_edit_extraction": current_user.can_edit_extraction,
+        "node_id": NODE_ID,
+        "node_role": NODE_ROLE,
     }
 
 
@@ -412,6 +416,7 @@ def serve_preprocessed_image(filename: str, current_user: str = Depends(get_curr
 
 # ── Ingest router ─────────────────────────────────────────────────────────────
 
+from ingest_router import NODE_ID, NODE_ROLE
 from ingest_router import router as ingest_router
 
 app.include_router(ingest_router)

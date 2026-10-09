@@ -185,10 +185,61 @@ def test_per_table_select_series_filter():
 # ── _access_where_clause / document-level access control ─────────────────────
 
 
-def test_access_where_clause_empty_for_admin():
-    """Admins get no filter at all - see everything, no matter what
-    sdai_document_access says."""
-    assert documents_router._access_where_clause("t_default_arrete", ADMIN) == ""
+def test_access_where_clause_admin_only_filters_live_rows():
+    """Admins skip the grant check entirely - see every document no matter
+    what sdai_document_access says - but trashed/destroyed rows stay hidden
+    for them too (GED foundation, see _live_where_clause)."""
+    clause = documents_router._access_where_clause("t_default_arrete", ADMIN)
+    assert clause == documents_router._live_where_clause("t_default_arrete")
+    assert "sdai_document_access" not in clause
+
+
+def test_access_where_clause_empty_for_admin_when_including_deleted():
+    assert (
+        documents_router._access_where_clause("t_default_arrete", ADMIN, include_deleted=True)
+        == ""
+    )
+
+
+def test_access_where_clause_reviewer_includes_live_filter():
+    clause = documents_router._access_where_clause("t_default_arrete", REVIEWER)
+    assert '"t_default_arrete".deleted_at IS NULL' in clause
+    assert "'destroyed'" in clause
+    assert "sdai_document_access" in clause
+
+
+def test_access_where_clause_reviewer_include_deleted_keeps_grant_check():
+    clause = documents_router._access_where_clause(
+        "t_default_arrete", REVIEWER, include_deleted=True
+    )
+    assert "deleted_at" not in clause
+    assert "sdai_document_access" in clause
+
+
+def test_ged_columns_are_never_searchable_or_extra_fields():
+    cols = {
+        "id": "uuid",
+        "source_image_path": "text",
+        "reference_number": "text",
+        "lifecycle_status": "text",
+        "confidentiality": "text",
+        "original_path": "text",
+        "original_hash": "text",
+        "origin_node": "text",
+        "hlc": "text",
+        "deleted_at": "timestamp with time zone",
+    }
+    assert documents_router._searchable_cols(cols) == ["reference_number"]
+    assert documents_router._extra_cols(cols) == ["reference_number"]
+
+
+def test_ged_columns_cannot_be_set_through_field_edits():
+    cols = {"reference_number": "text", "lifecycle_status": "text", "deleted_at": "timestamptz"}
+    editable, _, _ = documents_router._build_field_set_clause(
+        cols,
+        {"reference_number": "N-1", "lifecycle_status": "destroyed", "deleted_at": "2026-01-01"},
+    )
+    assert editable == {"reference_number": "N-1"}
 
 
 def test_access_where_clause_present_for_reviewer():
@@ -226,6 +277,7 @@ def test_per_table_select_omits_access_clause_for_admin():
         current_user=ADMIN,
     )
     assert "sdai_document_access" not in sql
+    assert "deleted_at IS NULL" in sql
 
 
 # ── Auth guards ───────────────────────────────────────────────────────────────

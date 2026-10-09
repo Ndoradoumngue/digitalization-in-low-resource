@@ -30,6 +30,8 @@
     "dataBrowser": "Explorateur de données",
     "accessGroups": "Accès & Groupes",
     "uploadDocuments": "Téléverser des documents",
+    "nodeLocal": "Serveur local",
+    "nodeCloud": "Serveur cloud",
     "signOut": "Se déconnecter"
   },
   "login": {

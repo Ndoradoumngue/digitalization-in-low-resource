@@ -7,6 +7,21 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Added - GED Phase 0 (foundation)
+- Document-level GED columns on every per-type table (`lifecycle_status`, `confidentiality`, `original_path`, `original_hash`, `current_version`, `deleted_at`/`deleted_by`, `retention_until`, `legal_hold`, `locked_by`/`locked_until`) plus sync columns (`updated_at`, `origin_node`, `hlc`) - added to new tables by `_ensure_table` and to existing ones at startup by `_backfill_ged_columns`.
+- The untouched uploaded file is now recorded for every document (`original_path` + `original_hash`), image uploads included; existing documents are backfilled from `batch_documents.source_path`. The fixity check re-hashes it, so image-sourced documents get a real corruption check instead of an existence-only check.
+- `sdai_touch_row` trigger keeps `updated_at`/`origin_node` current on every synced table (dynamic tables + 12 control-plane tables).
+- Node identity: `NODE_ID` / `NODE_ROLE` env vars, `sdai_nodes` table, `node_id`/`node_role` in `/api/auth/me` and the login response, "Local server"/"Cloud server" badge in the sidebar.
+
+### Changed
+- `_access_where_clause` now also hides trashed (`deleted_at`) and destroyed rows - for admins too (`include_deleted=True` opts out). Admins still bypass access grants.
+- GED columns can never be changed through field edits (`_PROTECTED_FIELDS`) and are excluded from search, the FTS index and `extra_fields`.
+- Crashed-document retry keeps the document's untouched original instead of re-registering a preprocessed page image as its source.
+
+---
+
 ## [1.0.0] - 2026-05-19
 
 First stable release. Covers the full end-to-end digitalization pipeline from document upload through VLM extraction, review, and audit.

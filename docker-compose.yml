@@ -139,6 +139,9 @@ services:
       # Directory for processed images and file uploads
       - DATA_DIR=/data
       - REDIS_URL=${REDIS_URL}
+      # Server identity in a hybrid local + cloud deployment (see README, Document management)
+      - NODE_ID=${NODE_ID:-local}
+      - NODE_ROLE=${NODE_ROLE:-local}
       # Optional - customize the VLM extraction schema for your document
       # corpus without a rebuild. See README.md "Customizing the extraction
       # schema" and .env.example for details.

@@ -520,7 +520,7 @@ def test_integrity_check_ok_when_files_present_and_hash_matches(mock_db, tmp_pat
 
     mock_db.execute.side_effect = [
         make_result(rows=[("t_default_arrete",)]),  # table discovery
-        make_result(rows=[("doc-1", str(img), str(pdf), the_hash)]),  # per-table row select
+        make_result(rows=[("doc-1", str(img), str(pdf), the_hash, None, None)]),  # per-table row select
     ]
     result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
     assert result == {"checked": 1, "ok": 1, "mismatched": 0, "missing": 0}
@@ -530,7 +530,7 @@ def test_integrity_check_missing_image_file(mock_db, tmp_path):
     missing_img = tmp_path / "gone.png"
     mock_db.execute.side_effect = [
         make_result(rows=[("t_default_arrete",)]),
-        make_result(rows=[("doc-1", str(missing_img), None, None)]),
+        make_result(rows=[("doc-1", str(missing_img), None, None, None, None)]),
         make_result(),  # log_action's INSERT
     ]
     result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
@@ -545,7 +545,7 @@ def test_integrity_check_pdf_hash_mismatch(mock_db, tmp_path):
 
     mock_db.execute.side_effect = [
         make_result(rows=[("t_default_arrete",)]),
-        make_result(rows=[("doc-1", str(img), str(pdf), "a-stale-hash-that-wont-match")]),
+        make_result(rows=[("doc-1", str(img), str(pdf), "a-stale-hash-that-wont-match", None, None)]),
         make_result(),  # log_action's INSERT
     ]
     result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
@@ -562,7 +562,7 @@ def test_integrity_check_image_sourced_document_not_hash_checked(mock_db, tmp_pa
     img.write_bytes(b"preprocessed-png-bytes")
     mock_db.execute.side_effect = [
         make_result(rows=[("t_default_arrete",)]),
-        make_result(rows=[("doc-1", str(img), None, "hash-of-a-totally-different-raw-upload")]),
+        make_result(rows=[("doc-1", str(img), None, "hash-of-a-totally-different-raw-upload", None, None)]),
     ]
     result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
     assert result == {"checked": 1, "ok": 1, "mismatched": 0, "missing": 0}
@@ -574,7 +574,7 @@ def test_integrity_check_missing_pdf_file(mock_db, tmp_path):
     missing_pdf = tmp_path / "gone.pdf"
     mock_db.execute.side_effect = [
         make_result(rows=[("t_default_arrete",)]),
-        make_result(rows=[("doc-1", str(img), str(missing_pdf), "some-hash")]),
+        make_result(rows=[("doc-1", str(img), str(missing_pdf), "some-hash", None, None)]),
         make_result(),  # log_action's INSERT
     ]
     result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
@@ -717,3 +717,178 @@ def _make_fake_session(monkeypatch, *, fetchall):
 
     monkeypatch.setattr(ingest_router, "SessionLocal", MagicMock(return_value=session_ctx))
     return session
+
+
+# ── GED foundation: originals, GED/sync columns, node identity ───────────────
+
+
+def test_integrity_check_image_original_ok(mock_db, tmp_path):
+    """An image upload's untouched original (original_path) is re-hashed
+    against original_hash - unlike the preprocessed source_image_path."""
+    original = tmp_path / "scan.jpg"
+    original.write_bytes(b"raw-scan-bytes")
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"preprocessed-png-bytes")
+    the_hash = hashlib.sha256(b"raw-scan-bytes").hexdigest()
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(img), None, the_hash, str(original), the_hash)]),
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 1, "mismatched": 0, "missing": 0}
+
+
+def test_integrity_check_image_original_altered(mock_db, tmp_path):
+    original = tmp_path / "scan.jpg"
+    original.write_bytes(b"tampered-bytes")
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"preprocessed-png-bytes")
+    the_hash = hashlib.sha256(b"raw-scan-bytes").hexdigest()
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(img), None, the_hash, str(original), the_hash)]),
+        make_result(),  # log_action's INSERT
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 0, "mismatched": 1, "missing": 0}
+
+
+def test_integrity_check_image_original_missing(mock_db, tmp_path):
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"preprocessed-png-bytes")
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(img), None, "h", str(tmp_path / "gone.jpg"), "h")]),
+        make_result(),  # log_action's INSERT
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result == {"checked": 1, "ok": 0, "mismatched": 0, "missing": 1}
+
+
+def test_integrity_check_pdf_original_not_hashed_twice(mock_db, tmp_path, monkeypatch):
+    """A PDF's original_path is its source_pdf_path - verified once."""
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"pdf-bytes")
+    img = tmp_path / "doc.png"
+    img.write_bytes(b"png-bytes")
+    the_hash = hashlib.sha256(b"pdf-bytes").hexdigest()
+    calls = []
+    real_hash = ingest_router._compute_hash
+    monkeypatch.setattr(
+        ingest_router, "_compute_hash", lambda p: calls.append(p) or real_hash(p)
+    )
+    mock_db.execute.side_effect = [
+        make_result(rows=[("t_default_arrete",)]),
+        make_result(rows=[("doc-1", str(img), str(pdf), the_hash, str(pdf), the_hash)]),
+    ]
+    result = asyncio.run(ingest_router._run_integrity_check(TENANT_SLUG))
+    assert result["ok"] == 1
+    assert len(calls) == 1
+
+
+def test_original_upload_path_is_the_raw_upload(mock_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(ingest_router, "IMAGES_DIR", tmp_path / "images")
+    upload = tmp_path / "uploads" / "b1" / "scan.jpg"
+    mock_db.execute.return_value = make_result(scalar=str(upload))
+    assert asyncio.run(ingest_router._original_upload_path(mock_db, "bd-1")) == str(upload)
+
+
+def test_original_upload_path_ignores_preprocessed_images(mock_db, tmp_path, monkeypatch):
+    """A crashed-document retry registers an already-preprocessed page image
+    as source_path - it would never hash back to content_hash."""
+    monkeypatch.setattr(ingest_router, "IMAGES_DIR", tmp_path / "images")
+    mock_db.execute.return_value = make_result(scalar=str(tmp_path / "images" / "p1.png"))
+    assert asyncio.run(ingest_router._original_upload_path(mock_db, "bd-1")) is None
+
+
+def test_original_upload_path_none_without_source(mock_db):
+    mock_db.execute.return_value = make_result(scalar=None)
+    assert asyncio.run(ingest_router._original_upload_path(mock_db, "bd-1")) is None
+
+
+def test_store_extraction_records_original(mock_db, monkeypatch, tmp_path):
+    monkeypatch.setattr(ingest_router, "IMAGES_DIR", tmp_path / "images")
+    monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
+    monkeypatch.setattr(
+        ingest_router, "_next_record_id", AsyncMock(return_value="DEFAULT-2026-000001")
+    )
+    upload = str(tmp_path / "uploads" / "b1" / "scan.jpg")
+    mock_db.execute.side_effect = [
+        make_result(scalar="uploader-uuid-1"),  # SELECT created_by FROM batches
+        make_result(scalar=upload),  # SELECT source_path FROM batch_documents
+        make_result(scalar="doc-uuid-1"),  # INSERT ... RETURNING id
+        make_result(),  # log_action's audit INSERT
+    ]
+    asyncio.run(
+        ingest_router._store_extraction(
+            "batch-1",
+            "/img.png",
+            {"document_type": "arrete"},
+            "medium",
+            "review_required",
+            TENANT_ID,
+            TENANT_SLUG,
+            content_hash="abc123",
+            batch_document_id="bd-1",
+        )
+    )
+    insert_sql = str(mock_db.execute.call_args_list[2][0][0])
+    params = mock_db.execute.call_args_list[2][0][1]
+    assert '"original_path"' in insert_sql and '"original_hash"' in insert_sql
+    assert upload in params.values()
+    assert "abc123" in params.values()
+
+
+def test_backfill_ged_columns_alters_existing_tables(mock_db):
+    mock_db.execute.side_effect = None
+    mock_db.execute.return_value = make_result(rows=[("t_default_arrete",)])
+    asyncio.run(ingest_router._backfill_ged_columns(mock_db))
+    sqls = [str(c[0][0]) for c in mock_db.execute.call_args_list]
+    for col, _ in ingest_router._GED_COLS:
+        assert any(f"ADD COLUMN IF NOT EXISTS {col} " in q for q in sqls), col
+    assert any("CREATE OR REPLACE TRIGGER sdai_touch_row" in q for q in sqls)
+    assert any("SET original_path = bd.source_path" in q for q in sqls)
+
+
+def test_backfill_sync_columns_covers_every_static_table(mock_db):
+    asyncio.run(ingest_router._backfill_sync_columns(mock_db))
+    sqls = [str(c[0][0]) for c in mock_db.execute.call_args_list]
+    for table in ingest_router._SYNCED_STATIC_TABLES:
+        assert any(f'ON "{table}"' in q and "sdai_touch_row" in q for q in sqls), table
+    # Deliberately not synced: per-node counters and audit chain
+    assert not any('"sdai_record_id_counters"' in q for q in sqls)
+    assert not any('"sdai_audit_log"' in q for q in sqls)
+
+
+def test_register_node_upserts_and_sets_database_default(mock_db):
+    mock_db.execute.side_effect = [
+        make_result(),  # INSERT sdai_nodes
+        make_result(scalar="sdai"),  # SELECT current_database()
+        make_result(),  # ALTER DATABASE
+    ]
+    asyncio.run(ingest_router._register_node(mock_db))
+    sqls = [str(c[0][0]) for c in mock_db.execute.call_args_list]
+    assert "INSERT INTO sdai_nodes" in sqls[0]
+    assert f"SET sdai.node_id = '{ingest_router.NODE_ID}'" in sqls[2]
+
+
+def test_register_node_tolerates_missing_alter_database_privilege(mock_db):
+    mock_db.execute.side_effect = [
+        make_result(),
+        make_result(scalar="sdai"),
+        Exception("must be owner of database sdai"),
+    ]
+    asyncio.run(ingest_router._register_node(mock_db))  # must not raise
+
+
+def test_set_node_id_on_connect():
+    cursor = MagicMock()
+    dbapi_conn = MagicMock()
+    dbapi_conn.cursor.return_value = cursor
+    ingest_router._set_node_id_on_connect(dbapi_conn, None)
+    cursor.execute.assert_called_once_with(f"SET sdai.node_id = '{ingest_router.NODE_ID}'")
+    cursor.close.assert_called_once()
+
+
+def test_ged_columns_excluded_from_fts():
+    assert {"lifecycle_status", "original_path", "origin_node", "hlc"} <= ingest_router._BASE_COLS

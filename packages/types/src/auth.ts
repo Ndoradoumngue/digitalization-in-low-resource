@@ -9,6 +9,9 @@ export const UserSchema = z.object({
   tenant_name: z.string(),
   can_manage_access: z.boolean(),
   can_edit_extraction: z.boolean(),
+  // Which server answered (hybrid local + cloud deployment, see README).
+  node_id:     z.string().optional(),
+  node_role:   z.enum(["local", "cloud"]).optional(),
 });
 export type User = z.infer<typeof UserSchema>;
 

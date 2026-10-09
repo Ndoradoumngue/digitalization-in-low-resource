@@ -1,6 +1,8 @@
 # SDAI Digitalization
 
-A full-stack document digitalization system for low-resource settings. It ingests scanned documents, extracts structured fields using a vision-language model (VLM), routes results through a three-tier confidence-based workflow, stores everything in a dynamically-inferred PostgreSQL schema, and exposes the data through a review queue, a document browser, and a live schema visualizer.
+A full-stack document digitalization and electronic document management system (GED / EDMS) for low-resource settings. It ingests scanned documents, extracts structured fields with a vision-language model (VLM) running entirely on-premise, routes results through a confidence-based review workflow, and files every document in a searchable, access-controlled, auditable archive - with several ministries or departments isolated on one installation.
+
+It is designed for places where power and internet are unreliable: everything runs offline on a local server, and the roadmap adds an automatically synchronized cloud copy so authorized users can reach the archive from anywhere (see [Document management (GED)](#document-management-ged)).
 
 ---
 
@@ -15,6 +17,44 @@ A full-stack document digitalization system for low-resource settings. It ingest
 4. **Review** - a human review queue presents each `review_required` document side-by-side with its editable extracted fields. Reviewers can approve (with corrections), reject, flag for manual entry, or skip. The queue is ordered oldest-first and supports keyboard navigation.
 
 5. **Browse & visualize** - a paginated document browser queries the PostgreSQL tables with full-text search, date range, confidence, and review-status filters. A React Flow schema diagram shows all tables, columns, and foreign-key relationships, with live auto-refresh.
+
+---
+
+## Document management (GED)
+
+On top of the extraction pipeline, the platform is being extended into a complete GED (*gestion électronique des documents*): every document is captured, indexed, classified, access-controlled, versioned, traceable and kept for exactly as long as its retention rules require.
+
+### Available today
+
+| Capability | What it covers |
+|---|---|
+| Capture & AI indexing | Upload, server-folder and Google Drive import, partner API keys, per-page progress; metadata extracted by the on-premise VLM |
+| Identification | Persistent, citable record number per document (e.g. `LAND-2026-000123`) |
+| Multi-organisation | One installation, several ministries/departments, physically separate tables per tenant |
+| Access control | Admin / reviewer roles, user groups, per-document access grants, documents private to their uploader after review, delegated permissions |
+| Classification | Archival series (fonds) and chain-of-custody links between documents |
+| Search | French full-text search across every extracted field, with filters |
+| Integrity & audit | Original file kept and SHA-256-verified for every upload (scheduled fixity check), full audit log |
+| Export | Full archive export (data + files, JSON/SQL) and per-document export (JSON/SQL/CSV) |
+| Interface | French / English |
+
+### Groundwork in place
+
+- Lifecycle, confidentiality, version, retention, legal-hold and check-out fields on every document; trashed and destroyed documents are already excluded from every list, search, queue and detail view.
+- Every change is stamped with the time and the server it was made on, and each server identifies itself (`NODE_ID`, `NODE_ROLE`) - the basis for local/cloud synchronization.
+
+### Roadmap
+
+| Area | Planned |
+|---|---|
+| Access rights | Read-only and archivist roles, permissions per series / document type, permission levels, confidentiality levels with user clearance |
+| Versioning & traceability | File versions with restore, before/after history of every field change, tamper-evident (hash-chained) audit log, view/download logging |
+| Hybrid local + cloud | Local server stays primary and works offline; a cloud copy (standard VM, no GPU) is synchronized both ways automatically; conflicts are flagged, never lost; documents uploaded remotely are processed by the local GPU; encrypted off-site backups |
+| Classification | Hierarchical classification scheme (*plan de classement*), tags, automatic filing, link suggestions |
+| Search | Full-text search inside the OCR text of every page, with highlighted snippets |
+| Sharing & export | Traceable download of originals, expiring/password-protected share links, selective export with integrity manifest |
+| Lifecycle | Trash and restore, archiving, retention rules, legal hold, two-person approved destruction with a generated destruction certificate |
+| Collaboration | Notifications (in-app and email), check-out/check-in, comments, simple/advanced electronic signature (PAdES) |
 
 ---
 
@@ -503,6 +543,8 @@ Copy `.env.example` to `.env` and adjust as needed. Docker Compose reads this fi
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection string; use `redis://redis:6379` inside Docker |
 | `OLLAMA_HOST` | `http://ollama:11434` | Points to the containerised Ollama service. Change to `http://host.docker.internal:11434` to use a host-installed Ollama |
 | `DATA_DIR` | `./data` | Writable directory for processed images and uploaded files |
+| `NODE_ID` | `local` | Unique, stable identifier of this server (lowercase letters, digits, `_`, `-`; max 40 chars) - stamped on every row it writes. Give each server its own ID |
+| `NODE_ROLE` | `local` | `local` (on-site primary server) or `cloud` (synchronized replica) |
 | `CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins. Leave empty in Docker (Nginx proxies internally). Set to `http://localhost:5173` for local dev |
 | `PROJECT_ROOT` | *(auto)* | Directory containing `documents/`. Set to `/app` in Docker automatically |
 | `GOOGLE_SERVICE_ACCOUNT_FILE` | *(none)* | Path to a service-account JSON key with Google Drive read access (optional) |

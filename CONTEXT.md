@@ -61,6 +61,14 @@ This file captures what has been built, why, and what is known to be incomplete 
 - Frontend: `LinksSection.tsx` (mounted on `DocumentDetailPage.tsx`, below the field list) shows "Relates to"/"Referenced by" groups; `DocumentLinkPicker.tsx` is a from-scratch searchable picker (no reusable autocomplete component existed before this) reusing the generalized-search `fetchDbDocuments({q})` call.
 - **Known gotcha already fixed once**: `_INIT_DDL` is naively split on `;` by `_init_db()` - a semicolon inside a `--` SQL *comment* (not just inside a `DO $$` block, the previously-known gotcha from the multi-tenancy migration) silently breaks this and produces a confusing SQLAlchemy/asyncpg `TypeError` on startup, not a clear SQL error. Hit and fixed during this feature's development; no semicolon characters are allowed in any comment line inside the `_INIT_DDL` string.
 
+### GED Foundation (Phase 0)
+
+- Every per-type table carries the GED document-level columns listed in `ingest_router._GED_COLS` (lifecycle, confidentiality, original file + hash, version, trash, retention, legal hold, lock, sync). Added at CREATE time by `_ensure_table` and to existing tables at startup by `_backfill_ged_columns`; all are in both `_BASE_COLS` sets (never searchable/extra fields) and in `_PROTECTED_FIELDS` (never editable via field edits). Most are inert until later GED phases.
+- `original_path` / `original_hash` = the untouched uploaded file (`batch_documents.source_path`) and its `content_hash`, recorded by `_store_extraction` via `_original_upload_path()`. Never a path under `IMAGES_DIR` (a crashed-document retry registers a preprocessed page image as `source_path`, which would never hash back). The fixity check re-hashes it - image-sourced documents now get a real corruption check.
+- `_access_where_clause(table, user, include_deleted=False)` always includes `_live_where_clause(table)` (hides `deleted_at IS NOT NULL` and `lifecycle_status = 'destroyed'`), **including for admins** - so it is no longer `""` for admins unless `include_deleted=True`.
+- Sync groundwork: `sdai_touch_row()` trigger (`_TOUCH_ROW_FN_DDL`) sets `updated_at` and `origin_node` (from the `sdai.node_id` setting) on every row of the dynamic tables and of `_SYNCED_STATIC_TABLES`; skipped when `sdai.applying_sync = on`. `sdai.node_id` is set per pooled connection (`_set_node_id_on_connect`) and as a database default (`_register_node`, needs DB ownership - warns otherwise). `hlc` stays NULL until sync exists.
+- Node identity: `NODE_ID` (validated `[a-z0-9][a-z0-9_-]{0,39}`) / `NODE_ROLE` (`local`|`cloud`), `sdai_nodes` (node-local, not synced), returned by `/api/auth/me` and login, shown as a sidebar badge.
+
 ### Document Upload & Ingestion
 
 - `POST /api/ingest` - accepts multipart file upload, stores document in PostgreSQL.
@@ -174,6 +182,8 @@ This file captures what has been built, why, and what is known to be incomplete 
 | Bulk review actions | Not built - documents are approved/rejected one at a time |
 | Audit log user filter in UI | Backend supports `user_id` filter but UI exposes only `action` and date range |
 | Tenant deactivate/delete flow | `sdai_tenants.is_active` exists but nothing sets it to `false` - retiring a tenant currently means a manual SQL `UPDATE` |
+| Index names on long table names | `idx_<table>_<col>` can exceed Postgres's 63-char limit and get truncated - on a very long `t_<tenant>_<type>` name two GED indexes may collide and one is silently skipped (same pre-existing pattern as `series_id`/`uploaded_by` indexes) |
+| Trashed rows still count as duplicates | `_find_duplicate` and the admin full export don't apply the live filter yet - decided in GED Phase 6 |
 | `serve_processed_image` (`/api/db/image`) not tenant-scoped | Serves a file by raw path within known ingest directories, with no check that the path belongs to the caller's tenant - lower severity since paths aren't guessable, but a gap flagged and not yet fixed |
 
 ---
@@ -258,6 +268,9 @@ install.sh                          # offline server: install from bundle + dock
 ---
 
 ## Suggested Next Steps
+
+> **Active roadmap: GED extension** - see README.md, "Document management (GED)" > Roadmap.
+> It builds on what is listed above (tenants, access grants, series, links, record_id, exports, i18n).
 
 1. **Audit log user filter** - expose the `user_id` filter in `AuditPage` with a user email autocomplete.
 2. **VLM model switcher** - allow selecting between multiple `vlm_*_results.json` files via a dropdown.

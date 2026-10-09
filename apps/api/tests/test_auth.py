@@ -108,6 +108,14 @@ def test_me_returns_correct_fields(auth_client):
     assert "full_name" in body
 
 
+def test_me_reports_which_node_answered(auth_client):
+    import ingest_router
+
+    body = auth_client.get("/api/auth/me").json()
+    assert body["node_id"] == ingest_router.NODE_ID
+    assert body["node_role"] in ("local", "cloud")
+
+
 def test_me_tampered_token_rejected(client):
     client.cookies.set("access_token", "Bearer this.is.not.a.valid.jwt")
     resp = client.get("/api/auth/me")

@@ -49,7 +49,7 @@ from i18n import DEFAULT_LOCALE, t
 from PIL import Image
 from pydantic import BaseModel
 from rate_limit import limiter
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -64,6 +64,18 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 
 BASE = Path(__file__).parent
 DOCS_DIR = BASE / "documents" / "anonymized_docs"
+
+# Identity of this server in a hybrid local + cloud deployment (see
+# README.md, Document management (GED)). NODE_ID is stamped on every row this node writes
+# (origin_node, via the sdai_touch_row trigger), so it must be unique per
+# server and stable over time. NODE_ROLE is 'local' (the primary, on-site
+# server with the GPU) or 'cloud' (the always-reachable replica).
+NODE_ID = os.getenv("NODE_ID", "local")
+NODE_ROLE = os.getenv("NODE_ROLE", "local")
+if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", NODE_ID):
+    raise RuntimeError("NODE_ID must match [a-z0-9][a-z0-9_-]{0,39}")
+if NODE_ROLE not in ("local", "cloud"):
+    raise RuntimeError("NODE_ROLE must be 'local' or 'cloud'")
 
 # How often the background fixity/integrity check re-scans every tenant's
 # documents (see _integrity_check_worker). Default weekly - this is a
@@ -457,6 +469,16 @@ ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS source_page_number INT
 -- the page passed or was entered by hand. A flagged page keeps its data,
 -- but its document is sent to review instead of being auto-approved.
 ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS quality_flags JSONB;
+
+-- One row per server this database has been run by, in a hybrid local +
+-- cloud deployment (README.md, GED section). Node-local bookkeeping - refreshed
+-- by _register_node on every startup, never synced between nodes.
+CREATE TABLE IF NOT EXISTS sdai_nodes (
+    node_id       TEXT        PRIMARY KEY,
+    role          TEXT        NOT NULL CHECK (role IN ('local', 'cloud')),
+    first_seen_at TIMESTAMPTZ DEFAULT now(),
+    last_seen_at  TIMESTAMPTZ DEFAULT now()
+);
 """
 
 # Renames any dynamically-created per-document-type table (identified the
@@ -502,6 +524,9 @@ async def _init_db() -> None:
         # on the 'default' tenant existing) and cannot be split on ";" like
         # the loop above - see _TENANT_TABLE_RENAME_DDL's docstring.
         await conn.execute(text(_TENANT_TABLE_RENAME_DDL))
+        # Must exist before any backfill or _ensure_table installs the
+        # trigger on a table - see _TOUCH_ROW_FN_DDL's docstring.
+        await conn.execute(text(_TOUCH_ROW_FN_DDL))
         # Rebuild every ingest table's FTS index under the generalized
         # "any TEXT column" rule - see _backfill_fts_indexes's docstring.
         await _backfill_fts_indexes(conn)
@@ -511,6 +536,11 @@ async def _init_db() -> None:
         # Ensure the series_id/uploaded_by columns exist on tables that
         # predate those features - see _backfill_new_base_columns's docstring.
         await _backfill_new_base_columns(conn)
+        # GED document-level columns, the untouched-original reference, and
+        # sync columns/triggers - see each function's docstring.
+        await _backfill_ged_columns(conn)
+        await _backfill_sync_columns(conn)
+        await _register_node(conn)
         # Purge expired blocklist entries on each startup
         await conn.execute(text("DELETE FROM sdai_token_blocklist WHERE expired_at < NOW()"))
         # Every in-flight page task lives in this process's memory, so at
@@ -670,6 +700,148 @@ async def _backfill_new_base_columns(conn) -> None:
             )
 
 
+# Keeps the sync columns (updated_at, origin_node) current on every row of
+# every synced table, so a later local/cloud sync can tell what changed
+# where without every UPDATE statement in the codebase having to remember
+# to set them. origin_node comes from the sdai.node_id setting (set per
+# connection in startup() and as a database default in _register_node).
+# Rows applied BY the sync worker (sdai.applying_sync = on) keep the
+# values they arrived with. Its own statement, not part of _INIT_DDL,
+# because the function body contains semicolons (see _init_db).
+_TOUCH_ROW_FN_DDL = r"""
+CREATE OR REPLACE FUNCTION sdai_touch_row() RETURNS trigger AS $$
+BEGIN
+    IF current_setting('sdai.applying_sync', true) = 'on' THEN
+        RETURN NEW;
+    END IF;
+    NEW.updated_at := now();
+    NEW.origin_node := COALESCE(NULLIF(current_setting('sdai.node_id', true), ''), NEW.origin_node);
+    RETURN NEW;
+END
+$$ LANGUAGE plpgsql
+"""
+
+# Static tables whose rows will be replicated between the local and cloud
+# nodes - each gets the sync columns and the sdai_touch_row trigger. The
+# dynamic per-type tables get the same through _GED_COLS instead.
+# sdai_record_id_counters, sdai_token_blocklist, sdai_nodes and
+# sdai_audit_log are deliberately absent: counters and the audit chain are
+# per-node, and node bookkeeping never leaves its own server.
+_SYNCED_STATIC_TABLES = (
+    "sdai_tenants",
+    "sdai_prompt_presets",
+    "sdai_users",
+    "sdai_api_keys",
+    "sdai_document_links",
+    "sdai_groups",
+    "sdai_user_groups",
+    "sdai_document_access",
+    "sdai_series",
+    "batches",
+    "batch_documents",
+    "batch_document_pages",
+)
+
+
+async def _ensure_ged_indexes_and_trigger(conn, table_name: str) -> None:
+    """Indexes on the GED columns every list/retention query filters on,
+    plus the sdai_touch_row trigger. Idempotent - shared by _ensure_table
+    (new and altered tables) and _backfill_ged_columns (existing ones)."""
+    for col in _GED_INDEXED_COLS:
+        await conn.execute(
+            text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{col} ON "{table_name}" ({col})')
+        )
+    await conn.execute(
+        text(
+            f'CREATE OR REPLACE TRIGGER sdai_touch_row BEFORE INSERT OR UPDATE ON "{table_name}"'
+            " FOR EACH ROW EXECUTE FUNCTION sdai_touch_row()"
+        )
+    )
+
+
+async def _backfill_ged_columns(conn) -> None:
+    """One-time-per-startup migration: add the GED document-level columns
+    (_GED_COLS) to every ingest table that predates them, then record the
+    untouched original upload for rows that don't have one yet.
+
+    The original is batch_documents.source_path - the file content_hash was
+    computed over at upload time - except when that path points into
+    IMAGES_DIR: a crashed-document retry re-registers its already-
+    preprocessed page image there, which will never hash back to
+    content_hash, so claiming it as the original would make every such
+    document fail the fixity check. Those rows simply keep no original.
+    Idempotent - only touches rows where original_path IS NULL."""
+    tables_result = await conn.execute(text("""
+        SELECT DISTINCT table_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND column_name = 'source_image_path'
+          AND table_name NOT IN ('batches', 'batch_documents')
+    """))
+    for (table_name,) in tables_result:
+        for col, pg_type in _GED_COLS:
+            await conn.execute(
+                text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS {col} {pg_type}')
+            )
+        await _ensure_ged_indexes_and_trigger(conn, table_name)
+        await conn.execute(
+            text(f"""
+                UPDATE "{table_name}" d
+                SET original_path = bd.source_path, original_hash = d.content_hash
+                FROM batch_documents bd
+                WHERE d.original_path IS NULL
+                  AND d.batch_document_id = bd.id
+                  AND bd.source_path IS NOT NULL
+                  AND NOT starts_with(bd.source_path, :images_root)
+            """),
+            {"images_root": str(IMAGES_DIR.resolve())},
+        )
+
+
+async def _backfill_sync_columns(conn) -> None:
+    """One-time-per-startup migration: add the sync columns (updated_at,
+    origin_node, hlc) and the sdai_touch_row trigger to every static table
+    in _SYNCED_STATIC_TABLES. Idempotent."""
+    for table_name in _SYNCED_STATIC_TABLES:
+        for col, pg_type in (
+            ("updated_at", "TIMESTAMPTZ DEFAULT now()"),
+            ("origin_node", "TEXT"),
+            ("hlc", "TEXT"),
+        ):
+            await conn.execute(
+                text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS {col} {pg_type}')
+            )
+        await conn.execute(
+            text(
+                f'CREATE OR REPLACE TRIGGER sdai_touch_row BEFORE INSERT OR UPDATE ON "{table_name}"'
+                " FOR EACH ROW EXECUTE FUNCTION sdai_touch_row()"
+            )
+        )
+
+
+async def _register_node(conn) -> None:
+    """Record this server in sdai_nodes and make NODE_ID the database-wide
+    default for sdai.node_id, so sessions that don't go through this
+    process's engine (create_admin.py and the other CLI scripts, psql)
+    still stamp the right origin_node. ALTER DATABASE needs ownership of
+    the database - the Docker setup has it, but a hand-provisioned database
+    might not, in which case the per-connection setting from startup()
+    still covers everything the API itself writes."""
+    await conn.execute(
+        text("""
+            INSERT INTO sdai_nodes (node_id, role) VALUES (:node_id, :role)
+            ON CONFLICT (node_id) DO UPDATE SET role = EXCLUDED.role, last_seen_at = now()
+        """),
+        {"node_id": NODE_ID, "role": NODE_ROLE},
+    )
+    db_name = (await conn.execute(text("SELECT current_database()"))).scalar()
+    try:
+        async with conn.begin_nested():
+            await conn.execute(
+                text(f"ALTER DATABASE \"{db_name}\" SET sdai.node_id = '{NODE_ID}'")
+            )
+    except Exception as e:
+        print(f"[startup] WARNING: could not set sdai.node_id database default: {e}", file=sys.stderr)
+
+
 # ── Pipeline queues, semaphores, and inter-stage types ───────────────────────
 
 # Stage 1 input - unchanged external contract; API endpoints call _queue.put()
@@ -717,6 +889,15 @@ class _VlmResult(NamedTuple):
     tenant_slug: str
 
 
+def _set_node_id_on_connect(dbapi_connection, _connection_record) -> None:
+    """Every pooled connection identifies this node to the sdai_touch_row
+    trigger. NODE_ID is validated against a strict pattern at import time,
+    so embedding it as a literal is safe."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute(f"SET sdai.node_id = '{NODE_ID}'")
+    cursor.close()
+
+
 async def startup() -> None:
     global engine, SessionLocal
     engine = create_async_engine(
@@ -727,6 +908,7 @@ async def startup() -> None:
         pool_pre_ping=True,
         pool_recycle=3600,
     )
+    event.listen(engine.sync_engine, "connect", _set_node_id_on_connect)
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     await _init_db()
     global _worker_tasks
@@ -1715,7 +1897,10 @@ async def _find_duplicate(content_hash: str, tenant_slug: str) -> dict | None:
 # has already reoriented/cropped/re-encoded, so it will never hash back to
 # content_hash even when nothing is wrong. Image-sourced documents
 # therefore only get an existence check, not a hash comparison - reporting
-# a "mismatch" there would be a false positive on every single one.
+# a "mismatch" there would be a false positive on every single one -
+# unless the untouched upload itself is recorded as original_path (every
+# document ingested since the GED foundation, see _original_upload_path),
+# in which case that file is re-hashed against original_hash.
 
 
 async def _run_integrity_check(tenant_slug: str) -> dict:
@@ -1743,12 +1928,20 @@ async def _run_integrity_check(tenant_slug: str) -> dict:
             rows = list(
                 await conn.execute(
                     text(
-                        f'SELECT id, source_image_path, source_pdf_path, content_hash FROM "{table_name}"'
+                        f"SELECT id, source_image_path, source_pdf_path, content_hash,"
+                        f' original_path, original_hash FROM "{table_name}"'
                     )
                 )
             )
 
-        for doc_id, source_image_path, source_pdf_path, content_hash in rows:
+        for (
+            doc_id,
+            source_image_path,
+            source_pdf_path,
+            content_hash,
+            original_path,
+            original_hash,
+        ) in rows:
             counts["checked"] += 1
             reasons: list[str] = []
 
@@ -1762,6 +1955,16 @@ async def _run_integrity_check(tenant_slug: str) -> dict:
                     actual_hash = await asyncio.to_thread(_compute_hash, Path(source_pdf_path))
                     if actual_hash != content_hash:
                         reasons.append("content_hash mismatch")
+
+            # A PDF's original is its source_pdf_path, already verified
+            # above - don't hash the same file twice.
+            if original_path and original_path != source_pdf_path:
+                if not await asyncio.to_thread(os.path.isfile, original_path):
+                    reasons.append("original_path missing")
+                elif original_hash:
+                    actual_hash = await asyncio.to_thread(_compute_hash, Path(original_path))
+                    if actual_hash != original_hash:
+                        reasons.append("original_hash mismatch")
 
             if not reasons:
                 counts["ok"] += 1
@@ -1878,6 +2081,38 @@ def _pg_type(key: str, value) -> str:
     return "TEXT"
 
 
+# Document-level GED columns every ingest table carries (README.md,
+# Document management (GED)), on top of the extraction bookkeeping columns below. Added
+# at CREATE time by _ensure_table and to pre-existing tables by
+# _backfill_ged_columns. Most are inert until a later GED phase uses them:
+#   lifecycle_status / deleted_at / deleted_by / retention_until /
+#   legal_hold - archiving, trash, retention (every user-facing query
+#   already hides trashed and destroyed rows, see
+#   documents_router._live_where_clause), confidentiality - access
+#   control, original_path / original_hash - the untouched uploaded file
+#   and its hash (fixity, see _run_integrity_check), current_version -
+#   file versioning, locked_by / locked_until - check-out, updated_at /
+#   origin_node / hlc - local/cloud sync (set by the sdai_touch_row
+#   trigger, hlc stays NULL until sync exists).
+_GED_COLS: tuple[tuple[str, str], ...] = (
+    ("lifecycle_status", "TEXT DEFAULT 'active'"),
+    ("confidentiality", "TEXT DEFAULT 'internal'"),
+    ("original_path", "TEXT"),
+    ("original_hash", "TEXT"),
+    ("current_version", "INTEGER DEFAULT 1"),
+    ("deleted_at", "TIMESTAMPTZ"),
+    ("deleted_by", "UUID"),
+    ("retention_until", "DATE"),
+    ("legal_hold", "BOOLEAN DEFAULT false"),
+    ("locked_by", "UUID"),
+    ("locked_until", "TIMESTAMPTZ"),
+    ("updated_at", "TIMESTAMPTZ DEFAULT now()"),
+    ("origin_node", "TEXT"),
+    ("hlc", "TEXT"),
+)
+_GED_COL_NAMES = frozenset(col for col, _ in _GED_COLS)
+_GED_INDEXED_COLS = ("lifecycle_status", "deleted_at", "retention_until", "updated_at")
+
 # System/bookkeeping columns every ingest table has - never part of the
 # FTS expression, since they're not VLM-extracted content. Kept in sync
 # with documents_router._BASE_COLS (that module imports table/column
@@ -1897,6 +2132,7 @@ _BASE_COLS = frozenset(
         "reviewed_at",
         "reviewed_by",
     }
+    | _GED_COL_NAMES
 )
 
 
@@ -1927,7 +2163,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             "record_id        TEXT",
             "series_id        UUID",
             "uploaded_by      UUID",
-        ]
+        ] + [f"{col} {pg_type}" for col, pg_type in _GED_COLS]
         field_cols = [
             f"{_sanitize_identifier(k)} {_pg_type(k, v)}"
             for k, v in fields.items()
@@ -1973,6 +2209,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 f' ON "{table_name}" (uploaded_by)'
             )
         )
+        await _ensure_ged_indexes_and_trigger(conn, table_name)
 
         # GIN full-text index over every TEXT-typed field column - not a
         # fixed list, so a tenant's own schema (whatever fields its own
@@ -2030,6 +2267,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
         ("record_id", "TEXT"),
         ("series_id", "UUID"),
         ("uploaded_by", "UUID"),
+        *_GED_COLS,
     ):
         if col not in existing:
             await conn.execute(
@@ -2061,6 +2299,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             f' ON "{table_name}" (uploaded_by)'
         )
     )
+    await _ensure_ged_indexes_and_trigger(conn, table_name)
 
     if fts_col_added:
         # A newly-added column is TEXT-typed, so it must join the FTS
@@ -2135,6 +2374,24 @@ async def _grant_uploader_access(
     )
 
 
+async def _original_upload_path(conn, batch_document_id: str) -> str | None:
+    """The untouched uploaded file behind one batch_documents row - the file
+    content_hash was computed over - or None when that row only points at an
+    already-preprocessed page image (a crashed-document retry re-registers
+    those, see _retry_document). Same rule as _backfill_ged_columns."""
+    source_path = (
+        await conn.execute(
+            text("SELECT source_path FROM batch_documents WHERE id = CAST(:bd AS uuid)"),
+            {"bd": batch_document_id},
+        )
+    ).scalar()
+    if not source_path:
+        return None
+    if Path(source_path).resolve().is_relative_to(IMAGES_DIR.resolve()):
+        return None
+    return source_path
+
+
 async def _store_extraction(
     batch_id: str,
     image_path: str,
@@ -2184,6 +2441,10 @@ async def _store_extraction(
         if batch_document_id is not None:
             col_names.append("batch_document_id")
             col_vals.append(batch_document_id)
+            original_path = await _original_upload_path(conn, batch_document_id)
+            if original_path is not None:
+                col_names += ["original_path", "original_hash"]
+                col_vals += [original_path, content_hash]
 
         for k, v in fields.items():
             if k.startswith("_") or k == "extraction_confidence":
@@ -2777,7 +3038,7 @@ async def _retry_document(
     async with _engine().connect() as conn:
         row = await conn.execute(
             text(
-                f"SELECT source_pdf_path, page_image_paths, source_image_path,"
+                f"SELECT source_pdf_path, page_image_paths, source_image_path, original_path,"
                 f' content_hash, review_status, uploaded_by, batch_id FROM "{table_name}"'
                 f" WHERE id = CAST(:id AS uuid)"
             ),
@@ -2831,7 +3092,14 @@ async def _retry_document(
         "retry", tenant_id, created_by=original_uploaded_by, preset_id=original_preset_id
     )
     filename = pdf_path.name if pdf_path else page_paths[0].name
-    source_path = pdf_path if pdf_path else page_paths[0]
+    # Prefer the untouched original, so the retried document keeps it (see
+    # _original_upload_path) - only fall back to a preprocessed page image
+    # when this document never had one recorded.
+    original_path = record.get("original_path")
+    if original_path and Path(original_path).exists():
+        source_path = Path(original_path)
+    else:
+        source_path = pdf_path if pdf_path else page_paths[0]
     async with _session()() as sess:
         result = await sess.execute(
             text(
