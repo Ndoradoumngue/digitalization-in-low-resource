@@ -93,7 +93,84 @@ This file captures what has been built, why, and what is known to be incomplete 
 - **UI**: `DocumentDetailPage` right pane has tabs Record / Versions / History (`VersionsSection`, `HistorySection`, `hooks/useVersions.ts`); the integrity panel on `AccessAdminPage` shows the last run, version counts and the chain verdict with a "Verify audit chain" button; new actions in `AuditPage`. fr/en.
 - **Tests**: `tests/test_versions.py` (mocked: Stage 3 routing, version fixity, diff, filename sanitizing) and `tests/test_versions_pg.py` (real PostgreSQL, opt-in `-m pg`: backfill, upload/restore/download, lock/archive refusals, re-extraction into the same row, history on edit/review/re-extract/re-merge, view/download audit, chain under concurrency, edited/deleted/truncated rows, legacy chaining, fixity on versions).
 
-### Document Upload & Ingestion
+### Local/Cloud Sync and Backups (GED Phase 8)
+
+Two servers hold the same deployment: the **local** node (on site, GPU, works offline, drives the
+sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reachable). Code in
+`apps/api/sync/`.
+
+- **Change capture** (`sync/capture.py`): an AFTER trigger `sdai_capture_change` on every synced table
+  (`SYNC_TABLES`, in FK order, incl. composite-key `sdai_user_groups` and insert-only
+  `sdai_audit_log` / `sdai_token_blocklist`; every per-type table via `_ensure_table`) writes
+  `sdai_sync_changelog` rows: insert = whole row, update = changed columns + `base_hlcs` (the field
+  clocks it overwrote), delete, and `ddl` events (column list of a new/altered per-type table, emitted
+  by `_ensure_table`) so the peer creates tables before rows arrive. Stamps are hybrid logical clocks
+  made in SQL (`sdai_hlc_now()`: max(wall clock, `sdai_sync_state.hlc_floor_ms`) + a sequence counter +
+  node id, text-sortable - `sync/hlc.py` documents the format); `sdai_touch_row` also stamps the row's
+  `hlc`. `sdai_sync_row_clock` keeps the last stamp of each field of each row. Writes applied FROM the
+  peer run with `sdai.applying_sync = on` and are not captured (no echo). The changelog is seeded once
+  with every existing row (`seed_changelog`, also on demand = "reseed", new `epoch`). Node-local, never
+  synced: `sdai_nodes`, `sdai_record_id_counters`, `sdai_audit_chain_heads`, `sdai_sync_*`,
+  `sdai_backup_runs`.
+- **Apply** (`sync/apply.py`): in one transaction, a savepoint per change. Identifiers are checked
+  against synced tables / existing tenants' per-type tables and existing columns; values are typed
+  through `jsonb_populate_record`. Field-level last-writer-wins on the field clocks: an update whose
+  base differs from the local clock was concurrent - if the values differ it is a **conflict**. A
+  delete wins. A change that can't be applied (unique key taken, missing parent, unknown
+  table/column) is reported, never stalls the sync. Afterwards the HLC floor is raised past the
+  peer's stamps.
+- **Node-to-node API** (`sync/api.py`, `/api/sync/*`, 404 without `SYNC_NODE_TOKEN`): HMAC-SHA256
+  signed requests (`sync/auth.py`: node, timestamp ±5 min, single-use nonce, body hash), never user
+  cookies or API keys; `hello`, `push` (gzip, applied exactly once per peer cursor), `pull` (gzip),
+  `files/info`, `files` GET/PUT (chunked, resumable `.sync-part`, sha256-verified, `link()` so a file
+  is never replaced; paths only inside the file roots). Rate limit 1200/min.
+- **Worker** (`sync/worker.py`, compose service `sync`): on the node with `SYNC_PEER_URL` (the local
+  one - the cloud can't reach a server behind NAT, so the cloud only answers), every
+  `SYNC_INTERVAL_SECONDS`: hello → push pages → pull pages → file transfers; exponential backoff to 15
+  min while offline, `SYNC_MAX_KBPS` throttle, caches invalidated after applying, status in
+  `sdai_sync_state` / `sdai_sync_cursors`. Hourly pruning of changelog rows every peer applied
+  (older than `SYNC_CHANGELOG_RETENTION_DAYS`).
+- **Cursors and epochs** (`sync/store.py`): per peer, `received_id` (its changelog applied here) and
+  `sent_id` (ours applied there), tied to the changelog `epoch`. `history_diverged` catches a node
+  restored from a backup or rebuilt (one side holds more than the other has, or acknowledges less than
+  before, or an unknown epoch) and answers with a reseed: a full snapshot merged field by field on the
+  original stamps, so nothing newer is overwritten and rows only the other side still holds come back
+  (`forget_peer` asks the peer for its snapshot too). `_repair_record_counters` then raises the
+  `record_id` counters past every number in use.
+- **Conflicts** (`sync/conflicts.py`, `sdai_sync_conflicts`, node-local): one open row per field, both
+  values, winner, a `sdai_field_history` entry (`change_source='sync'`), audit `sync_conflict` (after
+  commit, so it is captured and the peer's copy of the audit chain has no gap); the document shows in
+  the review queue (`review_router._queue_where`, `sync_conflict` flag). `/api/admin/sync/conflicts` +
+  `/resolve` (keep_local / keep_remote / manual / retry / dismiss, admin, own tenant + tenantless rows);
+  a resolution is an ordinary edit, which closes the peer's copy ("superseded") when it arrives.
+- **Files** (`sync/files.py`, `sdai_sync_file_queue`, node-local): every file named by a pushed/pulled
+  change (`FILE_COLUMNS`: source_image_path, source_pdf_path, original_path, source_path, image_path,
+  file_path, page_image_paths) is queued `push` or `fetch` and transferred by the worker (bounded per
+  cycle, waiting files retried with backoff). A referenced file not there yet answers 404 with
+  `X-Sync-Pending` and the message "Fichier en cours de synchronisation" (`/api/db/image`, version
+  download, the image viewer).
+- **Cloud node mode** (`NODE_ROLE=cloud`, `docker-compose.cloud.yml`: no Ollama, ports 80/443): no
+  pipeline workers, uploads stay `pending` (`ingest_router._submit`), the local node picks up
+  peer-origin pending uploads once their file has arrived (`_peer_upload_pickup_worker`) and the
+  results sync back; `record_id` is only assigned on the local node (`_next_record_id` raises
+  elsewhere); page retry/reload/manual/skip/resume and review retry answer 409 there. A new cloud
+  node is prepared with `python -m sync.join` (empty database only; `join_pending` stops startup from
+  re-creating a `default` tenant until the peer's data arrives).
+- **Backups** (`scripts/backup/`, compose service `backup`): nightly `pg_dump` + `/data` +
+  `documents/` with restic to `BACKUP_SFTP_TARGET` (+ `BACKUP_NAS_PATH`), encrypted with
+  `RESTIC_PASSWORD`, 30 daily / 12 monthly, each run recorded in `sdai_backup_runs`; `restore-test`
+  drill. Procedures in RESTORE.md.
+- **Admin page** `/ops/sync` (`SyncAdminPage`, fr/en): node, peers, pending changes/files/MB,
+  conflicts with resolve actions, backups; `GET /api/admin/sync/status` computes alerts (sync down
+  > `SYNC_ALERT_HOURS`, backup failed/stale/not configured, files failed, conflicts open), shown as a
+  badge + alert box in the sidebar of every page for admins.
+- **Tests**: `test_sync_hlc.py`, `test_sync_api.py`, `test_sync_worker.py` (mocked);
+  `test_sync_pg.py` (capture), `test_sync_twonode_pg.py` (two databases: first sync, no echo, merges,
+  conflicts and their resolution, ddl replay for a new tenant/type, deletes, bad changes, files, cloud
+  upload → local processing → back, restore/rebuild of either node, status API) and
+  `test_sync_e2e_pg.py` (two real API processes + the real worker over HTTP, edits on both sides while
+  disconnected, convergence), all real-PostgreSQL ones opt-in with `-m pg`.
+
 ### Document Upload & Ingestion
 
 - `POST /api/ingest` - accepts multipart file upload, stores document in PostgreSQL.
@@ -167,7 +244,7 @@ This file captures what has been built, why, and what is known to be incomplete 
 
 - `Dockerfile.api`: Python 3.11 FastAPI, `documents/` mounted as volume.
 - `Dockerfile.frontend`: multi-stage - pnpm build → nginx. nginx proxies `/api/` and `/images/` to the API container (no CORS needed).
-- `docker-compose.yml`: `api`, `frontend`, `ollama` services on shared network.
+- `docker-compose.yml`: `api`, `frontend`, `ollama`, `db`, `redis`, `sync` (sync worker) and `backup` (restic) services on shared network; `docker-compose.cloud.yml` turns a host into the cloud node (no Ollama, ports 80/443).
 
 ---
 
@@ -215,6 +292,14 @@ This file captures what has been built, why, and what is known to be incomplete 
 | Re-extraction keeps the document type | A version whose extraction detects another document type stays in its table; the detected type is only noted in the `document_reextracted` audit entry |
 | Hard deletes vs. versions/history | Admin hard delete and re-upload replace leave `sdai_document_versions` / `sdai_field_history` rows (and files) behind - GED Phase 6 replaces hard deletes with trash/destruction |
 | Audit chain vs. a DB superuser | The chain shows edits, deletions and truncation, but someone able to rewrite both the log and `sdai_audit_chain_heads` could recompute it undetected - the replicated copy on the other node (GED Phase 8) is the external witness |
+| Sync topology | Exactly one peer per node (`SYNC_PEER_URL`), no relaying - a third node would need its own pairing; the local node must be able to reach the cloud (not the reverse) |
+| Sync and file deletion | Deleting a row deletes it on the peer, but files are never deleted by sync (nor anywhere yet - GED Phase 6) |
+| Unique keys created on both sides | Two different rows with the same natural key created offline on both nodes (e.g. the same e-mail for two new users) can't both exist: the second arrives as a `unique_violation` conflict to settle by hand |
+| Cache invalidation across processes | The sync worker clears the API's caches through Redis; without Redis (in-memory cache) cached counts/schema on the API side refresh only when they expire |
+| HLC counter wrap | Two changes of one node in the same millisecond after 100 000 others (counter wrap) could be ordered wrongly - not reachable in practice |
+| Hourly-scale clock skew | Sync requests are refused beyond ±5 min skew - both nodes must run NTP |
+| Conflicts per node | Each node keeps its own conflict list; resolving on one closes the other's copy only when the resolution reaches it (next cycle) |
+| UI not clicked through | The Synchronisation page and badges were type-checked and built, not tested in a browser |
 | Audit entries of API keys | API-key actions carry no `sdai_users` id, so the tenant-scoped audit view only shows them when they name one of the tenant's tables |
 
 ---
@@ -240,6 +325,7 @@ apps/api/
   admin_router.py                   # /api/admin/* - audit log, users/groups, integrity check + status, export
   versions_router.py                # /api/db/documents/{t}/{id}/versions|history - file versions, restore, history
   history.py                        # field-history diff + insert (sdai_field_history), shared by every edit path
+  sync/                             # local/cloud sync: capture, hlc, apply, store, conflicts, files, api, admin, worker, join
   create_admin.py                   # seed script to create/upsert a user within a tenant
   create_tenant.py                  # seed script to create/upsert a tenant (ministry)
   tests/

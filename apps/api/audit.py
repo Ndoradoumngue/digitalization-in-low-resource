@@ -18,6 +18,8 @@ Actions logged:
   document_viewed    document_downloaded            (deduped, see cache.first_in_window)
   document_version_added  document_version_restored  document_reextracted
   integrity_check_completed  integrity_chain_broken
+  sync_conflict      sync_conflict_resolved          (local/cloud sync, see sync.conflicts)
+  sync_files_retried
 
 Every row is chained (chain_seq / prev_hash / row_hash, one chain per
 origin_node) by the sdai_audit_chain trigger in the database itself - see

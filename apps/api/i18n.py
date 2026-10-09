@@ -288,6 +288,39 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The file of this version is no longer on disk",
         "fr": "Le fichier de cette version n'est plus sur le disque",
     },
+    # ── sync/admin.py ────────────────────────────────────────────────────
+    "sync.conflict_not_found": {
+        "en": "Sync conflict not found",
+        "fr": "Conflit de synchronisation introuvable",
+    },
+    "sync.conflict_not_open": {
+        "en": "This sync conflict is already resolved",
+        "fr": "Ce conflit de synchronisation est déjà résolu",
+    },
+    "sync.bad_resolution": {
+        "en": "This resolution does not apply to this conflict",
+        "fr": "Cette résolution ne s'applique pas à ce conflit",
+    },
+    "sync.value_required": {
+        "en": "A value is required for a manual resolution",
+        "fr": "Une valeur est requise pour une résolution manuelle",
+    },
+    "sync.conflict_row_gone": {
+        "en": "The record of this conflict no longer exists - dismiss it instead",
+        "fr": "L'enregistrement de ce conflit n'existe plus - ignorez-le plutôt",
+    },
+    "ingest.local_node_only": {
+        "en": "This is done on the local server (it runs the extraction) - open the document there",
+        "fr": "Cette action se fait sur le serveur local (qui exécute l'extraction) - ouvrez le document là-bas",
+    },
+    "sync.file_pending": {
+        "en": "This file is still being synchronised from the other server - try again shortly",
+        "fr": "Fichier en cours de synchronisation depuis l'autre serveur - réessayez dans un instant",
+    },
+    "sync.retry_failed": {
+        "en": "The change still cannot be applied - fix the cause first",
+        "fr": "La modification ne peut toujours pas être appliquée - corrigez d'abord la cause",
+    },
     # ── api_server.py ────────────────────────────────────────────────────
     "benchmarks.vlm_results_not_found": {
         "en": "VLM results file not found. Run vlm_ollama_test.py first.",

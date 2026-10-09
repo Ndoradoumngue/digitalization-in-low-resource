@@ -32,7 +32,8 @@
     "uploadDocuments": "Téléverser des documents",
     "nodeLocal": "Serveur local",
     "nodeCloud": "Serveur cloud",
-    "signOut": "Se déconnecter"
+    "signOut": "Se déconnecter",
+    "sync": "Synchronisation"
   },
   "login": {
     "tagline": "Plateforme d'extraction de documents",
@@ -365,7 +366,9 @@
       "minutes": "il y a {{count}} min",
       "hours": "il y a {{count}} h",
       "days": "il y a {{count}} j"
-    }
+    },
+    "syncConflict": "Conflit de synchronisation",
+    "syncConflictHint": "Ce document a été modifié sur les deux serveurs en même temps - à trancher dans la page Synchronisation"
   },
   "accessAdmin": {
     "header": "Accès & Groupes",
@@ -491,7 +494,10 @@
       "document_version_restored": "version restaurée",
       "document_reextracted": "document ré-extrait",
       "integrity_check_completed": "vérification d'intégrité terminée",
-      "integrity_chain_broken": "chaîne d'audit rompue"
+      "integrity_chain_broken": "chaîne d'audit rompue",
+      "sync_conflict": "Conflit de synchronisation",
+      "sync_conflict_resolved": "Conflit de synchronisation résolu",
+      "sync_files_retried": "Fichiers de synchronisation relancés"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -622,7 +628,8 @@
   },
   "panZoom": {
     "alt": "Document",
-    "overlay": "{{pct}}% - molette pour zoomer · glisser pour déplacer · double-clic pour réinitialiser"
+    "overlay": "{{pct}}% - molette pour zoomer · glisser pour déplacer · double-clic pour réinitialiser",
+    "notAvailable": "Image indisponible"
   },
   "vlm": {
     "fields": {
@@ -713,6 +720,119 @@
       "review": "validation",
       "reextract": "ré-extraction",
       "sync": "synchronisation"
+    }
+  },
+  "sync": {
+    "header": "Synchronisation & sauvegardes",
+    "subtitle": "Synchronisation local / cloud de ce serveur, ses conflits et les sauvegardes hors site",
+    "never": "jamais",
+    "allGood": "Synchronisation et sauvegardes fonctionnent - rien à signaler.",
+    "filePending": "Fichier en cours de synchronisation depuis l'autre serveur - réessayez dans un instant.",
+    "alerts": {
+      "sync_down": "La synchronisation n'a pas réussi depuis plus de {{hours}} h (dernier succès : {{since}}).",
+      "backup_failed": "La dernière sauvegarde a échoué (dernière réussie : {{since}}).",
+      "backup_not_configured": "Aucune sauvegarde hors site n'est configurée (BACKUP_SFTP_TARGET).",
+      "backup_stale": "Aucune sauvegarde depuis plus de 36 h (dernière : {{since}}).",
+      "files_failed": "{{count}} fichier(s) n'ont pas pu être synchronisés.",
+      "conflicts_open": "{{count}} conflit(s) de synchronisation en attente de décision."
+    },
+    "node": {
+      "heading": "Ce serveur",
+      "id": "Nœud",
+      "role": "Rôle",
+      "sync": "Synchronisation",
+      "enabled": "activée",
+      "disabled": "désactivée (pas de SYNC_NODE_TOKEN)",
+      "peer": "Pair",
+      "lastSuccess": "Dernière synchronisation réussie",
+      "failures": "Échecs consécutifs",
+      "passive": "Mode",
+      "passiveHint": "attend le serveur local, qui pilote la synchronisation",
+      "joinPending": "A rejoint un déploiement - en attente de la première synchronisation qui apportera ses données."
+    },
+    "peers": {
+      "heading": "Pairs",
+      "none": "Aucun pair ne s'est encore synchronisé avec ce serveur.",
+      "node": "Pair",
+      "lastContact": "Dernier contact",
+      "lastPush": "Dernier envoi",
+      "lastPull": "Dernière réception",
+      "pending": "Modifications non envoyées"
+    },
+    "files": {
+      "heading": "Fichiers",
+      "pending": "À transférer",
+      "pendingMb": "Volume à transférer",
+      "waiting": "En attente de la source",
+      "failed": "En échec",
+      "passiveHint": "Les transferts sont pilotés par le serveur local ; un fichier absent s'affiche « en cours de synchronisation » jusqu'à son arrivée.",
+      "show": "Voir les fichiers",
+      "hide": "Masquer les fichiers",
+      "retry": "Relancer",
+      "status": {
+        "failed": "échec",
+        "waiting": "en attente",
+        "pending": "à faire",
+        "done": "fait"
+      },
+      "direction": {
+        "push": "à envoyer",
+        "fetch": "à recevoir"
+      }
+    },
+    "conflicts": {
+      "heading": "Conflits de synchronisation",
+      "help": "Un champ modifié sur les deux serveurs en même temps : la modification la plus récente a été gardée partout, l'autre valeur est conservée ici. Confirmez, rétablissez l'autre valeur ou saisissez la bonne. Les modifications qui n'ont pas pu être appliquées peuvent être relancées une fois la cause corrigée.",
+      "tab": {
+        "open": "À trancher",
+        "resolved": "Résolus"
+      },
+      "none": "Rien ici.",
+      "kind": {
+        "field": "Même champ modifié sur les deux serveurs",
+        "unique_violation": "Doublon (existe déjà ici)",
+        "missing_parent": "Enregistrement lié manquant",
+        "unknown_table": "Table inconnue",
+        "unknown_column": "Colonne inconnue",
+        "apply_failed": "Application impossible",
+        "bad_pk": "Modification invalide",
+        "bad_op": "Modification invalide",
+        "bad_hlc": "Modification invalide",
+        "bad_change": "Modification invalide",
+        "bad_ddl": "Modification invalide"
+      },
+      "localValue": "Valeur sur ce serveur",
+      "remoteValue": "Valeur venant de {{node}}",
+      "kept": "gardée",
+      "keepLocal": "Garder la valeur de ce serveur",
+      "keepRemote": "Garder l'autre valeur",
+      "manual": "Saisir la valeur…",
+      "manualValue": "Valeur correcte",
+      "retry": "Relancer",
+      "dismiss": "Ignorer",
+      "resolution": {
+        "keep_local": "Valeur de ce serveur gardée",
+        "keep_remote": "Autre valeur gardée",
+        "manual": "Valeur saisie à la main",
+        "retry": "Appliquée à la relance",
+        "dismiss": "Ignoré",
+        "superseded": "Tranché sur l'autre serveur"
+      }
+    },
+    "backups": {
+      "heading": "Sauvegardes",
+      "lastSuccess": "Dernière sauvegarde réussie : {{when}}",
+      "none": "Aucune sauvegarde n'a encore tourné sur ce serveur.",
+      "status": {
+        "success": "OK",
+        "failed": "Échec",
+        "not_configured": "Non configurée"
+      },
+      "target": {
+        "sftp": "Hors site (SFTP)",
+        "nas": "NAS"
+      },
+      "help": "Sauvegardes chiffrées chaque nuit avec restic (30 quotidiennes + 12 mensuelles). La synchronisation n'est pas une sauvegarde - voir RESTORE.md pour restaurer."
     }
   }
 }

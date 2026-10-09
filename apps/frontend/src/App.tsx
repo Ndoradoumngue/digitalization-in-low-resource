@@ -16,6 +16,7 @@ import ReviewPage from "./pages/ReviewPage";
 import AuditPage from "./pages/AuditPage";
 import BenchmarksPage from "./pages/BenchmarksPage";
 import AccessAdminPage from "./pages/AccessAdminPage";
+import SyncAdminPage from "./pages/SyncAdminPage";
 
 export default function App() {
   return (
@@ -83,6 +84,15 @@ export default function App() {
           element={
             <AdminRoute>
               <AccessAdminPage />
+            </AdminRoute>
+          }
+        />
+
+        <Route
+          path="/ops/sync"
+          element={
+            <AdminRoute>
+              <SyncAdminPage />
             </AdminRoute>
           }
         />

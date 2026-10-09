@@ -452,3 +452,12 @@ app.include_router(review_router)
 from admin_router import router as admin_router
 
 app.include_router(admin_router)
+
+# ── Node-to-node sync router (local/cloud) ────────────────────────────────────
+# Signed by the peer node (sync.auth), never by a user session.
+
+from sync.admin import router as sync_admin_router
+from sync.api import router as sync_router
+
+app.include_router(sync_router)
+app.include_router(sync_admin_router)

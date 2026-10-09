@@ -9,6 +9,24 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 8 (hybrid local/cloud deployment, sync, backups)
+- Two-server deployment: the local server (GPU, works offline) stays primary and a cloud node (plain VM at DigitalOcean or AWS, no GPU, `docker-compose.cloud.yml`) holds the same data for remote users. Changes on either side are synchronised both ways whenever the link is up; days offline are fine.
+- Change capture by database triggers on every synced table (incl. every per-type document table, group memberships, the audit log and the token blocklist) into `sdai_sync_changelog`, with hybrid-logical-clock stamps and per-field clocks; creating or extending a document type is replayed on the other node before its rows arrive.
+- Node-to-node API `/api/sync/*` authenticated by HMAC-signed requests (shared `SYNC_NODE_TOKEN`, ±5 min, single-use nonce) - push, pull (gzip), resumable sha256-verified file transfer that never overwrites a file.
+- `sync` service (`python -m sync.worker`): push/pull/file transfer every `SYNC_INTERVAL_SECONDS`, exponential backoff while offline, `SYNC_MAX_KBPS` bandwidth cap, changelog pruning.
+- Field-level last-writer-wins; a field edited on both nodes is recorded as a sync conflict (both values, field history, audit `sync_conflict`), flagged in the review queue ("Conflit de synchronisation") and resolved by an admin (keep either value, type another, retry/dismiss failed changes - audit `sync_conflict_resolved`).
+- Files referenced by synced rows (originals, page images, versions, path imports) are copied to the other node; until then the viewer shows "Fichier en cours de synchronisation".
+- Cloud node mode: no pipeline on the cloud; documents uploaded there are processed by the local GPU once their file has arrived and the results (fields, record number) come back. Record numbers are only ever assigned on the local node.
+- Restored or rebuilt nodes heal themselves: the sync detects that a node went back in time or starts empty and exchanges full snapshots merged on the original timestamps (nothing newer overwritten), then record numbering continues after the highest number in use. `python -m sync.join` prepares an empty new node.
+- Off-site backups: `backup` service (restic) - nightly database dump + `/data` + `documents/` to an SFTP server (`BACKUP_SFTP_TARGET`) and optionally a NAS, encrypted (`RESTIC_PASSWORD`), 30 daily + 12 monthly; `restore-test` drill; RESTORE.md covers restoring a node on a clean VM and rebuilding either node from the other.
+- Admin "Synchronisation" page (fr/en): node and peer status, pending changes/files/size, conflicts with resolve actions, last backups; alerts in the menu of every page when sync is down for `SYNC_ALERT_HOURS`, a backup failed or is stale, or files failed.
+- Tests: mocked sync suites plus real-PostgreSQL capture, two-database convergence/conflict/file/restore suites and an end-to-end test with two API processes and the real worker.
+
+### Changed - GED Phase 8
+- `/api/ingest/pages/*` retry/reload/manual/skip/resume and review retry answer 409 on a cloud node (extraction and filing happen on the local node).
+- The API and the sync worker serialise their startup migrations with an advisory lock.
+- `api` Docker image now also copies `history.py` and `versions_router.py` (missing since Phase 2) and the `sync/` package.
+
 ### Added - GED Phase 2 (versioning, field history, tamper-evident audit)
 - File versions per document (`sdai_document_versions`): `GET/POST /api/db/documents/{t}/{id}/versions`, `POST .../versions/{n}/restore` (a restore is a new version pointing at the old file - history is never rewritten), `GET .../versions/{n}/file`. Version 1 is backfilled for every existing document. New files are stored under `DATA_DIR/uploads/versions/<tenant>/<id>/v<N>_<name>` and never overwritten. Uploading/restoring needs `edit` and is refused while another user holds the check-out lock or, for non-archivists, on an archived document.
 - Optional re-extraction of a new version into the same document (`reextract=true`): the pipeline updates the existing row instead of filing a new document; previous values go to the field history.

@@ -5,6 +5,12 @@ import { useDbTypes } from "../hooks/useDocumentsDb";
 import { useReviewCount } from "../hooks/useReview";
 import LanguageSwitcher from "./LanguageSwitcher";
 import { isReader } from "../utils/permissions";
+import { useSyncStatus } from "../hooks/useSync";
+import { alertText } from "../pages/SyncAdminPage";
+
+// Alerts worth interrupting an admin for on every page; the rest (no backup
+// target configured on a standalone server, ...) stay on the Sync page.
+const URGENT_SYNC_ALERTS = new Set(["sync_down", "backup_failed", "backup_stale", "files_failed"]);
 
 function navClass(active: boolean) {
   return `flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${active ? "bg-indigo-50 text-indigo-700" : "text-gray-700 hover:bg-gray-100"
@@ -19,6 +25,9 @@ export default function NavSidebar() {
   const dbTotal = (dbTypes ?? []).reduce((acc, t) => acc + t.count, 0);
   const { data: reviewCount } = useReviewCount();
   const pendingReview = reviewCount?.pending ?? 0;
+  const { data: syncStatus } = useSyncStatus(user?.role === "admin");
+  const syncAlerts = syncStatus?.alerts ?? [];
+  const urgentSync = syncAlerts.filter((a) => URGENT_SYNC_ALERTS.has(a.kind));
 
   return (
     <aside className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-hidden h-screen">
@@ -132,6 +141,25 @@ export default function NavSidebar() {
             </Link>
           )}
 
+          {user?.role === "admin" && (
+            <Link
+              to="/ops/sync"
+              className={navClass(pathname === "/ops/sync")}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+              {t("nav.sync")}
+              {syncAlerts.length > 0 && (
+                <span
+                  className={`ml-auto min-w-5 px-1.5 py-0.5 rounded-full text-[10px] font-bold text-center ${urgentSync.length ? "bg-red-600 text-white" : "bg-amber-100 text-amber-800"}`}
+                >
+                  {syncAlerts.length}
+                </span>
+              )}
+            </Link>
+          )}
+
           {!isReader(user) && (
           <Link
             to="/upload"
@@ -145,6 +173,17 @@ export default function NavSidebar() {
           )}
         </div>
       </nav>
+
+      {urgentSync.length > 0 && (
+        <Link
+          to="/ops/sync"
+          className="mx-3 mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-800 space-y-0.5 hover:bg-red-100"
+        >
+          {urgentSync.map((a) => (
+            <p key={a.kind}>⚠ {alertText(a, t)}</p>
+          ))}
+        </Link>
+      )}
 
       {/* User / logout footer */}
       <div className="px-4 py-3 border-t border-gray-200 space-y-2.5">

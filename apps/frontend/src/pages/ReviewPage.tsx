@@ -14,6 +14,7 @@ import { useReviewQueue } from "../hooks/useReview";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
 import { useAuth } from "../context/AuthContext";
 import NavSidebar from "../components/NavSidebar";
+import PanZoomImage from "../components/PanZoomImage";
 import ListTable, { isComplexValue } from "../components/ListTable";
 import type { ReviewQueueItem } from "@sdai/types";
 
@@ -49,55 +50,6 @@ function timeAgo(iso: string | null | undefined, t: (key: string, opts?: Record<
 
 function labelFor(key: string) {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-// ── Pan/zoom image (same pattern as DocumentDetailPage) ───────────────────────
-
-function PanZoomImage({ src }: { src: string }) {
-  const { t } = useTranslation();
-  const [scale, setScale] = useState(1);
-  const [tx, setTx] = useState(0);
-  const [ty, setTy] = useState(0);
-  const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
-
-  const reset = useCallback(() => { setScale(1); setTx(0); setTy(0); }, []);
-
-  return (
-    <div
-      className="relative w-full h-full overflow-hidden bg-gray-800 select-none"
-      onWheel={(e) => {
-        e.preventDefault();
-        setScale((s) => Math.min(8, Math.max(0.2, s * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
-      }}
-      onMouseDown={(e) => {
-        if (e.button !== 0) return;
-        drag.current = { x: e.clientX, y: e.clientY, tx, ty };
-      }}
-      onMouseMove={(e) => {
-        if (!drag.current) return;
-        setTx(drag.current.tx + e.clientX - drag.current.x);
-        setTy(drag.current.ty + e.clientY - drag.current.y);
-      }}
-      onMouseUp={() => { drag.current = null; }}
-      onMouseLeave={() => { drag.current = null; }}
-      onDoubleClick={reset}
-      style={{ cursor: drag.current ? "grabbing" : "grab" }}
-    >
-      <img
-        src={src}
-        alt={t("panZoom.alt")}
-        draggable={false}
-        className="absolute top-1/2 left-1/2 max-w-none"
-        style={{
-          transform: `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(${scale})`,
-          transformOrigin: "center center",
-        }}
-      />
-      <div className="absolute bottom-2 right-2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded pointer-events-none">
-        {t("panZoom.overlay", { pct: Math.round(scale * 100) })}
-      </div>
-    </div>
-  );
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -510,6 +462,15 @@ export default function ReviewPage() {
               <span className="text-xs text-gray-500 flex-1 text-center">
                 {queueLoading ? t("common.loading") : t("review.reviewingOf", { current: idx + 1, total: totalQueue })}
               </span>
+              {current?.sync_conflict && (
+                <Link
+                  to="/ops/sync"
+                  title={t("review.syncConflictHint")}
+                  className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-orange-100 text-orange-800 border border-orange-300 hover:bg-orange-200"
+                >
+                  {t("review.syncConflict")}
+                </Link>
+              )}
               <button
                 onClick={handleNext}
                 disabled={idx >= items.length - 1 || isBusy}

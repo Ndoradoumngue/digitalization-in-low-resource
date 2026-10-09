@@ -29,7 +29,12 @@ from documents_router import (
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi_cache.decorator import cache
 from i18n import t
-from ingest_router import _engine, _grant_uploader_access, _retry_document
+from ingest_router import (
+    _engine,
+    _grant_uploader_access,
+    _require_processing_node,
+    _retry_document,
+)
 from pydantic import BaseModel
 from rate_limit import limiter
 from sqlalchemy import text
@@ -50,6 +55,21 @@ def _serial(v):
 
 
 # ── Queue query helpers ───────────────────────────────────────────────────────
+
+
+def _sync_conflict_sql(table: str) -> str:
+    """The document has an open sync conflict (a field changed on both the
+    local and the cloud node - see sync.conflicts) waiting for a decision."""
+    return (
+        "EXISTS (SELECT 1 FROM sdai_sync_conflicts c WHERE c.status = 'open'"
+        f" AND c.table_name = '{table}' AND c.document_id = \"{table}\".id)"
+    )
+
+
+def _queue_where(table: str) -> str:
+    """Queue membership: waiting for review, or flagged by a sync conflict
+    ("conflit de synchronisation") whatever its review status."""
+    return f"(review_status = 'review_required' OR {_sync_conflict_sql(table)})"
 
 
 def _queue_select(table: str, cols: dict[str, str], current_user: CurrentUser) -> str:
@@ -76,8 +96,9 @@ def _queue_select(table: str, cols: dict[str, str], current_user: CurrentUser) -
         "ingested_at::text    AS ingested_at",
         "source_image_path",
         f"{extra_expr} AS extra_fields",
+        f"{_sync_conflict_sql(table)} AS sync_conflict",
     ]
-    where = "review_status = 'review_required'"
+    where = _queue_where(table)
     # The queue is work to do - only documents the user may act on (edit).
     access_clause = _access_where_clause(table, current_user, "edit")
     if access_clause:
@@ -126,7 +147,7 @@ async def _pending_count(conn, tables_cols: dict, current_user: CurrentUser) -> 
         return 0
     parts = []
     for t in tables_cols:
-        where = "review_status = 'review_required'"
+        where = _queue_where(t)
         access_clause = _access_where_clause(t, current_user, "edit")
         if access_clause:
             where += f" AND {access_clause}"
@@ -394,6 +415,7 @@ async def retry_document(
             )
         await _require_document_permission(conn, safe, doc_id, current_user, "edit")
 
+    _require_processing_node(current_user.locale)
     batch_id = await _retry_document(
         safe, doc_id, current_user.tenant_id, current_user.tenant_slug, current_user.locale
     )

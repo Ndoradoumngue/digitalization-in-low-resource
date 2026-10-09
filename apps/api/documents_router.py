@@ -58,6 +58,7 @@ from ingest_router import _engine  # lazy accessor - None until startup()
 from pydantic import BaseModel, Field
 from rate_limit import limiter
 from sqlalchemy import text
+from sync import files as sync_files
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -2266,6 +2267,8 @@ async def serve_processed_image(
     paths = list(dict.fromkeys([path, str(file_path)]))
     async with _engine().connect() as conn:
         permitted = await _file_permitted(conn, current_user, paths, table, id)
+        if permitted and not file_path.exists() and await sync_files.file_pending(conn, path):
+            raise sync_files.pending_exception(current_user.locale)
         if not permitted or not file_path.exists():
             raise HTTPException(
                 status_code=404, detail=t("common.file_not_found", current_user.locale)

@@ -39,3 +39,6 @@ packages/*/dist/
 docs/ged/
 # Personal Claude Code instructions
 CLAUDE.local.md
+
+# Backup service: SSH keys for the SFTP target and the local NAS repository
+backup/

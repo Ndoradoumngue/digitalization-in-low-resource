@@ -56,6 +56,8 @@ from i18n import DEFAULT_LOCALE, t
 from PIL import Image
 from pydantic import BaseModel
 from rate_limit import limiter
+from sync import capture as sync_capture
+from sync import files as sync_files
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -199,7 +201,11 @@ CREATE TABLE IF NOT EXISTS sdai_tenants (
     created_at            TIMESTAMPTZ DEFAULT now()
 );
 
-INSERT INTO sdai_tenants (slug, name) VALUES ('default', 'Default')
+-- Not on a node that joined a sync peer and is still waiting for that
+-- peer's tenants (sync.join) - its own 'default' would collide with them.
+INSERT INTO sdai_tenants (slug, name)
+    SELECT 'default', 'Default'
+    WHERE NOT EXISTS (SELECT 1 FROM sdai_sync_state WHERE join_pending)
     ON CONFLICT (slug) DO NOTHING;
 
 -- Some corpora are only two-column from a certain page onward (e.g. a
@@ -777,6 +783,14 @@ CREATE OR REPLACE TRIGGER sdai_audit_append_only BEFORE UPDATE OR DELETE ON sdai
 
 async def _init_db() -> None:
     async with _engine().begin() as conn:
+        # The API and the sync worker both run this at startup - one at a
+        # time (concurrent DDL on the same objects can deadlock).
+        await conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('sdai_init_db'))"))
+        # Sync bookkeeping tables and the HLC/capture functions first:
+        # _INIT_DDL reads sdai_sync_state, and the touch trigger stamps
+        # every row with sdai_hlc_now().
+        for statement in sync_capture.SYNC_DDL:
+            await conn.execute(text(statement))
         # asyncpg's extended query protocol can't prepare multiple commands
         # in one statement, so each DDL statement is executed separately.
         for statement in _INIT_DDL.split(";"):
@@ -799,6 +813,7 @@ async def _init_db() -> None:
         # Assign a persistent record_id to any row that predates this
         # column - see _backfill_record_ids's docstring.
         await _backfill_record_ids(conn)
+        await _repair_record_counters(conn)
         # Ensure the series_id/uploaded_by columns exist on tables that
         # predate those features - see _backfill_new_base_columns's docstring.
         await _backfill_new_base_columns(conn)
@@ -809,6 +824,10 @@ async def _init_db() -> None:
         await _backfill_document_versions(conn)
         await _register_node(conn)
         await _backfill_audit_chain(conn)
+        # Change capture for local/cloud sync on every synced table, and
+        # the one-time changelog seed - last, so it records the migrated
+        # state (see sync.capture).
+        await sync_capture.install_capture(conn)
         # Purge expired blocklist entries on each startup
         await conn.execute(text("DELETE FROM sdai_token_blocklist WHERE expired_at < NOW()"))
         # Every in-flight page task lives in this process's memory, so at
@@ -873,6 +892,10 @@ async def _next_record_id(conn, tenant_id: str, tenant_slug: str) -> str:
     documents this system ingests. `conn` is caller-managed (no implicit
     transaction here) so this can be called from within _store_extraction's
     own transaction or from a migration's."""
+    # The counter is node-local (never synced): numbering only ever happens
+    # on the local node, which files every document, so it can't fork.
+    if NODE_ROLE != "local":
+        raise RuntimeError("record_id is only ever assigned on the local node")
     year = datetime.now(timezone.utc).year
     result = await conn.execute(
         text("""
@@ -888,6 +911,44 @@ async def _next_record_id(conn, tenant_id: str, tenant_slug: str) -> str:
     return f"{tenant_slug.upper()}-{year}-{seq:06d}"
 
 
+async def _repair_record_counters(conn) -> None:
+    """Raise every tenant/year counter to the highest record_id number
+    actually in use. Numbers are only ever assigned here, on the local node,
+    but after this node is restored from a backup, documents it numbered
+    later come back from the cloud through sync - the next number must
+    continue after them, not collide. Cheap: one MAX per table."""
+    if NODE_ROLE != "local":
+        return
+    tenants = [(str(r[0]), r[1]) for r in await conn.execute(text("SELECT id, slug FROM sdai_tenants"))]
+    for tenant_id, slug in tenants:
+        tables = (
+            await conn.execute(
+                text("""
+                    SELECT table_name FROM information_schema.columns
+                    WHERE table_schema = 'public' AND column_name = 'record_id'
+                      AND starts_with(table_name, :prefix)
+                """),
+                {"prefix": f"t_{slug}_"},
+            )
+        ).all()
+        if not tables:
+            continue
+        pattern = f"^{re.escape(slug.upper())}-([0-9]{{4}})-([0-9]+)$"
+        union = " UNION ALL ".join(f'SELECT record_id FROM "{t}"' for (t,) in tables)
+        await conn.execute(
+            text(f"""
+                INSERT INTO sdai_record_id_counters (tenant_id, year, next_seq)
+                SELECT CAST(:tid AS uuid), CAST(m[1] AS integer), max(CAST(m[2] AS integer))
+                FROM (SELECT regexp_match(record_id, :pattern) AS m FROM ({union}) ids) parsed
+                WHERE m IS NOT NULL
+                GROUP BY m[1]
+                ON CONFLICT (tenant_id, year)
+                DO UPDATE SET next_seq = GREATEST(sdai_record_id_counters.next_seq, EXCLUDED.next_seq)
+            """),
+            {"tid": tenant_id, "pattern": pattern},
+        )
+
+
 async def _backfill_record_ids(conn) -> None:
     """One-time-per-startup migration: ensure every ingest table has a
     record_id column, and assign persistent record ids (via the same
@@ -899,6 +960,8 @@ async def _backfill_record_ids(conn) -> None:
     a tenant slug out of a table name, which would be ambiguous for any
     slug that itself contains an underscore.
     """
+    if NODE_ROLE != "local":
+        return  # numbering happens on the local node only (_next_record_id)
     tenants_result = await conn.execute(text("SELECT id, slug FROM sdai_tenants"))
     tenants = [(str(r[0]), r[1]) for r in tenants_result]
 
@@ -968,7 +1031,7 @@ async def _backfill_new_base_columns(conn) -> None:
             )
 
 
-# Keeps the sync columns (updated_at, origin_node) current on every row of
+# Keeps the sync columns (updated_at, origin_node, hlc) current on every row of
 # every synced table, so a later local/cloud sync can tell what changed
 # where without every UPDATE statement in the codebase having to remember
 # to set them. origin_node comes from the sdai.node_id setting (set per
@@ -984,6 +1047,7 @@ BEGIN
     END IF;
     NEW.updated_at := now();
     NEW.origin_node := COALESCE(NULLIF(current_setting('sdai.node_id', true), ''), NEW.origin_node);
+    NEW.hlc := sdai_hlc_now();
     RETURN NEW;
 END
 $$ LANGUAGE plpgsql
@@ -1015,8 +1079,9 @@ _SYNCED_STATIC_TABLES = (
 
 async def _ensure_ged_indexes_and_trigger(conn, table_name: str) -> None:
     """Indexes on the GED columns every list/retention query filters on,
-    plus the sdai_touch_row trigger. Idempotent - shared by _ensure_table
-    (new and altered tables) and _backfill_ged_columns (existing ones)."""
+    plus the sdai_touch_row and sync capture triggers. Idempotent - shared
+    by _ensure_table (new and altered tables) and _backfill_ged_columns
+    (existing ones)."""
     for col in _GED_INDEXED_COLS:
         await conn.execute(
             text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{col} ON "{table_name}" ({col})')
@@ -1040,6 +1105,7 @@ async def _ensure_ged_indexes_and_trigger(conn, table_name: str) -> None:
             " FOR EACH ROW EXECUTE FUNCTION sdai_touch_row()"
         )
     )
+    await sync_capture.install_dynamic_trigger(conn, table_name)
 
 
 async def _backfill_ged_columns(conn) -> None:
@@ -1433,12 +1499,19 @@ async def startup() -> None:
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     await _init_db()
     global _worker_tasks
+    if NODE_ROLE == "cloud":
+        # No GPU/Ollama on the cloud node: uploads there wait as 'pending'
+        # rows until the local node processes them (_peer_upload_pickup_worker
+        # over there), and once-per-deployment jobs run on the local node.
+        _worker_tasks = []
+        return
     _worker_tasks = [
         asyncio.create_task(_stage1_worker()),
         asyncio.create_task(_stage2_worker()),
         asyncio.create_task(_stage3_worker()),
         asyncio.create_task(_integrity_check_worker()),
         asyncio.create_task(_finalize_stranded_documents()),
+        asyncio.create_task(_peer_upload_pickup_worker()),
     ]
 
 
@@ -2757,7 +2830,7 @@ def _pg_type(key: str, value) -> str:
 #   and its hash (fixity, see _run_integrity_check), current_version -
 #   file versioning, locked_by / locked_until - check-out, updated_at /
 #   origin_node / hlc - local/cloud sync (set by the sdai_touch_row
-#   trigger, hlc stays NULL until sync exists).
+#   trigger, hlc = the HLC stamp of the row's last change).
 _GED_COLS: tuple[tuple[str, str], ...] = (
     ("lifecycle_status", "TEXT DEFAULT 'active'"),
     ("confidentiality", "TEXT DEFAULT 'internal'"),
@@ -2894,6 +2967,8 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 )
             )
 
+        # The peer creates the same table before any row of it arrives.
+        await sync_capture.log_ddl(conn, table_name)
         return "created"
 
     # Add any new columns that don't yet exist
@@ -2991,6 +3066,8 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 )
             )
 
+    if altered:
+        await sync_capture.log_ddl(conn, table_name)
     return "altered" if altered else "unchanged"
 
 
@@ -3900,7 +3977,78 @@ async def _register_and_enqueue(
         )
         doc_id = str(result.scalar())
         await sess.commit()
-    await _queue.put((doc_id, batch_id, src_path, filename, content_hash, tenant_id, tenant_slug))
+    await _submit((doc_id, batch_id, src_path, filename, content_hash, tenant_id, tenant_slug))
+
+
+async def _submit(item: tuple) -> None:
+    """Hand a registered upload (batch_documents row, status 'pending') to
+    the pipeline - or, on the cloud node, which has no GPU, leave it
+    pending: the local node picks it up once its file has synced
+    (_peer_upload_pickup_worker) and the results sync back."""
+    if NODE_ROLE == "cloud":
+        return
+    await _queue.put(item)
+
+
+def _require_processing_node(locale: str = DEFAULT_LOCALE) -> None:
+    """Extraction (VLM) and filing (record_id) only happen on the local
+    node - the cloud node refuses page retries, manual entries and the
+    like instead of queueing work nobody would ever pick up."""
+    if NODE_ROLE != "local":
+        raise HTTPException(status_code=409, detail=t("ingest.local_node_only", locale))
+
+
+# Peer-origin uploads already handed to the pipeline by this process (the
+# row stays 'pending' until Stage 1 starts on it).
+_picked_up: set[str] = set()
+PEER_PICKUP_INTERVAL_SECONDS = 15
+
+
+async def _pick_up_peer_uploads() -> int:
+    """Queue every upload made on the cloud node whose file has arrived
+    here. Duplicates are checked again against this node's archive."""
+    async with _engine().connect() as conn:
+        rows = (
+            await conn.execute(
+                text("""
+                    SELECT bd.id::text AS id, bd.batch_id::text AS batch_id, bd.filename,
+                           bd.source_path, b.tenant_id::text AS tenant_id, t.slug
+                    FROM batch_documents bd
+                    JOIN batches b ON b.id = bd.batch_id
+                    JOIN sdai_tenants t ON t.id = b.tenant_id
+                    WHERE bd.status = 'pending' AND bd.source_path IS NOT NULL
+                      AND bd.origin_node IS DISTINCT FROM :node
+                    ORDER BY bd.ingested_at
+                    LIMIT 100
+                """),
+                {"node": NODE_ID},
+            )
+        ).mappings().all()
+    picked = 0
+    for row in rows:
+        src = sync_files.local_path(row["source_path"])
+        if row["id"] in _picked_up or not src.is_file():
+            continue  # already queued, or its file is still syncing
+        _picked_up.add(row["id"])
+        content_hash = await asyncio.to_thread(_compute_hash, src)
+        duplicate = await _find_duplicate(content_hash, row["slug"])
+        if duplicate:
+            await _update_doc_status(row["id"], "duplicate")
+            continue
+        await _queue.put(
+            (row["id"], row["batch_id"], src, row["filename"], content_hash, row["tenant_id"], row["slug"])
+        )
+        picked += 1
+    return picked
+
+
+async def _peer_upload_pickup_worker() -> None:
+    while True:
+        try:
+            await _pick_up_peer_uploads()
+        except Exception as e:  # noqa: BLE001 - retried next round
+            print(f"[pickup] peer uploads: {_exc_message(e)}", file=sys.stderr)
+        await asyncio.sleep(PEER_PICKUP_INTERVAL_SECONDS)
 
 
 async def _retry_document(
@@ -5220,6 +5368,7 @@ async def retry_page(
     background and return immediately; merges into the parent document
     (even if already finalized) once it completes. Poll
     GET /api/ingest/pages/{batch_document_id} for the result."""
+    _require_processing_node(current_user.locale)
     await _guard_page(page_id, current_user, "edit")
     await _retry_single_page(page_id, current_user.locale)
     return {"ok": True, "status": "processing"}
@@ -5240,6 +5389,7 @@ async def reload_page(
     GET /api/ingest/pages/{batch_document_id} for the result. Requires
     the document to have been ingested after source-tracking was added -
     older documents don't have a recorded source path."""
+    _require_processing_node(current_user.locale)
     await _guard_page(page_id, current_user, "edit")
     await _reload_single_page(page_id, current_user.locale)
     return {"ok": True, "status": "processing"}
@@ -5256,6 +5406,7 @@ async def manual_enter_page(
     """Store a human-entered result for one page (bypassing the VLM) and
     merge it into the parent document. Requires the extraction-editing
     permission (admin, or a reviewer delegated can_edit_extraction)."""
+    _require_processing_node(current_user.locale)
     await _guard_page(page_id, current_user, "edit")
     await _manual_enter_page(page_id, body.fields, current_user.locale)
     return {"ok": True}
@@ -5270,6 +5421,7 @@ async def skip_page(
 ):
     """Mark a page as not relevant (cover sheet, blank, out-of-scope
     layout, ...) so it's excluded from the document's reconciled result."""
+    _require_processing_node(current_user.locale)
     await _guard_page(page_id, current_user, "edit")
     await _skip_page(page_id, current_user.locale)
     return {"ok": True}
@@ -5323,6 +5475,7 @@ async def resume_document(
     await _guard_batch_document(
         batch_document_id, current_user, "edit", "ingest.no_pending_or_failed_pages"
     )
+    _require_processing_node(current_user.locale)
     count = await _resume_document_pages(batch_document_id)
     if count == -1:
         # Not an error - a previous resume for this same document is still

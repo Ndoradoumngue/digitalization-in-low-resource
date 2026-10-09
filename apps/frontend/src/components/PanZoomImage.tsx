@@ -30,6 +30,24 @@ export default function PanZoomImage({ src }: { src: string }) {
 
   const onMouseUp = useCallback(() => { dragRef.current = null; }, []);
 
+  // A file the database references but this server does not have yet
+  // (local/cloud sync still copying it) answers 404 with X-Sync-Pending -
+  // say so instead of showing a broken image.
+  const [failure, setFailure] = useState<"pending" | "missing" | null>(null);
+  const onError = useCallback(() => {
+    fetch(src, { credentials: "include" })
+      .then((res) => setFailure(res.headers.get("X-Sync-Pending") ? "pending" : "missing"))
+      .catch(() => setFailure("missing"));
+  }, [src]);
+
+  if (failure) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-800 text-gray-300 text-sm p-6 text-center">
+        {failure === "pending" ? t("sync.filePending") : t("panZoom.notAvailable")}
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
@@ -46,6 +64,7 @@ export default function PanZoomImage({ src }: { src: string }) {
         src={src}
         alt={t("panZoom.alt")}
         draggable={false}
+        onError={onError}
         className="absolute top-1/2 left-1/2 max-w-none"
         style={{
           transform: `translate(calc(-50% + ${tx}px), calc(-50% + ${ty}px)) scale(${scale})`,

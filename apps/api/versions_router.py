@@ -59,6 +59,7 @@ from ingest_router import (
 from pydantic import BaseModel, Field
 from rate_limit import limiter
 from sqlalchemy import text
+from sync import files as sync_files
 
 router = APIRouter(prefix="/api/db", tags=["versions"])
 
@@ -230,7 +231,7 @@ async def _start_reextraction(
                 },
             )
         ).scalar()
-    await ingest_router._queue.put(
+    await ingest_router._submit(
         (
             str(bd_id),
             batch_id,
@@ -567,10 +568,12 @@ async def download_version(
     if row is None:
         raise HTTPException(status_code=404, detail=t("versions.not_found", locale))
     path = Path(row["file_path"]).resolve()
-    if (
-        not any(path.is_relative_to(root) for root in documents_router._SAFE_FILE_ROOTS)
-        or not path.is_file()
-    ):
+    if not any(path.is_relative_to(root) for root in documents_router._SAFE_FILE_ROOTS):
+        raise HTTPException(status_code=404, detail=t("common.file_not_found", locale))
+    if not path.is_file():
+        async with _engine().connect() as conn:
+            if await sync_files.file_pending(conn, row["file_path"]):
+                raise sync_files.pending_exception(locale)
         raise HTTPException(status_code=404, detail=t("common.file_not_found", locale))
 
     await log_action(

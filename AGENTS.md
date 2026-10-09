@@ -28,6 +28,17 @@ sdai_digitalization/
 │   │   ├── versions_router.py   # /api/db/documents/{t}/{id}/versions|history (GED file versions, history)
 │   │   ├── history.py           # field-history diff + insert - call from every path that changes fields
 │   │   ├── admin_router.py      # /api/admin/* (admin-only)
+│   │   ├── sync/                # local/cloud sync (GED Phase 8)
+│   │   │   ├── capture.py       # changelog triggers, row clocks, SYNC_TABLES, seed, node-local tables
+│   │   │   ├── hlc.py           # hybrid logical clock format/rules (stamps made in SQL by sdai_hlc_now)
+│   │   │   ├── apply.py         # applies a peer's changes (field-level last-writer-wins, conflicts)
+│   │   │   ├── store.py         # cursors, epochs, serve_hello/push/pull, divergence -> reseed
+│   │   │   ├── conflicts.py     # record / audit / resolve sync conflicts
+│   │   │   ├── files.py         # file transfer primitives + file queue
+│   │   │   ├── api.py           # /api/sync/* - node-to-node, HMAC-signed (sync/auth.py)
+│   │   │   ├── admin.py         # /api/admin/sync/* - status, conflicts, files (admin)
+│   │   │   ├── worker.py        # `python -m sync.worker` - the sync service
+│   │   │   └── join.py          # `python -m sync.join` - prepare an empty node to receive a deployment
 │   │   ├── create_admin.py      # Seed script for first admin account
 │   │   └── tests/
 │   │       ├── conftest.py          # fixtures: auth_client, admin_client, mock_db, make_result()
@@ -42,9 +53,17 @@ sdai_digitalization/
 │   │       ├── test_permissions.py  # role/flag/permission-level matrix + leak tests (mocked)
 │   │       ├── test_access_pg.py    # access control on a real PostgreSQL (opt-in: -m pg + TEST_DATABASE_URL)
 │   │       ├── test_versions.py     # versioning/fixity/history helpers (mocked)
-│   │       └── test_versions_pg.py  # versions, history, audit chain on a real PostgreSQL (opt-in: -m pg)
+│   │       ├── test_versions_pg.py  # versions, history, audit chain on a real PostgreSQL (opt-in: -m pg)
+│   │       ├── test_sync_hlc.py / test_sync_api.py / test_sync_worker.py   # sync (mocked)
+│   │       ├── test_sync_pg.py      # change capture on a real PostgreSQL (-m pg)
+│   │       ├── test_sync_twonode_pg.py  # two databases, in-process transport: convergence, conflicts,
+│   │       │                            # files, cloud uploads, restores (-m pg; also uses <db>_peer)
+│   │       └── test_sync_e2e_pg.py  # two real API processes + the real worker over HTTP (-m pg)
 │   └── frontend/       # @sdai/frontend - React 18 + Vite + Tailwind + TanStack Query
 ├── docker-compose.yml
+├── docker-compose.cloud.yml   # cloud node override (no Ollama, ports 80/443) - use with -f both files
+├── scripts/backup/     # backup service image: nightly restic backups + restore drill
+├── RESTORE.md          # restore / rebuild procedures
 ├── Dockerfile.frontend
 ├── setup.sh            # Offline bundle preparation (internet-connected machine)
 ├── install.sh          # Offline install + docker compose up
@@ -103,6 +122,13 @@ docker compose up --build
 # Rebuild only one service
 docker compose up --build api
 docker compose up --build frontend
+
+# Cloud node of a hybrid deployment (no GPU/Ollama)
+docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
+
+# Backups
+docker compose run --rm backup now            # one restic backup now
+docker compose run --rm backup restore-test   # restore drill
 ```
 
 ### Tests
@@ -117,7 +143,8 @@ pytest tests/ -m "not benchmark" -v
 # Benchmark tests only
 pytest tests/ -m benchmark -v
 
-# Access control against a real, THROWAWAY PostgreSQL (the test wipes its schema)
+# Real-PostgreSQL suites against a THROWAWAY server (the tests wipe the schema of
+# <scratch> and of <scratch>_peer, which the sync tests create for the second node)
 TEST_DATABASE_URL=postgresql+asyncpg://user:pw@localhost:5432/scratch pytest tests/ -m pg -v
 
 # From repo root
@@ -150,6 +177,12 @@ pre-commit run --all-files  # run manually
 - CORS is **disabled in Docker** (nginx proxies internally). Enable via `CORS_ORIGINS` env var for local dev only.
 - `log_action()` in `audit.py` is called after state-changing operations. It swallows all exceptions - never let it propagate to callers. The audit log is hash-chained by a database trigger and append-only: never UPDATE/DELETE `sdai_audit_log` rows (the trigger refuses it and the chain verification would flag it).
 - Any code that changes a document's extracted fields must record the change with `history.record_field_changes` (diff with `history.field_changes`) in the same transaction - see `documents_router._record_edit_history`. Files are never overwritten: a new file for a document is a new row in `sdai_document_versions`.
+- **Local/cloud sync** captures every write to a synced table with database triggers - nothing to call from application code. But:
+  - a new control-plane table that must exist on both nodes goes into `sync.capture.SYNC_TABLES` (in foreign-key order, with its primary key; `insert_only` for append-only tables) and into `_SYNCED_STATIC_TABLES` (sync columns + touch trigger); a table that must stay on one server goes into `NODE_LOCAL_TABLES`;
+  - new file-path columns go into `sync.files.FILE_COLUMNS` / `LIST_FILE_COLUMNS` so the files follow their rows;
+  - per-type tables are only created/altered through `_ensure_table` (it emits the ddl event the peer replays);
+  - work that must happen once per deployment (numbering, extraction, scheduled jobs) runs on the local node only (`NODE_ROLE == "local"`; `_require_processing_node()` for routes, `_submit()` instead of `_queue.put`);
+  - writes made on behalf of the peer run with `SET LOCAL sdai.applying_sync = on` (only `sync.apply` does this) - never set it elsewhere, those writes would not be synchronised.
 - `ingest_router.py` owns `_engine()`. Both `auth.py` and `audit.py` import it lazily (inside function bodies) to avoid the circular import: `ingest_router → auth → ingest_router`.
 - **Deduplication**: `_compute_hash(path)` computes SHA-256 in 64 KB chunks; `_find_duplicate(hash)` queries all tables with a `content_hash` column. `_register_and_enqueue()` calls both before touching the queue. Duplicates get `status='duplicate'` in `batch_documents` and are counted in the `duplicates_skipped` field of `GET /api/ingest/status/{batch_id}`.
 - Every per-type document table has a `content_hash TEXT` column with a unique index (`idx_{table_name}_content_hash`).
@@ -217,6 +250,9 @@ pre-commit run --all-files  # run manually
 - Do not import `_engine` from `ingest_router` at module level in `auth.py` or `audit.py` - always import lazily inside the function body to avoid circular imports.
 - Do not let `log_action()` failures propagate - the helper swallows exceptions by design.
 - Keep schemas in `packages/types`, not duplicated in `api-client` or `frontend`.
+- Do not change `DATA_DIR`, the `documents/` mount point or `INGEST_ROOT` on only one node of a hybrid deployment - files are referenced by absolute path and must have the same path on both nodes.
+- Do not assign `record_id` or run extraction on the cloud node (`_next_record_id` raises there).
+- Do not write to synced tables with triggers disabled (`session_replication_role = replica`, `ALTER TABLE ... DISABLE TRIGGER`) - the change would never reach the other node.
 
 ---
 
@@ -230,5 +266,11 @@ pre-commit run --all-files  # run manually
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@localhost:5432/sdai` | asyncpg connection string |
 | `OLLAMA_HOST` | `http://ollama:11434` | Points to containerised Ollama; change to `http://host.docker.internal:11434` for host Ollama |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated allowed origins for local dev |
+| `NODE_ID` / `NODE_ROLE` | `local` / `local` | This server in a hybrid deployment (`local` with GPU, or `cloud`) |
+| `SYNC_NODE_TOKEN` | *(unset)* | Shared secret both nodes sign sync requests with - unset disables sync |
+| `SYNC_PEER_URL` | *(unset)* | Only on the local node: the cloud node's URL |
+| `SYNC_INTERVAL_SECONDS` / `SYNC_MAX_KBPS` | `30` / `0` | Sync cycle period / bandwidth cap (0 = none) |
+| `SYNC_CHANGELOG_RETENTION_DAYS` / `SYNC_ALERT_HOURS` | `30` / `6` | Changelog pruning / admin alert threshold |
+| `BACKUP_SFTP_TARGET`, `RESTIC_PASSWORD`, `BACKUP_NAS_PATH`, `BACKUP_TIME` | *(unset)* | `backup` service (restic) - see RESTORE.md |
 
 Users and roles are stored in PostgreSQL, not in env vars. Use `create_admin.py` to seed the first admin account. `AUTH_USERNAME` and `AUTH_PASSWORD` no longer exist.

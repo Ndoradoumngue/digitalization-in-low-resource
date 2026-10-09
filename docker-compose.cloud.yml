@@ -1,0 +1,43 @@
+# SDAI Digitalisation - cloud node (hybrid local + cloud deployment).
+#
+# The cloud node is a plain VM without GPU: no Ollama. Uploads made there
+# are stored and wait until the local node (which has the GPU) processes
+# them; results come back through sync. Start it with BOTH files:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d --build
+#
+# .env on the cloud node: NODE_ID=<unique, e.g. cloud-do-01>, NODE_ROLE=cloud,
+# SYNC_NODE_TOKEN=<same as the local node>, SYNC_PEER_URL empty, the SAME
+# AUTH_SECRET_KEY as the local node, HTTPS_MODE=letsencrypt. Before the very
+# first start of a fresh cloud node, run once:
+#   docker compose -f docker-compose.yml -f docker-compose.cloud.yml run --rm api python -m sync.join
+# See README "Document management (GED)".
+
+services:
+  # Not started on the cloud node (no profile ever enables it).
+  ollama:
+    profiles: [ "gpu-local-only" ]
+
+  api:
+    environment:
+      - NODE_ROLE=cloud
+      - OLLAMA_HOST=
+      - SYNC_PEER_URL=
+    depends_on: !override
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  sync:
+    environment:
+      - NODE_ROLE=cloud
+      # The cloud never initiates - the local node (behind NAT) does.
+      - SYNC_PEER_URL=
+
+  # Public HTTPS on the standard ports (Let's Encrypt's HTTP-01 challenge
+  # needs port 80) - the base file publishes 8080/8443 for on-site servers.
+  frontend:
+    ports: !override
+      - "80:80"
+      - "443:443"

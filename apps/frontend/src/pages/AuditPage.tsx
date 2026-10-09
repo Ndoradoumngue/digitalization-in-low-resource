@@ -31,6 +31,9 @@ const ACTION_STYLES: Record<string, string> = {
   document_reextracted: "bg-blue-100   text-blue-800",
   integrity_check_completed: "bg-emerald-100 text-emerald-800",
   integrity_chain_broken: "bg-red-200    text-red-900",
+  sync_conflict: "bg-orange-100 text-orange-800",
+  sync_conflict_resolved: "bg-emerald-100 text-emerald-800",
+  sync_files_retried: "bg-gray-100   text-gray-600",
 };
 
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);

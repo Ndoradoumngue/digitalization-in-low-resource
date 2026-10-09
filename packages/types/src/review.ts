@@ -10,6 +10,8 @@ export const ReviewQueueItemSchema = z.object({
   ingested_at:            z.string().nullable(),
   source_image_path:      z.string().nullable(),
   extra_fields:           z.record(z.string(), z.unknown()),
+  // the document has an open local/cloud sync conflict ("conflit de synchronisation")
+  sync_conflict:          z.boolean().optional(),
 });
 
 export const ReviewQueueSchema = z.object({

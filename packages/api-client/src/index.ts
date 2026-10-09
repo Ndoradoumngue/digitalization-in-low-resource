@@ -70,6 +70,15 @@ import {
   type VersionChangeResponse,
   type PermissionLevel,
   type Confidentiality,
+  SyncConflictsResponseSchema,
+  SyncFilesResponseSchema,
+  SyncResolveResponseSchema,
+  SyncStatusSchema,
+  type SyncConflictsResponse,
+  type SyncFilesResponse,
+  type SyncResolution,
+  type SyncResolveResponse,
+  type SyncStatus,
 } from "@sdai/types";
 
 // ── Core fetch helper ─────────────────────────────────────────────────────────
@@ -947,3 +956,45 @@ export async function exportArchive(format: "json" | "sql"): Promise<ArchiveExpo
   const filename = match?.[1] ?? `archive_export_${format}.zip`;
   return { blob: await res.blob(), filename };
 }
+
+// ── Admin: local/cloud sync and backups ──────────────────────────────────────
+
+export async function fetchSyncStatus(): Promise<SyncStatus> {
+  return fetchJson("/api/admin/sync/status", SyncStatusSchema);
+}
+
+export async function fetchSyncConflicts(
+  status: "open" | "resolved" = "open",
+): Promise<SyncConflictsResponse> {
+  return fetchJson(`/api/admin/sync/conflicts?status=${status}`, SyncConflictsResponseSchema);
+}
+
+export async function resolveSyncConflict(
+  id: string,
+  action: SyncResolution,
+  value?: unknown,
+): Promise<SyncResolveResponse> {
+  const res = await fetch(
+    `/api/admin/sync/conflicts/${encodeURIComponent(id)}/resolve`,
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, value: value ?? null }),
+    }),
+  );
+  return jsonOrThrow(res, SyncResolveResponseSchema);
+}
+
+export async function fetchSyncProblemFiles(): Promise<SyncFilesResponse> {
+  return fetchJson("/api/admin/sync/files", SyncFilesResponseSchema);
+}
+
+export async function retrySyncFiles(): Promise<{ retried: number }> {
+  const res = await fetch("/api/admin/sync/files/retry", withAuth({ method: "POST" }));
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as { retried: number };
+}
+

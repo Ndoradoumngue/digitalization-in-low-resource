@@ -5,6 +5,8 @@
 #   db        - PostgreSQL 15      (port 5432 - exposed for local tooling)
 #   ollama    - Ollama VLM server  (internal port 11434, exposed optionally)
 #   api       - FastAPI backend    (internal port 8000, proxied via nginx)
+#   sync      - local/cloud sync worker (same image as api, idle unless configured)
+#   backup    - nightly restic backups off-site (SFTP) and to a NAS (see RESTORE.md)
 #   frontend  - React + Nginx      (public ports 80 → redirect, 443 → HTTPS)
 #
 # Quick start:
@@ -142,6 +144,12 @@ services:
       # Server identity in a hybrid local + cloud deployment (see README, Document management)
       - NODE_ID=${NODE_ID:-local}
       - NODE_ROLE=${NODE_ROLE:-local}
+      # Local/cloud sync - the API serves /api/sync to the peer node when a
+      # token is set (see the sync service below and .env.example); the peer
+      # URL and alert threshold feed the admin Synchronisation page.
+      - SYNC_NODE_TOKEN=${SYNC_NODE_TOKEN:-}
+      - SYNC_PEER_URL=${SYNC_PEER_URL:-}
+      - SYNC_ALERT_HOURS=${SYNC_ALERT_HOURS:-6}
       # Optional - customize the VLM extraction schema for your document
       # corpus without a rebuild. See README.md "Customizing the extraction
       # schema" and .env.example for details.
@@ -163,6 +171,72 @@ services:
     # Uncomment to reach the API directly at http://localhost:8000
     # ports:
     #   - "8000:8000"
+
+  # Local/cloud sync worker (same image as the API). On the node with
+  # SYNC_PEER_URL (the local one) it pushes local changes to the peer and
+  # pulls the peer's every SYNC_INTERVAL_SECONDS; elsewhere it only does
+  # housekeeping. Idle without SYNC_NODE_TOKEN.
+  sync:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    command: [ "python", "-m", "sync.worker" ]
+    volumes:
+      # Same mounts and in-container paths as the API: files referenced by
+      # synced rows are copied between nodes at these exact paths.
+      - ./documents:/app/documents
+      - apidata:/data
+    environment:
+      - AUTH_SECRET_KEY=${AUTH_SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - DATA_DIR=/data
+      - NODE_ID=${NODE_ID:-local}
+      - NODE_ROLE=${NODE_ROLE:-local}
+      - SYNC_NODE_TOKEN=${SYNC_NODE_TOKEN:-}
+      - SYNC_PEER_URL=${SYNC_PEER_URL:-}
+      - SYNC_INTERVAL_SECONDS=${SYNC_INTERVAL_SECONDS:-30}
+      - SYNC_MAX_KBPS=${SYNC_MAX_KBPS:-0}
+      - SYNC_CHANGELOG_RETENTION_DAYS=${SYNC_CHANGELOG_RETENTION_DAYS:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  # Nightly off-site backups (restic: database dump + /data + documents/)
+  # to BACKUP_SFTP_TARGET and optionally BACKUP_NAS_PATH - see RESTORE.md.
+  # Records every run in sdai_backup_runs (admin Synchronisation page).
+  #   docker compose run --rm backup now            one backup right away
+  #   docker compose run --rm backup restore-test   restore drill
+  backup:
+    build:
+      context: ./scripts/backup
+    volumes:
+      - apidata:/data:ro
+      - ./documents:/app/documents:ro
+      # SSH key + known_hosts for the SFTP target (id_ed25519, known_hosts)
+      - ./backup/ssh:/root/.ssh:ro
+      - ${BACKUP_NAS_PATH:-./backup/nas}:/nas
+    environment:
+      - PGHOST=db
+      - PGUSER=${POSTGRES_USER:-sdai}
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - PGDATABASE=${POSTGRES_DB:-sdai}
+      - NODE_ID=${NODE_ID:-local}
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD:-}
+      - BACKUP_SFTP_TARGET=${BACKUP_SFTP_TARGET:-}
+      # The NAS repository is used only when BACKUP_NAS_PATH is set.
+      - BACKUP_NAS_PATH=${BACKUP_NAS_PATH:-}
+      - BACKUP_TIME=${BACKUP_TIME:-02:30}
+      - TZ=${TZ:-Africa/Ndjamena}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build:

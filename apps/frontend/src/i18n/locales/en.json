@@ -32,7 +32,8 @@
     "uploadDocuments": "Upload documents",
     "nodeLocal": "Local server",
     "nodeCloud": "Cloud server",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "sync": "Synchronisation"
   },
   "login": {
     "tagline": "Document extraction platform",
@@ -365,7 +366,9 @@
       "minutes": "{{count}}m ago",
       "hours": "{{count}}h ago",
       "days": "{{count}}d ago"
-    }
+    },
+    "syncConflict": "Sync conflict",
+    "syncConflictHint": "This document was edited on both servers at the same time - settle it on the Synchronisation page"
   },
   "accessAdmin": {
     "header": "Access & Groups",
@@ -491,7 +494,10 @@
       "document_version_restored": "version restored",
       "document_reextracted": "document re-extracted",
       "integrity_check_completed": "integrity check completed",
-      "integrity_chain_broken": "audit chain broken"
+      "integrity_chain_broken": "audit chain broken",
+      "sync_conflict": "Sync conflict",
+      "sync_conflict_resolved": "Sync conflict resolved",
+      "sync_files_retried": "Sync files retried"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -622,7 +628,8 @@
   },
   "panZoom": {
     "alt": "Document",
-    "overlay": "{{pct}}% - scroll to zoom · drag to pan · dbl-click to reset"
+    "overlay": "{{pct}}% - scroll to zoom · drag to pan · dbl-click to reset",
+    "notAvailable": "Image not available"
   },
   "vlm": {
     "fields": {
@@ -713,6 +720,119 @@
       "review": "review",
       "reextract": "re-extraction",
       "sync": "sync"
+    }
+  },
+  "sync": {
+    "header": "Synchronisation & backups",
+    "subtitle": "Local / cloud sync of this server, its conflicts, and the off-site backups",
+    "never": "never",
+    "allGood": "Sync and backups are working - nothing needs attention.",
+    "filePending": "This file is still being synchronised from the other server - try again shortly.",
+    "alerts": {
+      "sync_down": "Sync has not succeeded for more than {{hours}} h (last success: {{since}}).",
+      "backup_failed": "The last backup failed (last successful one: {{since}}).",
+      "backup_not_configured": "No off-site backup is configured (BACKUP_SFTP_TARGET).",
+      "backup_stale": "No backup for more than 36 h (last one: {{since}}).",
+      "files_failed": "{{count}} file(s) could not be synchronised.",
+      "conflicts_open": "{{count}} sync conflict(s) waiting for a decision."
+    },
+    "node": {
+      "heading": "This server",
+      "id": "Node",
+      "role": "Role",
+      "sync": "Sync",
+      "enabled": "enabled",
+      "disabled": "disabled (no SYNC_NODE_TOKEN)",
+      "peer": "Peer",
+      "lastSuccess": "Last successful sync",
+      "failures": "Failed attempts in a row",
+      "passive": "Mode",
+      "passiveHint": "waits for the local server, which drives the sync",
+      "joinPending": "Joined a deployment - waiting for the first sync to bring its data."
+    },
+    "peers": {
+      "heading": "Peers",
+      "none": "No peer has synchronised with this server yet.",
+      "node": "Peer",
+      "lastContact": "Last contact",
+      "lastPush": "Last sent",
+      "lastPull": "Last received",
+      "pending": "Changes not sent yet"
+    },
+    "files": {
+      "heading": "Files",
+      "pending": "To transfer",
+      "pendingMb": "Size to transfer",
+      "waiting": "Waiting for the source",
+      "failed": "Failed",
+      "passiveHint": "Transfers are driven by the local server; a missing file shows as \"being synchronised\" until it arrives.",
+      "show": "Show the files",
+      "hide": "Hide the files",
+      "retry": "Retry",
+      "status": {
+        "failed": "failed",
+        "waiting": "waiting",
+        "pending": "pending",
+        "done": "done"
+      },
+      "direction": {
+        "push": "to send",
+        "fetch": "to receive"
+      }
+    },
+    "conflicts": {
+      "heading": "Sync conflicts",
+      "help": "A field edited on both servers at the same time: the latest edit was kept everywhere, the other value is kept here. Confirm, restore the other value or type the right one. Changes that could not be applied can be retried once their cause is fixed.",
+      "tab": {
+        "open": "To settle",
+        "resolved": "Resolved"
+      },
+      "none": "Nothing here.",
+      "kind": {
+        "field": "Same field edited on both servers",
+        "unique_violation": "Duplicate (already exists here)",
+        "missing_parent": "Missing linked record",
+        "unknown_table": "Unknown table",
+        "unknown_column": "Unknown column",
+        "apply_failed": "Could not be applied",
+        "bad_pk": "Invalid change",
+        "bad_op": "Invalid change",
+        "bad_hlc": "Invalid change",
+        "bad_change": "Invalid change",
+        "bad_ddl": "Invalid change"
+      },
+      "localValue": "Value on this server",
+      "remoteValue": "Value from {{node}}",
+      "kept": "kept",
+      "keepLocal": "Keep this server's value",
+      "keepRemote": "Keep the other value",
+      "manual": "Enter the value…",
+      "manualValue": "Correct value",
+      "retry": "Retry",
+      "dismiss": "Dismiss",
+      "resolution": {
+        "keep_local": "This server's value kept",
+        "keep_remote": "Other value kept",
+        "manual": "Value entered by hand",
+        "retry": "Applied on retry",
+        "dismiss": "Dismissed",
+        "superseded": "Settled on the other server"
+      }
+    },
+    "backups": {
+      "heading": "Backups",
+      "lastSuccess": "Last successful backup: {{when}}",
+      "none": "No backup has run on this server yet.",
+      "status": {
+        "success": "OK",
+        "failed": "Failed",
+        "not_configured": "Not configured"
+      },
+      "target": {
+        "sftp": "Off-site (SFTP)",
+        "nas": "NAS"
+      },
+      "help": "Nightly encrypted backups with restic (30 daily + 12 monthly). Sync is not a backup - see RESTORE.md to restore."
     }
   }
 }

@@ -2,7 +2,7 @@
 
 A full-stack document digitalization and electronic document management system (GED / EDMS) for low-resource settings. It ingests scanned documents, extracts structured fields with a vision-language model (VLM) running entirely on-premise, routes results through a confidence-based review workflow, and files every document in a searchable, access-controlled, auditable archive - with several ministries or departments isolated on one installation.
 
-It is designed for places where power and internet are unreliable: everything runs offline on a local server, and the roadmap adds an automatically synchronized cloud copy so authorized users can reach the archive from anywhere (see [Document management (GED)](#document-management-ged)).
+It is designed for places where power and internet are unreliable: everything runs offline on a local server, and an optional cloud copy, synchronized automatically whenever the link is up, lets authorized users reach the archive from anywhere (see [Document management (GED)](#document-management-ged)).
 
 ---
 
@@ -36,19 +36,29 @@ On top of the extraction pipeline, the platform is being extended into a complet
 | Search | French full-text search across every extracted field, with filters |
 | Versioning & traceability | File versions with restore (history never rewritten), optional re-extraction of a new version, before/after history of every field change, view/download logging |
 | Integrity & audit | Original and every file version kept and SHA-256-verified (scheduled fixity check); tamper-evident audit log (hash-chained per server, append-only, verifiable on demand) |
+| Hybrid local + cloud | The local server stays primary and works offline; a cloud copy (standard VM at DigitalOcean or AWS, no GPU) is synchronized both ways automatically - field-level merge, conflicts flagged for a decision and never lost, files copied, documents uploaded remotely processed by the local GPU, restored or rebuilt servers catch up by themselves; admin Synchronisation page with alerts |
+| Backups | Nightly encrypted off-site backups (restic over SFTP, optional NAS copy, 30 daily + 12 monthly) with a restore drill - see [RESTORE.md](./RESTORE.md) |
 | Export | Full archive export (data + files, JSON/SQL) and per-document export (JSON/SQL/CSV) |
 | Interface | French / English |
+
+### Hybrid local + cloud deployment
+
+The local server runs the standard stack; the cloud node runs the same code with
+`docker compose -f docker-compose.yml -f docker-compose.cloud.yml` (no Ollama, public HTTPS on 80/443).
+Both need the same `AUTH_SECRET_KEY` and `SYNC_NODE_TOKEN`, different `NODE_ID`s, NTP, and the same
+in-container paths; only the local node sets `SYNC_PEER_URL` (it drives the sync - the cloud can't reach
+a server behind the office NAT). A fresh cloud node is prepared once with `python -m sync.join` before its
+first start. All settings are described in `.env.example` ("Local/cloud sync", "Off-site backups");
+restore and rebuild procedures are in [RESTORE.md](./RESTORE.md).
 
 ### Groundwork in place
 
 - Lifecycle, confidentiality, version, retention, legal-hold and check-out fields on every document; trashed and destroyed documents are already excluded from every list, search, queue and detail view.
-- Every change is stamped with the time and the server it was made on, and each server identifies itself (`NODE_ID`, `NODE_ROLE`) - the basis for local/cloud synchronization.
 
 ### Roadmap
 
 | Area | Planned |
 |---|---|
-| Hybrid local + cloud | Local server stays primary and works offline; a cloud copy (standard VM, no GPU) is synchronized both ways automatically; conflicts are flagged, never lost; documents uploaded remotely are processed by the local GPU; encrypted off-site backups |
 | Classification | Hierarchical classification scheme (*plan de classement*), tags, automatic filing, link suggestions |
 | Search | Full-text search inside the OCR text of every page, with highlighted snippets |
 | Sharing & export | Traceable download of originals, expiring/password-protected share links, selective export with integrity manifest |
