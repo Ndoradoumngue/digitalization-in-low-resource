@@ -435,6 +435,12 @@ from documents_router import router as documents_router
 
 app.include_router(documents_router)
 
+# ── Document versions / history router ───────────────────────────────────────
+
+from versions_router import router as versions_router
+
+app.include_router(versions_router)
+
 # ── Review queue router ───────────────────────────────────────────────────────
 
 from review_router import router as review_router

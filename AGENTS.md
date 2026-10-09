@@ -25,6 +25,8 @@ sdai_digitalization/
 │   │   ├── ingest_router.py     # /api/ingest/* + _engine() + DDL helpers + SHA-256 dedup
 │   │   ├── documents_router.py  # /api/db/*
 │   │   ├── review_router.py     # /api/review/*
+│   │   ├── versions_router.py   # /api/db/documents/{t}/{id}/versions|history (GED file versions, history)
+│   │   ├── history.py           # field-history diff + insert - call from every path that changes fields
 │   │   ├── admin_router.py      # /api/admin/* (admin-only)
 │   │   ├── create_admin.py      # Seed script for first admin account
 │   │   └── tests/
@@ -38,7 +40,9 @@ sdai_digitalization/
 │   │       ├── test_rate_limit.py   # SlowAPI key builder
 │   │       ├── test_review.py       # approve, reject, flag, count
 │   │       ├── test_permissions.py  # role/flag/permission-level matrix + leak tests (mocked)
-│   │       └── test_access_pg.py    # access control on a real PostgreSQL (opt-in: -m pg + TEST_DATABASE_URL)
+│   │       ├── test_access_pg.py    # access control on a real PostgreSQL (opt-in: -m pg + TEST_DATABASE_URL)
+│   │       ├── test_versions.py     # versioning/fixity/history helpers (mocked)
+│   │       └── test_versions_pg.py  # versions, history, audit chain on a real PostgreSQL (opt-in: -m pg)
 │   └── frontend/       # @sdai/frontend - React 18 + Vite + Tailwind + TanStack Query
 ├── docker-compose.yml
 ├── Dockerfile.frontend
@@ -144,7 +148,8 @@ pre-commit run --all-files  # run manually
 - Every query or check on a document goes through `documents_router._access_where_clause(table, user, permission)` / `_document_visible` / `_require_document_permission` with the level the action needs (`read`, `download`, `edit`) - never filter visibility in Python. Cached endpoints whose answer depends on visibility must be cleared (`_ACCESS_CACHE_NAMESPACES`) when grants, confidentiality or series change.
 - Auth uses httpOnly cookies (`access_token=Bearer <jwt>`). No Authorization headers. Users are stored in PostgreSQL (`sdai_users`); JWT `jti` blocklist in `sdai_token_blocklist`.
 - CORS is **disabled in Docker** (nginx proxies internally). Enable via `CORS_ORIGINS` env var for local dev only.
-- `log_action()` in `audit.py` is called after state-changing operations. It swallows all exceptions - never let it propagate to callers.
+- `log_action()` in `audit.py` is called after state-changing operations. It swallows all exceptions - never let it propagate to callers. The audit log is hash-chained by a database trigger and append-only: never UPDATE/DELETE `sdai_audit_log` rows (the trigger refuses it and the chain verification would flag it).
+- Any code that changes a document's extracted fields must record the change with `history.record_field_changes` (diff with `history.field_changes`) in the same transaction - see `documents_router._record_edit_history`. Files are never overwritten: a new file for a document is a new row in `sdai_document_versions`.
 - `ingest_router.py` owns `_engine()`. Both `auth.py` and `audit.py` import it lazily (inside function bodies) to avoid the circular import: `ingest_router → auth → ingest_router`.
 - **Deduplication**: `_compute_hash(path)` computes SHA-256 in 64 KB chunks; `_find_duplicate(hash)` queries all tables with a `content_hash` column. `_register_and_enqueue()` calls both before touching the queue. Duplicates get `status='duplicate'` in `batch_documents` and are counted in the `duplicates_skipped` field of `GET /api/ingest/status/{batch_id}`.
 - Every per-type document table has a `content_hash TEXT` column with a unique index (`idx_{table_name}_content_hash`).

@@ -8,6 +8,8 @@ import {
   fetchGroups,
   removeUserFromGroup,
   runIntegrityCheck,
+  fetchLastIntegrityRun,
+  verifyAuditChain,
   updateAdminUser,
   updateUserAccessManager,
   updateUserExtractionEditor,
@@ -111,9 +113,22 @@ export function useRemoveUserFromGroup() {
 }
 
 export function useRunIntegrityCheck() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: runIntegrityCheck,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["integrity-last-run"] }),
   });
+}
+
+export function useLastIntegrityRun() {
+  return useQuery({
+    queryKey: ["integrity-last-run"],
+    queryFn: fetchLastIntegrityRun,
+  });
+}
+
+export function useVerifyAuditChain() {
+  return useMutation({ mutationFn: verifyAuditChain });
 }
 
 export function useExportArchive() {

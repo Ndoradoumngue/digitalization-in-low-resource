@@ -88,7 +88,12 @@
     "loadError": "Échec du chargement du document.",
     "page": "Page {{n}}",
     "viewOriginalPdf": "Voir le PDF original ↗",
-    "noImage": "Aucune image disponible"
+    "noImage": "Aucune image disponible",
+    "tabs": {
+      "record": "Fiche",
+      "versions": "Versions",
+      "history": "Historique"
+    }
   },
   "fields": {
     "title": "Champs",
@@ -375,7 +380,7 @@
     },
     "integrity": {
       "heading": "Vérification de fixité / intégrité",
-      "description": "Vérifie que le(s) fichier(s) de chaque document existe(nt) toujours sur le disque, et revérifie les empreintes de contenu lorsqu'un original non modifié est disponible. S'exécute automatiquement chaque semaine - utilisez ceci pour la lancer à la demande.",
+      "description": "Vérifie que les fichiers de chaque document et chaque version de fichier existent toujours sur le disque et correspondent toujours à leur empreinte, et que la chaîne d'empreintes du journal d'audit est intacte. S'exécute automatiquement chaque semaine - utilisez ce bouton pour la lancer à la demande.",
       "running": "Exécution…",
       "run": "Lancer la vérification d'intégrité",
       "checked": "Vérifiés",
@@ -383,7 +388,26 @@
       "mismatched": "Non concordants",
       "missing": "Manquants",
       "failuresNotePrefix": "Les échecs sont enregistrés dans le journal d'audit sous forme d'entrées ",
-      "failuresNoteSuffix": "."
+      "failuresNoteSuffix": ".",
+      "versionsChecked": "Versions vérifiées",
+      "versionsOk": "Versions OK",
+      "verifyChain": "Vérifier la chaîne d'audit",
+      "lastRun": "Dernière vérification : {{date}} ({{by}})",
+      "scheduled": "planifiée",
+      "neverRun": "Aucune vérification n'a encore été exécutée.",
+      "chainHeading": "Chaîne d'empreintes du journal d'audit",
+      "chainOk": "Intacte - {{count}} entrées vérifiées",
+      "chainBroken": "Le journal d'audit a été altéré",
+      "chainPosition": "nœud {{node}}, entrée n°{{seq}}",
+      "chainReason": {
+        "missing_rows": "des entrées ont été supprimées",
+        "prev_hash_mismatch": "une entrée n'est plus liée à la précédente",
+        "row_altered": "une entrée a été modifiée",
+        "truncated": "les entrées les plus récentes ont été supprimées",
+        "head_rewritten": "la chaîne a été recalculée après une modification",
+        "unchained": "des entrées ont été insérées hors de la chaîne",
+        "error": "la vérification n'a pas pu s'exécuter"
+      }
     },
     "series": {
       "heading": "Séries (fonds)",
@@ -460,7 +484,14 @@
       "archive_exported": "archive exportée",
       "confidentiality_changed": "confidentialité modifiée",
       "document_access_changed": "niveau d'accès modifié",
-      "user_permissions_changed": "permissions utilisateur modifiées"
+      "user_permissions_changed": "permissions utilisateur modifiées",
+      "document_viewed": "document consulté",
+      "document_downloaded": "document téléchargé",
+      "document_version_added": "version ajoutée",
+      "document_version_restored": "version restaurée",
+      "document_reextracted": "document ré-extrait",
+      "integrity_check_completed": "vérification d'intégrité terminée",
+      "integrity_chain_broken": "chaîne d'audit rompue"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -644,5 +675,44 @@
     "internal": "Interne",
     "confidential": "Confidentiel",
     "secret": "Secret"
+  },
+  "versions": {
+    "heading": "Versions du fichier",
+    "addVersion": "+ Nouvelle version",
+    "current": "courante",
+    "unnamed": "(fichier sans nom)",
+    "open": "Ouvrir",
+    "download": "Télécharger",
+    "restore": "Restaurer",
+    "restoredFrom": "restaurée depuis v{{n}}",
+    "restoreTitle": "Restaurer la version {{n}} ?",
+    "restoreConfirm": "Le fichier de la version {{n}} redevient le fichier courant, sous forme d'une nouvelle version. Rien n'est supprimé - toutes les versions restent dans l'historique.",
+    "restored": "Version {{n}} créée à partir du fichier restauré.",
+    "added": "Version {{n}} ajoutée.",
+    "addedReextracting": "Version {{n}} ajoutée - l'extraction est en cours, les champs seront mis à jour à la fin (les valeurs précédentes restent dans l'historique).",
+    "commentPlaceholder": "Qu'est-ce qui a changé ? (facultatif)",
+    "reextract": "Ré-extraire les champs depuis ce fichier",
+    "reextractHint": "Relance l'extraction dans ce même document. Les valeurs actuelles sont conservées dans l'historique.",
+    "upload": "Téléverser la version",
+    "uploading": "Téléversement…",
+    "cancel": "Annuler",
+    "loading": "Chargement des versions…",
+    "loadError": "Échec du chargement des versions.",
+    "none": "Aucun fichier enregistré pour ce document."
+  },
+  "history": {
+    "fieldChanges": "Modifications des champs",
+    "events": "Événements",
+    "noFieldChanges": "Aucun champ n'a été modifié depuis l'extraction.",
+    "noEvents": "Aucun événement enregistré.",
+    "system": "système",
+    "loading": "Chargement de l'historique…",
+    "loadError": "Échec du chargement de l'historique.",
+    "source": {
+      "edit": "modification",
+      "review": "validation",
+      "reextract": "ré-extraction",
+      "sync": "synchronisation"
+    }
   }
 }

@@ -10,7 +10,9 @@ Endpoints:
   PATCH  /api/admin/users/{user_id}      - role (reviewer/reader), delegated flags, clearance
   POST   /api/admin/users/{user_id}/groups              - add a user to a group
   DELETE /api/admin/users/{user_id}/groups/{group_id}   - remove a user from a group
-  POST   /api/admin/integrity-check      - on-demand fixity check for this tenant
+  POST   /api/admin/integrity-check      - on-demand fixity check for this tenant (+ audit chain)
+  GET    /api/admin/integrity            - last completed integrity check of this tenant
+  GET    /api/admin/integrity/audit-chain - verify the audit log's hash chain now
   GET    /api/admin/export               - full archive export (data + source files) as a zip
 
 All admin role required - group/membership management stays admin-only
@@ -31,7 +33,13 @@ from export_format import insert_statement, serial
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from i18n import t
-from ingest_router import _engine, _run_integrity_check
+from ingest_router import (
+    _audit_chain_check,
+    _chain_summary,
+    _engine,
+    _record_integrity_run,
+    _run_integrity_check,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from starlette.background import BackgroundTask
@@ -348,8 +356,51 @@ async def run_integrity_check(current_user: CurrentUser = Depends(require_admin)
     ingest_router) - re-hashes/verifies every document's referenced file(s)
     for this tenant right now and returns a summary. Each failure is also
     logged as an integrity_check_failed audit entry, same as the
-    background scan, so results are visible in the audit log afterward too."""
-    return await _run_integrity_check(current_user.tenant_slug)
+    background scan, so results are visible in the audit log afterward too.
+    Also verifies the audit log's hash chain (see /integrity/audit-chain)."""
+    counts = await _run_integrity_check(current_user.tenant_slug)
+    chain = await _audit_chain_check()
+    await _record_integrity_run(
+        current_user.tenant_slug, counts, chain, current_user.id, current_user.email
+    )
+    return {**counts, "audit_chain": _chain_summary(chain)}
+
+
+@router.get("/integrity", summary="Last integrity check of this tenant")
+async def last_integrity_check(current_user: CurrentUser = Depends(require_admin)):
+    """The most recent completed check (background or on demand) - its
+    fixity counts and audit-chain verdict - or null when none ran yet."""
+    async with _engine().connect() as conn:
+        row = (
+            await conn.execute(
+                text("""
+                    SELECT created_at, user_email, details FROM sdai_audit_log
+                    WHERE action = 'integrity_check_completed' AND details->>'tenant' = :slug
+                    ORDER BY created_at DESC LIMIT 1
+                """),
+                {"slug": current_user.tenant_slug},
+            )
+        ).mappings().one_or_none()
+    if row is None:
+        return {"last_run": None}
+    details = row["details"] or {}
+    return {
+        "last_run": {
+            "ran_at": serial(row["created_at"]),
+            "ran_by": row["user_email"],
+            "fixity": details.get("fixity"),
+            "audit_chain": details.get("audit_chain"),
+        }
+    }
+
+
+@router.get("/integrity/audit-chain", summary="Verify the audit log's hash chain")
+async def verify_audit_chain(current_user: CurrentUser = Depends(require_admin)):
+    """Re-verify every node's audit chain right now: returns ok, how many
+    entries were checked, each chain's length and head, and the first broken
+    entry (its position only - never another tenant's content). A break is
+    also logged as integrity_chain_broken."""
+    return await _audit_chain_check()
 
 
 # ── Archive export ────────────────────────────────────────────────────────────

@@ -523,10 +523,12 @@ def test_update_document_fields_success(extraction_editor_client, mock_db, monke
         "_get_tables_columns",
         AsyncMock(return_value={"my_table": {"id": "uuid", "reference_number": "text"}}),
     )
-    updated_row = {"id": "doc-1", "reference_number": "REF-002"}
+    updated_row = {"id": "doc-1", "reference_number": "REF-002", "current_version": 2}
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),  # _document_visible
+        make_result(one_or_none={"id": "doc-1", "reference_number": "REF-001"}),  # old row
         make_result(one_or_none=updated_row),  # UPDATE ... RETURNING *
+        make_result(),  # INSERT sdai_field_history
         make_result(),  # log_action
     ]
     resp = extraction_editor_client.patch(
@@ -535,6 +537,15 @@ def test_update_document_fields_success(extraction_editor_client, mock_db, monke
     )
     assert resp.status_code == 200
     assert resp.json()["reference_number"] == "REF-002"
+    calls = mock_db.execute.call_args_list
+    assert "FOR UPDATE" in str(calls[1].args[0])
+    history_sql, history_params = str(calls[3].args[0]), calls[3].args[1]
+    assert "INSERT INTO sdai_field_history" in history_sql
+    assert history_params["field"] == "reference_number"
+    assert (history_params["old"], history_params["new"]) == ('"REF-001"', '"REF-002"')
+    assert history_params["source"] == "edit" and history_params["version"] == 2
+    audit_params = calls[4].args[1]
+    assert '"changes": {"reference_number": {"old": "REF-001", "new": "REF-002"}}' in audit_params["details"]
 
 
 def test_update_document_fields_success_as_admin(admin_client, mock_db, monkeypatch):
@@ -547,6 +558,7 @@ def test_update_document_fields_success_as_admin(admin_client, mock_db, monkeypa
     updated_row = {"id": "doc-1", "reference_number": "REF-003"}
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),
+        make_result(one_or_none=updated_row),  # old row - same value, no history
         make_result(one_or_none=updated_row),
         make_result(),
     ]

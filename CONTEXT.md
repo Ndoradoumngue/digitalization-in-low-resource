@@ -82,6 +82,18 @@ This file captures what has been built, why, and what is known to be incomplete 
 - **Other leak fixes**: links to a document the caller can't see come back anonymous (no id, table, title, type or note); `/api/admin/audit-log` only shows the admin's own tenant (actions by its users or on its tables).
 - **Tests**: `tests/test_permissions.py` (mocked role/flag matrix, clause structure, endpoint levels) and `tests/test_access_pg.py` (23 tests against a real PostgreSQL: listing, search, counts, queue, links, export, images, pages, scoped grants, confidentiality, constraints - opt-in, `TEST_DATABASE_URL=... pytest -m pg`, wipes that database).
 
+### Versioning, Field History and Tamper-Evident Audit (GED Phase 2)
+
+- **File versions** (`sdai_document_versions`, one row per version, never updated or deleted): version 1 is the ingested file - the untouched original, else the original PDF, else the (preprocessed) primary image (no hash then) - written by `_store_extraction` for new documents and backfilled at startup by `_backfill_document_versions`. The document's `current_version` names the live one. Routes in `versions_router.py`: `GET /api/db/documents/{t}/{id}/versions` (read), `POST .../versions` (multipart `file`, `comment`, `reextract`; reviewer/admin with `edit`) stores the file exclusively at `DATA_DIR/uploads/versions/<tenant>/<id>/v<N>_<name>`, `POST .../versions/{n}/restore` (edit) adds a NEW version pointing at version n's file (`restored_from`), `GET .../versions/{n}/file[?inline=true]` (download). Uploading/restoring is refused (409) while someone else holds the check-out lock (`locked_by`/`locked_until`) and (403) on an `archived` document unless the caller manages lifecycle.
+- **Re-extraction**: with `reextract=true` the version's file runs through the normal pipeline as its own upload (batch `source_type='version'`); its `batch_documents` row carries `target_table` / `target_document_id` / `target_version`, so Stage 3 (`_stage3_reextract`) and the per-page merge call `_apply_reextraction`, which updates the SAME document row (fields, confidence, review status, page images, PDF) instead of filing a new one. `document_type` never changes (the row stays in its table; a different detected type is noted in the audit details). A failed run leaves the document untouched. The version upload's pages/images follow the target document's access (`documents_router._upload_match`).
+- **Field history** (`sdai_field_history`: field, old/new value as JSONB, `changed_by`, `change_source` `edit|review|reextract|sync`, `version_no`) written by `history.record_field_changes` in the same transaction as the change: field edits (`edit`), approve with corrections (`review`), version re-extraction and page retry/manual-entry re-merges of an already-filed document (`reextract`, no user for the latter). Only real changes are recorded (`history.field_changes`: "" and NULL are the same, a JSON string equals the same list). `document_fields_edited` / `document_approved` audit details carry `changes: {field: {old, new}}`. `GET .../history` returns field changes + the document's audit events (no IPs; `document_viewed`/`document_downloaded` only for access managers).
+- **Access audit**: `document_viewed` on the detail endpoint, `document_downloaded` on a version download and on `/api/db/image` of any file outside `DATA_DIR/images` (an original), attributed to the named document only when it really references the file. Both are deduplicated per user and document/file over 5 minutes (`cache.first_in_window`: Redis `SET NX EX`, per-process fallback). Also `document_version_added`, `document_version_restored`, `document_reextracted`.
+- **Hash-chained audit log**: `sdai_audit_log` gains `origin_node`, `chain_seq`, `prev_hash`, `row_hash`. The `sdai_audit_chain` BEFORE INSERT trigger (in the database, so `log_action()` is still one INSERT that never raises) takes a per-node advisory lock and sets `chain_seq` = previous + 1, `prev_hash`, and `row_hash = sdai_audit_row_hash(...)` (sha256 over the row's canonical jsonb, created_at as UTC ISO). One chain per node (`NODE_ID`), so the local and cloud logs never fork. `sdai_audit_append_only` refuses UPDATE/DELETE (except chaining legacy rows); the `user_id` FK was dropped (its ON DELETE SET NULL would have rewritten hashed rows). Legacy rows are chained at startup (`_backfill_audit_chain`). `_verify_audit_chain` reports the first break (`missing_rows`, `prev_hash_mismatch`, `row_altered`, `truncated`, `head_rewritten`, `unchained`) and records each chain's verified head in `sdai_audit_chain_heads`, so later removal of the newest rows or a recomputed chain is caught too.
+- **Integrity**: the fixity check also verifies every file in `sdai_document_versions` (each distinct file once, `versions_checked`/`versions_ok`), and the integrity worker / `POST /api/admin/integrity-check` verify the audit chain (logging `integrity_chain_broken`) and record `integrity_check_completed` per tenant. `GET /api/admin/integrity` = last completed check of the tenant, `GET /api/admin/integrity/audit-chain` = verify now.
+- **UI**: `DocumentDetailPage` right pane has tabs Record / Versions / History (`VersionsSection`, `HistorySection`, `hooks/useVersions.ts`); the integrity panel on `AccessAdminPage` shows the last run, version counts and the chain verdict with a "Verify audit chain" button; new actions in `AuditPage`. fr/en.
+- **Tests**: `tests/test_versions.py` (mocked: Stage 3 routing, version fixity, diff, filename sanitizing) and `tests/test_versions_pg.py` (real PostgreSQL, opt-in `-m pg`: backfill, upload/restore/download, lock/archive refusals, re-extraction into the same row, history on edit/review/re-extract/re-merge, view/download audit, chain under concurrency, edited/deleted/truncated rows, legacy chaining, fixity on versions).
+
+### Document Upload & Ingestion
 ### Document Upload & Ingestion
 
 - `POST /api/ingest` - accepts multipart file upload, stores document in PostgreSQL.
@@ -114,7 +126,7 @@ This file captures what has been built, why, and what is known to be incomplete 
 
 ### Audit Log
 
-- `sdai_audit_log` PostgreSQL table: `id`, `user_id`, `user_email`, `action`, `table_name`, `document_id`, `details` (JSONB), `ip_address`, `created_at`.
+- `sdai_audit_log` PostgreSQL table: `id`, `user_id`, `user_email`, `action`, `table_name`, `document_id`, `details` (JSONB), `ip_address`, `created_at`, plus the hash-chain columns `origin_node`, `chain_seq`, `prev_hash`, `row_hash` (append-only, see "Versioning, Field History and Tamper-Evident Audit").
 - 8 action types logged automatically: `document_ingested`, `document_approved`, `document_rejected`, `document_flagged`, `user_login`, `user_logout`, `schema_created`, `schema_altered`.
 - `audit.py` helper: `log_action()` never raises - failures are swallowed to stderr, never affecting callers.
 - `GET /api/admin/audit-log` - admin-only endpoint with pagination (`page`, `page_size`) and filters (`action`, `date_from`, `date_to`, `user_id`). Tenant-scoped: an admin only sees entries by its tenant's users or on its tenant's tables.
@@ -199,6 +211,10 @@ This file captures what has been built, why, and what is known to be incomplete 
 | Trashed rows still count as duplicates | `_find_duplicate` and the admin full export don't apply the live filter yet - decided in GED Phase 6 |
 | Batch list / status visible tenant-wide | `GET /api/ingest/batches` and `/status/{batch_id}` still show every contributor of the tenant all batches (counts, filenames, document types) - the pipeline is shared by design; page contents, images and actions do follow the filed document's access |
 | API keys can no longer steer page extraction | Since GED Phase 1 an API key reaches only upload, presets, batches, status and page listing - retry/reload/skip/cancel/pause/resume need a reviewer |
+| Version files outside the viewer | A new version without re-extraction is stored and downloadable from the Versions tab, but the page viewer keeps showing the pages of the last extracted file |
+| Re-extraction keeps the document type | A version whose extraction detects another document type stays in its table; the detected type is only noted in the `document_reextracted` audit entry |
+| Hard deletes vs. versions/history | Admin hard delete and re-upload replace leave `sdai_document_versions` / `sdai_field_history` rows (and files) behind - GED Phase 6 replaces hard deletes with trash/destruction |
+| Audit chain vs. a DB superuser | The chain shows edits, deletions and truncation, but someone able to rewrite both the log and `sdai_audit_chain_heads` could recompute it undetected - the replicated copy on the other node (GED Phase 8) is the external witness |
 | Audit entries of API keys | API-key actions carry no `sdai_users` id, so the tenant-scoped audit view only shows them when they name one of the tenant's tables |
 
 ---
@@ -221,7 +237,9 @@ apps/api/
   ingest_router.py                  # /api/ingest, dynamic DDL, _engine(), SHA-256 dedup
   documents_router.py               # /api/documents/* browse endpoints
   review_router.py                  # /api/review/* approve/reject/flag
-  admin_router.py                   # /api/admin/audit-log (admin only)
+  admin_router.py                   # /api/admin/* - audit log, users/groups, integrity check + status, export
+  versions_router.py                # /api/db/documents/{t}/{id}/versions|history - file versions, restore, history
+  history.py                        # field-history diff + insert (sdai_field_history), shared by every edit path
   create_admin.py                   # seed script to create/upsert a user within a tenant
   create_tenant.py                  # seed script to create/upsert a tenant (ministry)
   tests/
@@ -236,6 +254,8 @@ apps/api/
     test_review.py                  # /api/review/* approve/reject/flag/count
     test_permissions.py             # GED Phase 1 role/flag/permission-level matrix + leak tests (mocked)
     test_access_pg.py               # GED Phase 1 access control against a real PostgreSQL (opt-in, -m pg)
+    test_versions.py                # GED Phase 2 versioning/fixity/history helpers (mocked)
+    test_versions_pg.py             # GED Phase 2 versions, history, audit chain on a real PostgreSQL (opt-in, -m pg)
 
 apps/frontend/src/
   context/AuthContext.tsx           # global auth state (user, login, logout)
@@ -249,7 +269,7 @@ apps/frontend/src/
   pages/DashboardPage.tsx           # main app shell - sidebar + tab switcher + panels
   pages/UploadPage.tsx              # file upload UI
   pages/DocumentsPage.tsx           # database document browser
-  pages/DocumentDetailPage.tsx      # single document field display
+  pages/DocumentDetailPage.tsx      # single document - tabs Record / Versions / History
   pages/SchemaPage.tsx              # schema inspector
   pages/ReviewPage.tsx              # review queue
   pages/AuditPage.tsx               # audit log (admin only)
@@ -258,6 +278,9 @@ apps/frontend/src/
   components/VlmPanel.tsx
   components/LinksSection.tsx       # "Related documents" panel on DocumentDetailPage
   components/DocumentLinkPicker.tsx # searchable picker for creating a new link
+  components/VersionsSection.tsx    # "Versions" tab: list, open/download, restore, upload (+ re-extract)
+  components/HistorySection.tsx     # "History" tab: field before/after timeline + document events
+  hooks/useVersions.ts              # versions/history queries, upload/restore mutations
   hooks/useDocuments.ts             # TanStack Query hooks for OCR
   hooks/useVlm.ts                   # TanStack Query hooks for VLM
   hooks/useDocumentsDb.ts           # hooks for database document browser
@@ -278,7 +301,8 @@ packages/types/src/
   schema.ts                         # SchemaInfo schemas
   audit.ts                          # AuditLogEntry, AuditLogPage schemas
   links.ts                          # DocumentLink, CreateLinkBody schemas
-  access.ts                         # groups, admin users, grants (scope + permission level)
+  access.ts                         # groups, admin users, grants (scope + permission level), integrity results
+  versions.ts                       # document versions, field history, audit-chain verification
 
 packages/api-client/src/
   index.ts                          # all fetch functions, imageUrl helper, fetchAuditLog()

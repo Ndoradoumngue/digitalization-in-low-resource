@@ -138,3 +138,36 @@ def test_invalidate_cache_no_namespaces_is_noop():
         mock_fc.clear = AsyncMock()
         asyncio.run(invalidate_cache())
         mock_fc.clear.assert_not_awaited()
+
+
+# ── first_in_window (audit dedupe) ────────────────────────────────────────────
+
+
+def test_first_in_window_dedupes_until_expiry(monkeypatch):
+    import asyncio
+
+    import cache
+
+    cache._local_windows.clear()
+    now = [1000.0]
+    monkeypatch.setattr(cache.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(cache.FastAPICache, "get_backend", lambda: object())  # no redis
+    assert asyncio.run(cache.first_in_window("k", 300)) is True
+    assert asyncio.run(cache.first_in_window("k", 300)) is False
+    assert asyncio.run(cache.first_in_window("other", 300)) is True
+    now[0] += 301
+    assert asyncio.run(cache.first_in_window("k", 300)) is True
+
+
+def test_first_in_window_uses_redis_set_nx(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import cache
+
+    backend = MagicMock()
+    backend.redis.set = AsyncMock(side_effect=[True, None])
+    monkeypatch.setattr(cache.FastAPICache, "get_backend", lambda: backend)
+    assert asyncio.run(cache.first_in_window("k", 300)) is True
+    assert asyncio.run(cache.first_in_window("k", 300)) is False
+    backend.redis.set.assert_awaited_with("sdai:window:k", b"1", ex=300, nx=True)

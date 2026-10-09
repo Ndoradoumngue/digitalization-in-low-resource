@@ -9,6 +9,20 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 2 (versioning, field history, tamper-evident audit)
+- File versions per document (`sdai_document_versions`): `GET/POST /api/db/documents/{t}/{id}/versions`, `POST .../versions/{n}/restore` (a restore is a new version pointing at the old file - history is never rewritten), `GET .../versions/{n}/file`. Version 1 is backfilled for every existing document. New files are stored under `DATA_DIR/uploads/versions/<tenant>/<id>/v<N>_<name>` and never overwritten. Uploading/restoring needs `edit` and is refused while another user holds the check-out lock or, for non-archivists, on an archived document.
+- Optional re-extraction of a new version into the same document (`reextract=true`): the pipeline updates the existing row instead of filing a new document; previous values go to the field history.
+- Field history (`sdai_field_history`) with before/after values for field edits, review corrections, re-extraction and page re-merges, written in the same transaction as the change; `GET .../history` (field changes + document events). `document_fields_edited` and `document_approved` audit entries now include the old and new values.
+- Audit events `document_viewed`, `document_downloaded` (version downloads and originals served by `/api/db/image`), deduplicated per user over 5 minutes; `document_version_added`, `document_version_restored`, `document_reextracted`, `integrity_check_completed`, `integrity_chain_broken`.
+- Tamper-evident audit log: every entry is hash-chained per server (`origin_node`, `chain_seq`, `prev_hash`, `row_hash`) by a database trigger; `GET /api/admin/integrity/audit-chain` verifies it and reports the first edited, deleted or missing entry; existing entries are chained at startup. `GET /api/admin/integrity` returns the last completed check.
+- The fixity check also verifies every version file; the scheduled check and `POST /api/admin/integrity-check` also verify the audit chain.
+- UI (fr/en): Record / Versions / History tabs on the document page (upload a version, open, download, restore, field change timeline); integrity panel with last run, version counts and audit-chain status.
+- Tests: `test_versions.py` (mocked) and 41 opt-in real-PostgreSQL tests in `test_versions_pg.py`.
+
+### Changed - GED Phase 2
+- `sdai_audit_log` is append-only (UPDATE/DELETE refused by a trigger) and `user_id` no longer has a foreign key (its `ON DELETE SET NULL` would have altered hashed entries).
+- `/api/db/image` answers for original files are now audited downloads.
+
 ### Added - GED Phase 1 (access rights)
 - Read-only `reader` role (browse, search, download what it can see - never upload, review, edit, file or link) and delegated flags `can_manage_lifecycle` / `can_share`; per-user `clearance` (`public` < `internal` < `confidential` < `secret`). `create_admin.py --role reader`.
 - Access grants by **series** and by **document type** in addition to per document, each with a permission level `read` < `download` < `edit`. Admin endpoints `GET/POST /api/db/grants`; `PATCH /api/db/access/{id}` changes a grant's level; re-granting the same grantee updates its level.

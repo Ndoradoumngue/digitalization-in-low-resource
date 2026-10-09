@@ -24,6 +24,13 @@ const ACTION_STYLES: Record<string, string> = {
   integrity_check_failed: "bg-red-100    text-red-800",
   document_fields_edited: "bg-violet-100 text-violet-800",
   archive_exported: "bg-indigo-100 text-indigo-800",
+  document_viewed: "bg-gray-100   text-gray-600",
+  document_downloaded: "bg-sky-100    text-sky-800",
+  document_version_added: "bg-blue-100   text-blue-800",
+  document_version_restored: "bg-amber-100  text-amber-800",
+  document_reextracted: "bg-blue-100   text-blue-800",
+  integrity_check_completed: "bg-emerald-100 text-emerald-800",
+  integrity_chain_broken: "bg-red-200    text-red-900",
 };
 
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);

@@ -15,6 +15,14 @@ Actions logged:
   document_fields_edited
   archive_exported
   schema_created     schema_altered
+  document_viewed    document_downloaded            (deduped, see cache.first_in_window)
+  document_version_added  document_version_restored  document_reextracted
+  integrity_check_completed  integrity_chain_broken
+
+Every row is chained (chain_seq / prev_hash / row_hash, one chain per
+origin_node) by the sdai_audit_chain trigger in the database itself - see
+ingest_router._AUDIT_CHAIN_DDL - so this helper stays a single INSERT.
+The table is append-only (UPDATE/DELETE are refused by a trigger).
 """
 
 import json

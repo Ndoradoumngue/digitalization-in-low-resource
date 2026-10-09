@@ -28,6 +28,9 @@ BROWSE = [
     ("GET", "/api/review/count", None),
     ("GET", "/api/review/queue", None),
     ("GET", "/api/documents", None),
+    ("GET", f"{DOC}/versions", None),
+    ("GET", f"{DOC}/versions/1/file", None),
+    ("GET", f"{DOC}/history", None),
 ]
 
 # Document actions - admin and reviewer only.
@@ -54,6 +57,7 @@ ACT = [
     ),
     ("DELETE", "/api/db/links/00000000-0000-0000-0000-0000000000dd", None),
     ("PATCH", f"{DOC}/series", {"series_id": None}),
+    ("POST", f"{DOC}/versions/1/restore", {}),
     ("POST", f"{PAGE}/retry", None),
     ("POST", f"{PAGE}/reload", None),
     ("POST", f"{PAGE}/skip", None),
@@ -87,6 +91,20 @@ def _call(client, method, path, body):
 def test_reader_is_read_only(reader_client, mock_db, method, path, body):
     resp = _call(reader_client, method, path, body)
     assert resp.status_code == 403, (method, path, resp.status_code)
+
+
+@pytest.mark.parametrize("client_name", ["reader_client", "api_key_client"])
+def test_new_version_upload_is_for_actors_only(request, client_name, mock_db):
+    client = request.getfixturevalue(client_name)
+    resp = client.post(f"{DOC}/versions", files={"file": ("v.png", b"\x89PNG\r\n\x1a\n", "image/png")})
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "path", ["/api/admin/integrity", "/api/admin/integrity/audit-chain"]
+)
+def test_integrity_status_is_admin_only(reader_client, mock_db, path):
+    assert reader_client.get(path).status_code == 403
 
 
 def test_reader_cannot_upload(reader_client, mock_db):
@@ -567,11 +585,19 @@ def test_image_with_document_hint_uses_fast_path(
     reader_client, mock_db, monkeypatch, tmp_path
 ):
     f = _image_env(monkeypatch, tmp_path)
-    mock_db.execute.side_effect = [make_result(one_or_none=(1,))]
+    mock_db.execute.side_effect = [
+        make_result(one_or_none=(1,)),  # fast path: readable and references the file
+        make_result(one_or_none=(1,)),  # same check, to attribute the download
+        make_result(),  # log_action
+    ]
     resp = reader_client.get(f"/api/db/image?path={f}&table={T}&id={BD}")
     assert resp.status_code == 200
     sql = str(mock_db.execute.call_args_list[0].args[0])
     assert "id = CAST(:__doc_id AS uuid)" in sql and "sdai_document_access" in sql
+    # Not a page image - serving the original is an audited download.
+    audit = mock_db.execute.call_args_list[2].args[1]
+    assert audit["action"] == "document_downloaded"
+    assert (audit["tname"], str(audit["did"])) == (T, BD)
 
 
 def test_pipeline_image_hidden_from_reader(

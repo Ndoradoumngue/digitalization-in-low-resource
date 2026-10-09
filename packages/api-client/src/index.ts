@@ -58,6 +58,16 @@ import {
   type User,
   ScopedGrantsResponseSchema,
   type ScopedGrantsResponse,
+  AuditChainResultSchema,
+  DocumentHistoryResponseSchema,
+  DocumentVersionsResponseSchema,
+  LastIntegrityRunSchema,
+  VersionChangeResponseSchema,
+  type AuditChainResult,
+  type DocumentHistoryResponse,
+  type DocumentVersionsResponse,
+  type LastIntegrityRun,
+  type VersionChangeResponse,
   type PermissionLevel,
   type Confidentiality,
 } from "@sdai/types";
@@ -804,6 +814,90 @@ export async function runIntegrityCheck(): Promise<IntegrityCheckResult> {
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   return IntegrityCheckResultSchema.parse(await res.json());
+}
+
+export async function fetchLastIntegrityRun(): Promise<LastIntegrityRun> {
+  return fetchJson("/api/admin/integrity", LastIntegrityRunSchema);
+}
+
+export async function verifyAuditChain(): Promise<AuditChainResult> {
+  return fetchJson("/api/admin/integrity/audit-chain", AuditChainResultSchema);
+}
+
+// ── Document versions and history ────────────────────────────────────────────
+
+function documentPath(tableName: string, id: string): string {
+  return `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`;
+}
+
+async function jsonOrThrow<T>(res: Response, schema: { parse: (data: unknown) => T }): Promise<T> {
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return schema.parse(await res.json());
+}
+
+export async function fetchDocumentVersions(
+  tableName: string,
+  id: string,
+): Promise<DocumentVersionsResponse> {
+  return fetchJson(`${documentPath(tableName, id)}/versions`, DocumentVersionsResponseSchema);
+}
+
+export interface VersionChangeOptions {
+  comment?: string;
+  /** Also run the file through extraction into this same document. */
+  reextract?: boolean;
+}
+
+export async function uploadDocumentVersion(
+  tableName: string,
+  id: string,
+  file: File,
+  { comment, reextract = false }: VersionChangeOptions = {},
+): Promise<VersionChangeResponse> {
+  const fd = new FormData();
+  fd.append("file", file);
+  if (comment) fd.append("comment", comment);
+  fd.append("reextract", String(reextract));
+  const res = await fetch(`${documentPath(tableName, id)}/versions`, withAuth({ method: "POST", body: fd }));
+  return jsonOrThrow(res, VersionChangeResponseSchema);
+}
+
+export async function restoreDocumentVersion(
+  tableName: string,
+  id: string,
+  versionNo: number,
+  { comment, reextract = false }: VersionChangeOptions = {},
+): Promise<VersionChangeResponse> {
+  const res = await fetch(
+    `${documentPath(tableName, id)}/versions/${versionNo}/restore`,
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: comment || null, reextract }),
+    }),
+  );
+  return jsonOrThrow(res, VersionChangeResponseSchema);
+}
+
+/** URL of one version's file - `inline` opens it in the browser instead of
+ * downloading it. Either way the server logs a document_downloaded event. */
+export function documentVersionFileUrl(
+  tableName: string,
+  id: string,
+  versionNo: number,
+  inline = false,
+): string {
+  return `${documentPath(tableName, id)}/versions/${versionNo}/file${inline ? "?inline=true" : ""}`;
+}
+
+export async function fetchDocumentHistory(
+  tableName: string,
+  id: string,
+): Promise<DocumentHistoryResponse> {
+  return fetchJson(`${documentPath(tableName, id)}/history`, DocumentHistoryResponseSchema);
 }
 
 // ── Document export ──────────────────────────────────────────────────────────

@@ -173,7 +173,9 @@ def test_patch_review_approve(extraction_editor_client, mock_db, monkeypatch):
     }
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),  # _document_visible check
-        make_result(one_or_none=updated_row),  # UPDATE RETURNING *
+        make_result(one_or_none={"id": "doc-1", "reference_number": None}),  # old row
+        make_result(one_or_none={**updated_row, "reference_number": "REF-001"}),  # UPDATE RETURNING *
+        make_result(),  # INSERT sdai_field_history
         make_result(),  # log_action
     ]
 
@@ -184,6 +186,9 @@ def test_patch_review_approve(extraction_editor_client, mock_db, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["review_status"] == "approved"
+    history = mock_db.execute.call_args_list[3].args
+    assert "INSERT INTO sdai_field_history" in str(history[0])
+    assert history[1]["source"] == "review" and history[1]["new"] == '"REF-001"'
 
 
 def test_patch_review_approve_field_edit_requires_permission(auth_client, mock_db, monkeypatch):

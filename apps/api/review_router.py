@@ -19,7 +19,9 @@ from documents_router import (
     _access_where_clause,
     _build_field_set_clause,
     _delete_links_for_document,
+    _record_edit_history,
     _require_document_permission,
+    _row_for_update,
     _extra_cols,
     _get_tables_columns,
     _sanitize,
@@ -275,10 +277,18 @@ async def patch_review(
             )
             params = {"doc_id": doc_id, "reviewed_by_id": current_user.id}
 
+        # Corrected values: lock the row first so the history records
+        # exactly what this approval replaced.
+        old = await _row_for_update(conn, safe, doc_id) if body.action == "approve" and editable else None
         result = await conn.execute(text(sql), params)
+        row = result.mappings().one_or_none()
+        changes = (
+            await _record_edit_history(conn, current_user, safe, doc_id, old, row, editable.keys(), "review")
+            if old is not None
+            else {}
+        )
         await conn.commit()
 
-    row = result.mappings().one_or_none()
     if row is None:
         raise HTTPException(
             status_code=404, detail=t("common.document_not_found", current_user.locale)
@@ -300,6 +310,7 @@ async def patch_review(
     audit_details: dict = {"confidence": dict(row).get("confidence")}
     if body.action == "approve":
         audit_details["fields_changed"] = list(editable.keys())
+        audit_details["changes"] = changes
     await log_action(
         action=audit_action,
         user_id=current_user.id,

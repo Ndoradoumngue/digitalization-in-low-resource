@@ -5,6 +5,8 @@ import hashlib
 import uuid as _uuid_mod
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import ingest_router
 from conftest import REVIEWER, TENANT_ID, TENANT_SLUG, make_result
 
@@ -427,6 +429,7 @@ def test_store_extraction_grants_uploader_when_auto_approved(mock_db, monkeypatc
     mock_db.execute.side_effect = [
         make_result(scalar="uploader-uuid-1"),  # SELECT created_by FROM batches
         make_result(scalar="doc-uuid-1"),  # INSERT ... RETURNING id
+        make_result(rows=[]),  # version 1 lookup (_insert_first_version)
         make_result(),  # INSERT sdai_document_access (grant)
         make_result(),  # log_action's audit INSERT
     ]
@@ -441,8 +444,8 @@ def test_store_extraction_grants_uploader_when_auto_approved(mock_db, monkeypatc
             TENANT_SLUG,
         )
     )
-    assert mock_db.execute.await_count == 4
-    grant_sql = str(mock_db.execute.call_args_list[2][0][0])
+    assert mock_db.execute.await_count == 5
+    grant_sql = str(mock_db.execute.call_args_list[3][0][0])
     assert "INSERT INTO sdai_document_access" in grant_sql
 
 
@@ -456,6 +459,7 @@ def test_store_extraction_no_grant_when_review_required(mock_db, monkeypatch):
     mock_db.execute.side_effect = [
         make_result(scalar="uploader-uuid-1"),  # SELECT created_by FROM batches
         make_result(scalar="doc-uuid-1"),  # INSERT ... RETURNING id
+        make_result(rows=[]),  # version 1 lookup (_insert_first_version)
         make_result(),  # log_action's audit INSERT
     ]
     asyncio.run(
@@ -469,7 +473,7 @@ def test_store_extraction_no_grant_when_review_required(mock_db, monkeypatch):
             TENANT_SLUG,
         )
     )
-    assert mock_db.execute.await_count == 3
+    assert mock_db.execute.await_count == 4
     for call in mock_db.execute.call_args_list:
         assert "sdai_document_access" not in str(call[0][0])
 
@@ -484,6 +488,7 @@ def test_store_extraction_no_grant_when_no_uploader(mock_db, monkeypatch):
     mock_db.execute.side_effect = [
         make_result(scalar=None),  # SELECT created_by FROM batches - none
         make_result(scalar="doc-uuid-1"),  # INSERT ... RETURNING id
+        make_result(rows=[]),  # version 1 lookup (_insert_first_version)
         make_result(),  # log_action's audit INSERT
     ]
     asyncio.run(
@@ -497,12 +502,21 @@ def test_store_extraction_no_grant_when_no_uploader(mock_db, monkeypatch):
             TENANT_SLUG,
         )
     )
-    assert mock_db.execute.await_count == 3
+    assert mock_db.execute.await_count == 4
     for call in mock_db.execute.call_args_list:
         assert "sdai_document_access" not in str(call[0][0])
 
 
 # ── _run_integrity_check ──────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _no_version_pass(request, monkeypatch):
+    """The per-document fixity tests below script every DB call - the
+    version-file pass (_check_version_files) has its own tests, in
+    test_versions.py, and is stubbed out here."""
+    if request.node.name.startswith("test_integrity_check"):
+        monkeypatch.setattr(ingest_router, "_check_version_files", AsyncMock())
 
 
 def test_integrity_check_no_tables_returns_zero_counts(mock_db):
@@ -818,6 +832,7 @@ def test_store_extraction_records_original(mock_db, monkeypatch, tmp_path):
         make_result(scalar="uploader-uuid-1"),  # SELECT created_by FROM batches
         make_result(scalar=upload),  # SELECT source_path FROM batch_documents
         make_result(scalar="doc-uuid-1"),  # INSERT ... RETURNING id
+        make_result(rows=[]),  # version 1 lookup (_insert_first_version)
         make_result(),  # log_action's audit INSERT
     ]
     asyncio.run(

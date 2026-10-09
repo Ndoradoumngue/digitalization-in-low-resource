@@ -9,3 +9,4 @@ export * from "./audit";
 export * from "./links";
 export * from "./access";
 export * from "./series";
+export * from "./versions";

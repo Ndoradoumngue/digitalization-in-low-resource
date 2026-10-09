@@ -12,6 +12,8 @@ import AccessSection from "../components/AccessSection";
 import ConfidentialityBadge, { asConfidentiality } from "../components/ConfidentialityBadge";
 import { useDocumentPermissions } from "../hooks/useAccess";
 import SeriesSection from "../components/SeriesSection";
+import VersionsSection from "../components/VersionsSection";
+import HistorySection from "../components/HistorySection";
 
 // The document-management record view: presents a document the way a real
 // records system would - every extracted field as a labeled entry, no QA
@@ -43,6 +45,10 @@ const SKIP_FIELDS = new Set([
   "locked_by", "locked_until", "updated_at", "origin_node", "hlc",
 ]);
 
+// Right-pane tabs: the record itself, its file versions, its change history.
+const TABS = ["record", "versions", "history"] as const;
+type Tab = (typeof TABS)[number];
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function DocumentDetailPage() {
@@ -63,6 +69,7 @@ export default function DocumentDetailPage() {
   const pdfPath = data?.source_pdf_path ? String(data.source_pdf_path) : null;
 
   const [activePage, setActivePage] = useState(0);
+  const [tab, setTab] = useState<Tab>("record");
   useEffect(() => { setActivePage(0); }, [tableName, id]);
 
   // Key press for prev/next
@@ -215,13 +222,44 @@ export default function DocumentDetailPage() {
 
             {/* Right - the record itself (45%) */}
             <div className="flex-1 overflow-y-auto px-6 py-5">
-              <h1 className="text-lg font-bold text-gray-900 mb-4">
+              <h1 className="text-lg font-bold text-gray-900 mb-3">
                 {typeof data?.document_type === "string" && data.document_type
                   ? data.document_type
                   : tableName.replace(/_/g, " ")}
               </h1>
 
-              {tableName && id && (
+              <div role="tablist" className="flex gap-1 border-b border-gray-200 mb-4">
+                {TABS.map((name) => (
+                  <button
+                    key={name}
+                    role="tab"
+                    aria-selected={tab === name}
+                    onClick={() => setTab(name)}
+                    className={`px-3 py-1.5 -mb-px text-sm font-medium border-b-2 transition-colors ${
+                      tab === name
+                        ? "border-indigo-600 text-indigo-700"
+                        : "border-transparent text-gray-500 hover:text-gray-800"
+                    }`}
+                  >
+                    {t(`documentDetail.tabs.${name}`)}
+                    {name === "versions" && typeof data?.current_version === "number" && data.current_version > 1 && (
+                      <span className="ml-1 font-mono text-[11px] text-gray-400">v{data.current_version}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {tab === "versions" && tableName && id && (
+                <VersionsSection
+                  tableName={tableName}
+                  id={id}
+                  canDownload={perms.canDownload}
+                  canEdit={perms.canAct}
+                />
+              )}
+              {tab === "history" && tableName && id && <HistorySection tableName={tableName} id={id} />}
+
+              {tab === "record" && tableName && id && (
                 <FieldsPanel
                   tableName={tableName}
                   id={id}
@@ -230,8 +268,8 @@ export default function DocumentDetailPage() {
                 />
               )}
 
-              {tableName && id && <LinksSection tableName={tableName} id={id} canEdit={perms.canAct} />}
-              {tableName && id && (
+              {tab === "record" && tableName && id && <LinksSection tableName={tableName} id={id} canEdit={perms.canAct} />}
+              {tab === "record" && tableName && id && (
                 <SeriesSection
                   tableName={tableName}
                   id={id}
@@ -239,7 +277,7 @@ export default function DocumentDetailPage() {
                   canEdit={perms.canAct}
                 />
               )}
-              {tableName && id && <AccessSection
+              {tab === "record" && tableName && id && <AccessSection
                   tableName={tableName}
                   id={id}
                   confidentiality={asConfidentiality(data?.confidentiality)}

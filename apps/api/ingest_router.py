@@ -50,6 +50,7 @@ from auth import (
     require_reviewer,
 )
 from cache import invalidate_cache
+from history import field_changes, record_field_changes
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from i18n import DEFAULT_LOCALE, t
 from PIL import Image
@@ -67,6 +68,8 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
 IMAGES_DIR = DATA_DIR / "images"
 UPLOADS_DIR = DATA_DIR / "uploads"
+# New file versions of a filed document: VERSIONS_DIR/<tenant>/<doc id>/v<N>_<name>
+VERSIONS_DIR = UPLOADS_DIR / "versions"
 
 BASE = Path(__file__).parent
 DOCS_DIR = BASE / "documents" / "anonymized_docs"
@@ -555,6 +558,89 @@ CREATE TABLE IF NOT EXISTS sdai_nodes (
     first_seen_at TIMESTAMPTZ DEFAULT now(),
     last_seen_at  TIMESTAMPTZ DEFAULT now()
 );
+
+-- Every file a document has ever had, one row per version (GED file
+-- versioning). Version 1 is the ingested file (backfilled at startup by
+-- _backfill_document_versions, written by _store_extraction for new
+-- documents). A restore adds a new row pointing at the old file
+-- (restored_from) - rows are never updated or deleted, files never
+-- overwritten. The document row's current_version names the live one.
+CREATE TABLE IF NOT EXISTS sdai_document_versions (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id         UUID        NOT NULL REFERENCES sdai_tenants(id),
+    table_name        TEXT        NOT NULL,
+    document_id       UUID        NOT NULL,
+    version_no        INTEGER     NOT NULL CHECK (version_no >= 1),
+    file_path         TEXT        NOT NULL,
+    file_hash         TEXT,
+    size              BIGINT,
+    mime              TEXT,
+    original_filename TEXT,
+    comment           TEXT,
+    restored_from     INTEGER,
+    created_by        UUID,
+    created_at        TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (tenant_id, table_name, document_id, version_no)
+);
+
+-- A new version uploaded with re-extraction runs the normal pipeline on
+-- its own upload row, which then names the document it re-extracts into
+-- instead of filing a new one (see _apply_reextraction).
+ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS target_table TEXT;
+ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS target_document_id UUID;
+ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS target_version INTEGER;
+CREATE INDEX IF NOT EXISTS idx_batch_documents_target_document_id
+    ON batch_documents (target_document_id) WHERE target_document_id IS NOT NULL;
+
+-- Before/after value of every changed extraction field (GED field
+-- history), written in the same transaction as the change itself by
+-- field edits, review approve-with-edits and re-extraction.
+CREATE TABLE IF NOT EXISTS sdai_field_history (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     UUID        NOT NULL REFERENCES sdai_tenants(id),
+    table_name    TEXT        NOT NULL,
+    document_id   UUID        NOT NULL,
+    field         TEXT        NOT NULL,
+    old_value     JSONB,
+    new_value     JSONB,
+    changed_by    UUID,
+    change_source TEXT        NOT NULL
+        CHECK (change_source IN ('edit', 'review', 'reextract', 'sync')),
+    version_no    INTEGER,
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sdai_field_history_document
+    ON sdai_field_history (tenant_id, table_name, document_id, created_at DESC);
+
+-- Tamper-evident audit log: every row is chained to the previous one of
+-- the same origin_node (chain_seq 1, 2, 3 ... and prev_hash = the previous
+-- row_hash), row_hash being sha256 over the row's canonical JSON (see
+-- sdai_audit_row_hash). One chain per node, so the local and cloud nodes
+-- never fork a shared chain once their logs are replicated. Filled in by
+-- the sdai_audit_chain trigger (_AUDIT_CHAIN_DDL), checked by
+-- _verify_audit_chain.
+ALTER TABLE sdai_audit_log ADD COLUMN IF NOT EXISTS origin_node TEXT;
+ALTER TABLE sdai_audit_log ADD COLUMN IF NOT EXISTS chain_seq BIGINT;
+ALTER TABLE sdai_audit_log ADD COLUMN IF NOT EXISTS prev_hash TEXT;
+ALTER TABLE sdai_audit_log ADD COLUMN IF NOT EXISTS row_hash TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS sdai_audit_log_chain_idx ON sdai_audit_log (origin_node, chain_seq);
+CREATE INDEX IF NOT EXISTS sdai_audit_log_document_idx ON sdai_audit_log (table_name, document_id);
+
+-- user_id is part of the hashed content - ON DELETE SET NULL would
+-- silently rewrite (and break) the chain if a user row were ever deleted.
+-- The audit log keeps the id of whoever acted, whatever happens to them.
+ALTER TABLE sdai_audit_log DROP CONSTRAINT IF EXISTS sdai_audit_log_user_id_fkey;
+
+-- Last verified head of each chain (node-local, never synced). Lets the
+-- verification notice rows removed from the END of a chain, or the whole
+-- log being truncated, which the links between rows alone cannot show.
+CREATE TABLE IF NOT EXISTS sdai_audit_chain_heads (
+    origin_node   TEXT        PRIMARY KEY,
+    verified_seq  BIGINT      NOT NULL,
+    verified_hash TEXT        NOT NULL,
+    verified_at   TIMESTAMPTZ DEFAULT now()
+)
 """
 
 # Renames any dynamically-created per-document-type table (identified the
@@ -610,6 +696,85 @@ END $$;
 """
 
 
+# The audit chain's SQL side - own statements, not part of _INIT_DDL,
+# because the function bodies contain semicolons (see _init_db).
+#  - sdai_audit_row_hash: the canonical form is a jsonb object (sorted
+#    keys, normalized numbers) with created_at as a UTC ISO string, so
+#    the hash never depends on session settings or client-side JSON
+#    formatting.
+#  - sdai_audit_chain (BEFORE INSERT): stamps origin_node, then - holding
+#    a per-node advisory lock until the transaction ends, so two inserts
+#    can never take the same place - chain_seq, prev_hash and row_hash.
+#    Every insert path is chained, not just log_action. Rows applied by
+#    the sync worker (sdai.applying_sync = on) keep their own values.
+#  - sdai_audit_append_only (BEFORE UPDATE/DELETE): the log can't be
+#    edited through SQL, except for rows not chained yet
+#    (_backfill_audit_chain). Bypassing triggers (superuser) is still
+#    caught by _verify_audit_chain.
+_AUDIT_CHAIN_DDL = (
+    r"""
+CREATE OR REPLACE FUNCTION sdai_audit_row_hash(
+    p_id UUID, p_origin_node TEXT, p_chain_seq BIGINT, p_created_at TIMESTAMPTZ,
+    p_user_id UUID, p_user_email TEXT, p_action TEXT, p_table_name TEXT,
+    p_document_id UUID, p_details JSONB, p_ip_address TEXT, p_prev_hash TEXT
+) RETURNS TEXT AS $$
+    SELECT encode(sha256(convert_to(jsonb_build_object(
+        'id', p_id, 'origin_node', p_origin_node, 'chain_seq', p_chain_seq,
+        'created_at', to_char(p_created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+        'user_id', p_user_id, 'user_email', p_user_email, 'action', p_action,
+        'table_name', p_table_name, 'document_id', p_document_id, 'details', p_details,
+        'ip_address', p_ip_address, 'prev_hash', p_prev_hash
+    )::text, 'UTF8')), 'hex')
+$$ LANGUAGE sql STABLE
+""",
+    r"""
+CREATE OR REPLACE FUNCTION sdai_audit_chain() RETURNS trigger AS $$
+DECLARE
+    last_seq  BIGINT;
+    last_hash TEXT;
+BEGIN
+    IF current_setting('sdai.applying_sync', true) = 'on' AND NEW.row_hash IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    NEW.origin_node := COALESCE(NULLIF(current_setting('sdai.node_id', true), ''), 'local');
+    PERFORM pg_advisory_xact_lock(hashtext('sdai_audit_chain:' || NEW.origin_node));
+    SELECT chain_seq, row_hash INTO last_seq, last_hash
+        FROM sdai_audit_log
+        WHERE origin_node = NEW.origin_node AND chain_seq IS NOT NULL
+        ORDER BY chain_seq DESC LIMIT 1;
+    NEW.id := COALESCE(NEW.id, gen_random_uuid());
+    NEW.created_at := COALESCE(NEW.created_at, now());
+    NEW.chain_seq := COALESCE(last_seq, 0) + 1;
+    NEW.prev_hash := last_hash;
+    NEW.row_hash := sdai_audit_row_hash(
+        NEW.id, NEW.origin_node, NEW.chain_seq, NEW.created_at, NEW.user_id, NEW.user_email,
+        NEW.action, NEW.table_name, NEW.document_id, NEW.details, NEW.ip_address, NEW.prev_hash
+    );
+    RETURN NEW;
+END
+$$ LANGUAGE plpgsql
+""",
+    """
+CREATE OR REPLACE TRIGGER sdai_audit_chain BEFORE INSERT ON sdai_audit_log
+    FOR EACH ROW EXECUTE FUNCTION sdai_audit_chain()
+""",
+    r"""
+CREATE OR REPLACE FUNCTION sdai_audit_append_only() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.chain_seq IS NULL THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'sdai_audit_log is append-only';
+END
+$$ LANGUAGE plpgsql
+""",
+    """
+CREATE OR REPLACE TRIGGER sdai_audit_append_only BEFORE UPDATE OR DELETE ON sdai_audit_log
+    FOR EACH ROW EXECUTE FUNCTION sdai_audit_append_only()
+""",
+)
+
+
 async def _init_db() -> None:
     async with _engine().begin() as conn:
         # asyncpg's extended query protocol can't prepare multiple commands
@@ -626,6 +791,8 @@ async def _init_db() -> None:
         # Must exist before any backfill or _ensure_table installs the
         # trigger on a table - see _TOUCH_ROW_FN_DDL's docstring.
         await conn.execute(text(_TOUCH_ROW_FN_DDL))
+        for statement in _AUDIT_CHAIN_DDL:
+            await conn.execute(text(statement))
         # Rebuild every ingest table's FTS index under the generalized
         # "any TEXT column" rule - see _backfill_fts_indexes's docstring.
         await _backfill_fts_indexes(conn)
@@ -639,7 +806,9 @@ async def _init_db() -> None:
         # sync columns/triggers - see each function's docstring.
         await _backfill_ged_columns(conn)
         await _backfill_sync_columns(conn)
+        await _backfill_document_versions(conn)
         await _register_node(conn)
+        await _backfill_audit_chain(conn)
         # Purge expired blocklist entries on each startup
         await conn.execute(text("DELETE FROM sdai_token_blocklist WHERE expired_at < NOW()"))
         # Every in-flight page task lives in this process's memory, so at
@@ -836,6 +1005,8 @@ _SYNCED_STATIC_TABLES = (
     "sdai_user_groups",
     "sdai_document_access",
     "sdai_series",
+    "sdai_document_versions",
+    "sdai_field_history",
     "batches",
     "batch_documents",
     "batch_document_pages",
@@ -929,6 +1100,100 @@ async def _backfill_sync_columns(conn) -> None:
         )
 
 
+# File type by extension, for version rows (the browser needs it to open
+# a version inline). Upload validation (ALLOWED_EXTS) keeps this complete.
+_MIME_BY_EXT = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
+def _mime_for(path: str) -> str:
+    return _MIME_BY_EXT.get(Path(path).suffix.lower(), "application/octet-stream")
+
+
+# The file version 1 of a document is backfilled from, as a SQL expression:
+# its untouched original, else the original PDF, else the (preprocessed)
+# primary image. Only the first two have a hash that the fixity check can
+# verify - a preprocessed image never hashes back to content_hash.
+_V1_FILE_SQL = "COALESCE(original_path, source_pdf_path, source_image_path)"
+_V1_HASH_SQL = (
+    "CASE WHEN original_path IS NOT NULL THEN original_hash"
+    " WHEN source_pdf_path IS NOT NULL THEN content_hash END"
+)
+
+
+async def _insert_first_version(conn, tenant_id: str, table_name: str, where: str, params: dict) -> None:
+    """Record version 1 for the rows of `table_name` matching `where` that
+    have a file and no version yet. Shared by the startup backfill (every
+    row) and _store_extraction (the row it just filed)."""
+    rows = await conn.execute(
+        text(f"""
+            SELECT id, {_V1_FILE_SQL} AS file_path, {_V1_HASH_SQL} AS file_hash,
+                   uploaded_by, ingested_at
+            FROM "{table_name}" d
+            WHERE {where}
+              AND {_V1_FILE_SQL} IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM sdai_document_versions v
+                  WHERE v.tenant_id = CAST(:__tid AS uuid) AND v.table_name = :__table
+                    AND v.document_id = d.id
+              )
+        """),
+        {**params, "__tid": tenant_id, "__table": table_name},
+    )
+    for row in rows.mappings().all():
+        path = row["file_path"]
+        size = None
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            pass
+        await conn.execute(
+            text("""
+                INSERT INTO sdai_document_versions
+                    (tenant_id, table_name, document_id, version_no, file_path, file_hash,
+                     size, mime, original_filename, created_by, created_at)
+                VALUES (CAST(:tid AS uuid), :t, :id, 1, :path, :hash,
+                        :size, :mime, :name, :by, COALESCE(:at, now()))
+                ON CONFLICT (tenant_id, table_name, document_id, version_no) DO NOTHING
+            """),
+            {
+                "tid": tenant_id,
+                "t": table_name,
+                "id": row["id"],
+                "path": path,
+                "hash": row["file_hash"],
+                "size": size,
+                "mime": _mime_for(path),
+                "name": Path(path).name,
+                "by": row["uploaded_by"],
+                "at": row["ingested_at"],
+            },
+        )
+
+
+async def _backfill_document_versions(conn) -> None:
+    """One-time-per-startup migration: give every filed document that has
+    none yet its version 1 (see _V1_FILE_SQL). Idempotent - documents that
+    already have a version are skipped."""
+    tenants = [(str(r[0]), r[1]) for r in await conn.execute(text("SELECT id, slug FROM sdai_tenants"))]
+    for tenant_id, tenant_slug in tenants:
+        tables_result = await conn.execute(
+            text("""
+                SELECT DISTINCT table_name FROM information_schema.columns
+                WHERE table_schema = 'public' AND column_name = 'source_image_path'
+                  AND starts_with(table_name, :prefix)
+            """),
+            {"prefix": f"t_{tenant_slug}_"},
+        )
+        for (table_name,) in tables_result.all():
+            # Tables older than PDF/dedup support lack these until their
+            # next ingest (_ensure_table) - the version query needs them.
+            for col in ("source_pdf_path", "content_hash"):
+                await conn.execute(
+                    text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS {col} TEXT')
+                )
+            await _insert_first_version(conn, tenant_id, table_name, "TRUE", {})
+
+
 async def _register_node(conn) -> None:
     """Record this server in sdai_nodes and make NODE_ID the database-wide
     default for sdai.node_id, so sessions that don't go through this
@@ -952,6 +1217,150 @@ async def _register_node(conn) -> None:
             )
     except Exception as e:
         print(f"[startup] WARNING: could not set sdai.node_id database default: {e}", file=sys.stderr)
+
+
+# ── Tamper-evident audit chain ───────────────────────────────────────────────
+
+_AUDIT_HASH_SQL = (
+    "sdai_audit_row_hash(id, origin_node, chain_seq, created_at, user_id, user_email,"
+    " action, table_name, document_id, details, ip_address, prev_hash)"
+)
+
+
+async def _chain_tail(conn, node: str) -> tuple[int, str | None]:
+    row = (
+        await conn.execute(
+            text(
+                "SELECT chain_seq, row_hash FROM sdai_audit_log"
+                " WHERE origin_node = :n AND chain_seq IS NOT NULL ORDER BY chain_seq DESC LIMIT 1"
+            ),
+            {"n": node},
+        )
+    ).one_or_none()
+    return (row[0], row[1]) if row else (0, None)
+
+
+async def _backfill_audit_chain(conn) -> None:
+    """One-time-per-startup migration: chain every audit row written before
+    the chain existed (chain_seq NULL) onto this node's chain, oldest first.
+    Idempotent - chained rows are never touched again (the append-only
+    trigger refuses it)."""
+    await conn.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"sdai_audit_chain:{NODE_ID}"}
+    )
+    legacy = (
+        await conn.execute(
+            text("SELECT id FROM sdai_audit_log WHERE chain_seq IS NULL ORDER BY created_at, id")
+        )
+    ).all()
+    if not legacy:
+        return
+    seq, prev = await _chain_tail(conn, NODE_ID)
+    for (row_id,) in legacy:
+        seq += 1
+        prev = (
+            await conn.execute(
+                text(
+                    "UPDATE sdai_audit_log SET origin_node = :n, chain_seq = :s, prev_hash = :p,"
+                    "  row_hash = sdai_audit_row_hash(id, CAST(:n AS text), CAST(:s AS bigint),"
+                    "    created_at, user_id, user_email, action, table_name, document_id, details,"
+                    "    ip_address, CAST(:p AS text))"
+                    " WHERE id = :id RETURNING row_hash"
+                ),
+                {"n": NODE_ID, "s": seq, "p": prev, "id": row_id},
+            )
+        ).scalar()
+
+
+async def _verify_audit_chain() -> dict:
+    """Walk every node's audit chain and report the first break, if any:
+
+      missing_rows        a chain_seq is skipped - rows were deleted
+      prev_hash_mismatch  a row doesn't point at the previous row's hash
+      row_altered         a row's content no longer matches its row_hash
+      truncated           the chain ends before the last verified head
+      head_rewritten      the last verified head's hash changed - the chain
+                          was recomputed after an edit
+      unchained           rows without a chain position (inserted with the
+                          triggers disabled)
+
+    When everything holds, records each chain's head in
+    sdai_audit_chain_heads for the next run. Returns {"ok", "checked",
+    "chains": [{origin_node, length, head_hash}], "first_broken"}."""
+    result: dict = {"ok": True, "checked": 0, "chains": [], "first_broken": None}
+
+    def broken(**info) -> dict:
+        result["ok"] = False
+        result["first_broken"] = info
+        return result
+
+    async with _engine().connect() as conn:
+        nodes = [
+            r[0]
+            for r in await conn.execute(
+                text(
+                    "SELECT origin_node FROM sdai_audit_log WHERE chain_seq IS NOT NULL"
+                    " UNION SELECT origin_node FROM sdai_audit_chain_heads ORDER BY 1"
+                )
+            )
+        ]
+        heads = {
+            r[0]: (r[1], r[2])
+            for r in await conn.execute(
+                text("SELECT origin_node, verified_seq, verified_hash FROM sdai_audit_chain_heads")
+            )
+        }
+        for node in nodes:
+            expected, prev = 1, None
+            seen: dict[int, str] = {}
+            rows = await conn.execute(
+                text(
+                    f"SELECT id::text, chain_seq, prev_hash, row_hash, {_AUDIT_HASH_SQL} AS computed"
+                    " FROM sdai_audit_log WHERE origin_node = :n AND chain_seq IS NOT NULL"
+                    " ORDER BY chain_seq"
+                ),
+                {"n": node},
+            )
+            for row_id, seq, prev_hash, row_hash, computed in rows:
+                result["checked"] += 1
+                where = {"origin_node": node, "chain_seq": seq, "id": row_id}
+                if seq != expected:
+                    return broken(reason="missing_rows", origin_node=node, chain_seq=expected, id=None)
+                if prev_hash != prev:
+                    return broken(reason="prev_hash_mismatch", **where)
+                if row_hash != computed:
+                    return broken(reason="row_altered", **where)
+                if node in heads and seq == heads[node][0]:
+                    seen[seq] = row_hash
+                prev, expected = row_hash, expected + 1
+            length = expected - 1
+            if node in heads:
+                head_seq, head_hash = heads[node]
+                if length < head_seq:
+                    return broken(reason="truncated", origin_node=node, chain_seq=length + 1, id=None)
+                if seen.get(head_seq) != head_hash:
+                    return broken(reason="head_rewritten", origin_node=node, chain_seq=head_seq, id=None)
+            result["chains"].append({"origin_node": node, "length": length, "head_hash": prev})
+
+        unchained = (
+            await conn.execute(text("SELECT count(*) FROM sdai_audit_log WHERE chain_seq IS NULL"))
+        ).scalar() or 0
+        if unchained:
+            return broken(reason="unchained", origin_node=None, chain_seq=None, id=None, count=unchained)
+
+    async with _engine().begin() as conn:
+        for chain in result["chains"]:
+            if chain["length"]:
+                await conn.execute(
+                    text("""
+                        INSERT INTO sdai_audit_chain_heads (origin_node, verified_seq, verified_hash)
+                        VALUES (:n, :s, :h)
+                        ON CONFLICT (origin_node) DO UPDATE SET verified_seq = EXCLUDED.verified_seq,
+                            verified_hash = EXCLUDED.verified_hash, verified_at = now()
+                    """),
+                    {"n": chain["origin_node"], "s": chain["length"], "h": chain["head_hash"]},
+                )
+    return result
 
 
 # ── Pipeline queues, semaphores, and inter-stage types ───────────────────────
@@ -2108,7 +2517,10 @@ async def _run_integrity_check(tenant_slug: str) -> dict:
             if source_pdf_path:
                 if not await asyncio.to_thread(os.path.isfile, source_pdf_path):
                     reasons.append("source_pdf_path missing")
-                elif content_hash:
+                # After a version re-extraction the PDF is that version's
+                # file - verified against its own hash in the version pass
+                # below, never against the first upload's content_hash.
+                elif content_hash and not _is_version_file(source_pdf_path):
                     actual_hash = await asyncio.to_thread(_compute_hash, Path(source_pdf_path))
                     if actual_hash != content_hash:
                         reasons.append("content_hash mismatch")
@@ -2139,7 +2551,100 @@ async def _run_integrity_check(tenant_slug: str) -> dict:
                 details={"reasons": reasons},
             )
 
+    await _check_version_files(tenant_slug, counts)
     return counts
+
+
+def _is_version_file(path: str) -> bool:
+    try:
+        return Path(path).resolve().is_relative_to(VERSIONS_DIR.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+async def _check_version_files(tenant_slug: str, counts: dict) -> None:
+    """Fixity over every file in sdai_document_versions for one tenant:
+    the file must exist and, when its hash is known, still hash to it.
+    A restore points a new version at an old file, so each distinct
+    (file, hash) is verified once. Failures are logged per version as
+    integrity_check_failed (details.version_no) and counted in
+    versions_checked / versions_ok plus the shared missing/mismatched."""
+    counts.setdefault("versions_checked", 0)
+    counts.setdefault("versions_ok", 0)
+    async with _engine().connect() as conn:
+        rows = list(
+            await conn.execute(
+                text("""
+                    SELECT v.table_name, v.document_id::text, v.version_no, v.file_path, v.file_hash
+                    FROM sdai_document_versions v
+                    JOIN sdai_tenants tn ON tn.id = v.tenant_id
+                    WHERE tn.slug = :slug
+                    ORDER BY v.table_name, v.document_id, v.version_no
+                """),
+                {"slug": tenant_slug},
+            )
+        )
+
+    verdicts: dict[tuple[str, str | None], str | None] = {}
+    for table_name, doc_id, version_no, file_path, file_hash in rows:
+        counts["versions_checked"] += 1
+        key = (file_path, file_hash)
+        if key not in verdicts:
+            reason = None
+            if not await asyncio.to_thread(os.path.isfile, file_path):
+                reason = "version file missing"
+            elif file_hash:
+                actual = await asyncio.to_thread(_compute_hash, Path(file_path))
+                if actual != file_hash:
+                    reason = "version hash mismatch"
+            verdicts[key] = reason
+        reason = verdicts[key]
+        if reason is None:
+            counts["versions_ok"] += 1
+            continue
+        counts["missing" if "missing" in reason else "mismatched"] += 1
+        await log_action(
+            action="integrity_check_failed",
+            table_name=table_name,
+            document_id=doc_id,
+            details={"reasons": [reason], "version_no": version_no},
+        )
+
+
+def _chain_summary(chain: dict) -> dict:
+    return {k: chain.get(k) for k in ("ok", "checked", "first_broken")}
+
+
+async def _audit_chain_check() -> dict:
+    """Verify the audit chain (_verify_audit_chain) and log
+    integrity_chain_broken when it doesn't hold. Never raises - a
+    verification that can't run is reported as broken with reason
+    "error"."""
+    try:
+        chain = await _verify_audit_chain()
+    except Exception as e:
+        chain = {
+            "ok": False,
+            "checked": 0,
+            "chains": [],
+            "first_broken": {"reason": "error", "message": _exc_message(e)},
+        }
+    if not chain["ok"]:
+        await log_action(action="integrity_chain_broken", details=chain["first_broken"])
+    return chain
+
+
+async def _record_integrity_run(
+    tenant_slug: str, counts: dict, chain: dict, user_id: str | None = None, user_email: str | None = None
+) -> None:
+    """One integrity_check_completed audit entry per tenant and run - what
+    the admin integrity panel shows as "last check" (GET /api/admin/integrity)."""
+    await log_action(
+        action="integrity_check_completed",
+        user_id=user_id,
+        user_email=user_email,
+        details={"tenant": tenant_slug, "fixity": counts, "audit_chain": _chain_summary(chain)},
+    )
 
 
 async def _integrity_check_worker() -> None:
@@ -2152,8 +2657,10 @@ async def _integrity_check_worker() -> None:
             async with _engine().connect() as conn:
                 tenants_result = await conn.execute(text("SELECT slug FROM sdai_tenants"))
                 tenant_slugs = [row[0] for row in tenants_result]
+            chain = await _audit_chain_check()
             for tenant_slug in tenant_slugs:
-                await _run_integrity_check(tenant_slug)
+                counts = await _run_integrity_check(tenant_slug)
+                await _record_integrity_run(tenant_slug, counts, chain)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -2623,6 +3130,9 @@ async def _store_extraction(
             params,
         )
         doc_id = str(result.scalar())
+        await _insert_first_version(
+            conn, tenant_id, table_name, "id = CAST(:__doc AS uuid)", {"__doc": doc_id}
+        )
 
         # High-confidence documents skip review_required and land here
         # already auto_approved - see the module note above
@@ -3054,6 +3564,11 @@ async def _stage3_process(result: _VlmResult) -> None:
         if not await _batch_document_exists(result.doc_id):
             return
 
+        target = await _reextract_target(result.doc_id)
+        if target is not None:
+            await _stage3_reextract(result, target)
+            return
+
         primary_image = str(result.dest_paths[0])
         page_image_paths = [str(p) for p in result.dest_paths]
         source_pdf_path = str(result.pdf_path) if result.pdf_path else None
@@ -3122,6 +3637,209 @@ async def _stage3_process(result: _VlmResult) -> None:
             image_path=primary_image,
             processing_time=round(time.monotonic() - result.t0, 2),
         )
+
+
+# ── Re-extraction of a new file version ─────────────────────────────────────
+# POST /api/db/documents/{t}/{id}/versions?reextract=true (versions_router)
+# runs the new file through the normal pipeline as its own upload, whose
+# batch_documents row names the document it belongs to (target_table,
+# target_document_id, target_version). Stage 3 and the per-page merge
+# then update that document in place instead of filing a new one.
+
+
+class _ReextractTarget(NamedTuple):
+    table_name: str
+    document_id: str
+    version_no: int | None
+
+
+async def _reextract_target(batch_document_id: str) -> _ReextractTarget | None:
+    async with _engine().connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT target_table, target_document_id::text, target_version"
+                    " FROM batch_documents"
+                    " WHERE id = CAST(:bd AS uuid) AND target_document_id IS NOT NULL"
+                ),
+                {"bd": batch_document_id},
+            )
+        ).one_or_none()
+    if row is None or not row[0]:
+        return None
+    return _ReextractTarget(row[0], row[1], row[2])
+
+
+# Fields a re-extraction never overwrites: the document stays in its table
+# whatever type the model now detects (moving rows between tables would
+# break every reference to it - grants, links, versions, history).
+_REEXTRACT_SKIP_FIELDS = frozenset({"document_type", "extraction_confidence"})
+
+
+async def _apply_reextraction(
+    batch_document_id: str,
+    target: _ReextractTarget,
+    fields: dict,
+    *,
+    confidence: str,
+    review_status: str | None,
+    primary_image: str | None = None,
+    page_image_paths: list[str] | None = None,
+    source_pdf_path: str | None = None,
+) -> dict | None:
+    """Write re-extracted `fields` into the target document, recording each
+    changed value in sdai_field_history (change_source 'reextract') in the
+    same transaction. `review_status` None keeps the current one (a page
+    re-merge); file paths None keep the current pages. Returns
+    {"fields_changed", "detected_type"} or None when the document is gone."""
+    table_name = target.table_name
+    tenant = await _resolve_tenant_for_batch_document(batch_document_id)
+    if tenant is None:
+        return None
+    tenant_id, _ = tenant
+
+    async with _engine().begin() as conn:
+        old = (
+            await conn.execute(
+                text(f'SELECT * FROM "{table_name}" WHERE id = CAST(:id AS uuid) FOR UPDATE'),
+                {"id": target.document_id},
+            )
+        ).mappings().one_or_none()
+        if old is None:
+            return None
+        old = dict(old)
+
+        content = {
+            k: v
+            for k, v in fields.items()
+            if not k.startswith("_") and k not in _REEXTRACT_SKIP_FIELDS
+        }
+        await _ensure_table(conn, table_name, content)
+
+        set_parts = ['"confidence" = :__confidence']
+        params: dict = {"__id": target.document_id, "__confidence": confidence}
+        cols: list[str] = []
+        for k, v in content.items():
+            col = _sanitize_identifier(k)
+            cols.append(col)
+            set_parts.append(f'"{col}" = :f_{col}')
+            params[f"f_{col}"] = _serialize(v)
+        if review_status is not None:
+            set_parts.append('"review_status" = :__review_status')
+            params["__review_status"] = review_status
+        if page_image_paths is not None:
+            set_parts += [
+                '"source_image_path" = :__image',
+                '"page_image_paths" = CAST(:__pages AS jsonb)',
+                '"source_pdf_path" = :__pdf',
+            ]
+            params["__image"] = primary_image
+            params["__pages"] = json.dumps(page_image_paths, ensure_ascii=False)
+            params["__pdf"] = source_pdf_path
+
+        new = (
+            await conn.execute(
+                text(
+                    f'UPDATE "{table_name}" SET {", ".join(set_parts)}'
+                    f" WHERE id = CAST(:__id AS uuid) RETURNING *"
+                ),
+                params,
+            )
+        ).mappings().one()
+
+        changed_by = (
+            await conn.execute(
+                text(
+                    "SELECT b.created_by::text FROM batch_documents bd"
+                    " JOIN batches b ON b.id = bd.batch_id WHERE bd.id = CAST(:bd AS uuid)"
+                ),
+                {"bd": batch_document_id},
+            )
+        ).scalar()
+        changes = field_changes(old, new, cols)
+        await record_field_changes(
+            conn,
+            tenant_id=tenant_id,
+            table_name=table_name,
+            document_id=target.document_id,
+            changes=changes,
+            changed_by=changed_by,
+            source="reextract",
+            version_no=target.version_no,
+        )
+
+    detected = fields.get("document_type")
+    await log_action(
+        action="document_reextracted",
+        user_id=changed_by,
+        table_name=table_name,
+        document_id=target.document_id,
+        details={
+            "version_no": target.version_no,
+            "batch_document_id": batch_document_id,
+            "changes": changes,
+            **({"detected_type": detected} if detected and detected != old.get("document_type") else {}),
+        },
+    )
+    await invalidate_cache("review")
+    return {"fields_changed": sorted(changes), "detected_type": detected}
+
+
+async def _stage3_reextract(result: "_VlmResult", target: _ReextractTarget) -> None:
+    """Stage 3 for a version re-extraction: same review decision as a new
+    document, but written into the target document. A total failure leaves
+    the document untouched - its upload row just ends up crashed."""
+    primary_image = str(result.dest_paths[0])
+    elapsed = round(time.monotonic() - result.t0, 2)
+    if result.error:
+        await _update_doc_status(
+            result.doc_id,
+            "crashed",
+            error_message=result.error,
+            image_path=primary_image,
+            processing_time=elapsed,
+        )
+        return
+
+    confidence = result.fields.get("extraction_confidence", "low")
+    auto_ok = confidence == "high" and not await _document_has_flagged_pages(result.doc_id)
+    try:
+        applied = await _apply_reextraction(
+            result.doc_id,
+            target,
+            result.fields,
+            confidence=confidence,
+            review_status="auto_approved" if auto_ok else "review_required",
+            primary_image=primary_image,
+            page_image_paths=[str(p) for p in result.dest_paths],
+            source_pdf_path=str(result.pdf_path) if result.pdf_path else None,
+        )
+    except Exception as e:
+        await _update_doc_status(
+            result.doc_id,
+            "crashed",
+            error_message=f"DB store error: {_exc_message(e)}",
+            image_path=primary_image,
+            processing_time=elapsed,
+        )
+        return
+    if applied is None:
+        await _update_doc_status(
+            result.doc_id,
+            "crashed",
+            error_message="The document this version belongs to no longer exists",
+            image_path=primary_image,
+            processing_time=elapsed,
+        )
+        return
+    await _update_doc_status(
+        result.doc_id,
+        "completed" if auto_ok else "review_required",
+        document_type=result.fields.get("document_type", "document"),
+        confidence=confidence,
+        image_path=primary_image,
+        processing_time=elapsed,
+    )
 
 
 async def _stage3_worker() -> None:
@@ -3412,6 +4130,16 @@ async def _merge_page_into_document(batch_document_id: str) -> None:
     cfg = await _get_tenant_config(tenant_id, preset_id)
 
     merged = _reconcile_pages(page_fields, cfg.list_fields)
+    target = await _reextract_target(batch_document_id)
+    if target is not None:
+        await _apply_reextraction(
+            batch_document_id,
+            target,
+            merged,
+            confidence=merged.get("extraction_confidence", "low"),
+            review_status=None,
+        )
+        return
     doc_type = merged.get("document_type") or "document"
     table_name = _tenant_table_name(tenant_slug, doc_type)
 
@@ -3426,12 +4154,17 @@ async def _merge_page_into_document(batch_document_id: str) -> None:
             return
 
         row_result = await conn.execute(
-            text(f'SELECT id FROM "{table_name}" WHERE batch_document_id = CAST(:bd AS uuid)'),
+            text(
+                f'SELECT * FROM "{table_name}" WHERE batch_document_id = CAST(:bd AS uuid)'
+                " FOR UPDATE"
+            ),
             {"bd": batch_document_id},
         )
-        row = row_result.one_or_none()
-        if row is None:
+        old = row_result.mappings().one_or_none()
+        if old is None:
             return
+        old = dict(old)
+        row = (old["id"],)
 
         await _ensure_table(conn, table_name, merged)
 
@@ -3447,9 +4180,31 @@ async def _merge_page_into_document(batch_document_id: str) -> None:
             set_parts.append(f'"{col}" = :{col}')
             params[col] = _serialize(v)
 
-        await conn.execute(
-            text(f'UPDATE "{table_name}" SET {", ".join(set_parts)} WHERE id = CAST(:id AS uuid)'),
-            params,
+        new = (
+            await conn.execute(
+                text(
+                    f'UPDATE "{table_name}" SET {", ".join(set_parts)}'
+                    f" WHERE id = CAST(:id AS uuid) RETURNING *"
+                ),
+                params,
+            )
+        ).mappings().one()
+        # A page retried, reloaded or entered by hand after the document
+        # was filed changes its fields too - never silently.
+        cols = [
+            _sanitize_identifier(k)
+            for k in merged
+            if not k.startswith("_") and k != "extraction_confidence"
+        ]
+        await record_field_changes(
+            conn,
+            tenant_id=tenant_id,
+            table_name=table_name,
+            document_id=str(row[0]),
+            changes=field_changes(old, new, cols),
+            changed_by=None,
+            source="reextract",
+            version_no=new.get("current_version"),
         )
 
     await invalidate_cache("review")

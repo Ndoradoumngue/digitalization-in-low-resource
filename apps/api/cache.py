@@ -18,6 +18,7 @@ Key design decisions:
 """
 
 import os
+import time
 from collections.abc import Callable
 
 from fastapi import Request, Response
@@ -66,3 +67,34 @@ async def invalidate_cache(*namespaces: str) -> None:
             await FastAPICache.clear(namespace=ns)
     except Exception:
         pass
+
+
+# Fallback for first_in_window when Redis isn't there (offline deployments
+# run on the in-memory cache backend) - per process, which is what that
+# deployment has anyway.
+_local_windows: dict[str, float] = {}
+
+
+async def first_in_window(key: str, seconds: int) -> bool:
+    """True the first time `key` is seen within a `seconds`-long window,
+    False for every repeat inside it - e.g. one document_viewed audit entry
+    per user and document every 5 minutes, however often the page reloads.
+    Uses Redis (SET NX EX, shared by every worker) when the cache runs on
+    it, else a per-process dict. Never raises - when in doubt it answers
+    True, since a duplicate audit entry beats a missing one."""
+    try:
+        backend = FastAPICache.get_backend()
+        redis = getattr(backend, "redis", None)
+        if redis is not None:
+            return bool(await redis.set(f"sdai:window:{key}", b"1", ex=seconds, nx=True))
+    except Exception:
+        pass
+    now = time.monotonic()
+    expires = _local_windows.get(key)
+    if expires is not None and expires > now:
+        return False
+    if len(_local_windows) > 10_000:
+        for k in [k for k, exp in _local_windows.items() if exp <= now]:
+            del _local_windows[k]
+    _local_windows[key] = now + seconds
+    return True

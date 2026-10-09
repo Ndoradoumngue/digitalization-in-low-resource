@@ -263,6 +263,31 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Document not found",
         "fr": "Document introuvable",
     },
+    # ── versions_router.py ───────────────────────────────────────────────
+    "versions.not_found": {
+        "en": "Version not found",
+        "fr": "Version introuvable",
+    },
+    "versions.already_current": {
+        "en": "This version is already the current one",
+        "fr": "Cette version est déjà la version courante",
+    },
+    "versions.document_locked": {
+        "en": "The document is checked out by another user",
+        "fr": "Le document est extrait par un autre utilisateur",
+    },
+    "versions.document_archived": {
+        "en": "The document is archived - only a lifecycle manager can change it",
+        "fr": "Le document est archivé - seul un gestionnaire du cycle de vie peut le modifier",
+    },
+    "versions.conflict": {
+        "en": "Another version was added at the same time - please retry",
+        "fr": "Une autre version a été ajoutée au même moment - veuillez réessayer",
+    },
+    "versions.file_missing": {
+        "en": "The file of this version is no longer on disk",
+        "fr": "Le fichier de cette version n'est plus sur le disque",
+    },
     # ── api_server.py ────────────────────────────────────────────────────
     "benchmarks.vlm_results_not_found": {
         "en": "VLM results file not found. Run vlm_ollama_test.py first.",

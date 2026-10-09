@@ -88,7 +88,12 @@
     "loadError": "Failed to load document.",
     "page": "Page {{n}}",
     "viewOriginalPdf": "View original PDF ↗",
-    "noImage": "No image available"
+    "noImage": "No image available",
+    "tabs": {
+      "record": "Record",
+      "versions": "Versions",
+      "history": "History"
+    }
   },
   "fields": {
     "title": "Fields",
@@ -375,7 +380,7 @@
     },
     "integrity": {
       "heading": "Fixity / integrity check",
-      "description": "Verifies every document's file(s) still exist on disk, and re-verifies content hashes where an unmodified original is available. Runs automatically on a weekly schedule - use this to run it on demand.",
+      "description": "Verifies every document's file(s) and every file version still exist on disk and still match their hashes, and that the audit log's hash chain is intact. Runs automatically on a weekly schedule - use this to run it on demand.",
       "running": "Running…",
       "run": "Run integrity check",
       "checked": "Checked",
@@ -383,7 +388,26 @@
       "mismatched": "Mismatched",
       "missing": "Missing",
       "failuresNotePrefix": "Failures are logged to the Audit Log as ",
-      "failuresNoteSuffix": " entries."
+      "failuresNoteSuffix": " entries.",
+      "versionsChecked": "Versions checked",
+      "versionsOk": "Versions OK",
+      "verifyChain": "Verify audit chain",
+      "lastRun": "Last check: {{date}} ({{by}})",
+      "scheduled": "scheduled",
+      "neverRun": "No check has run yet.",
+      "chainHeading": "Audit log hash chain",
+      "chainOk": "Intact - {{count}} entries verified",
+      "chainBroken": "The audit log has been tampered with",
+      "chainPosition": "node {{node}}, entry #{{seq}}",
+      "chainReason": {
+        "missing_rows": "entries were deleted",
+        "prev_hash_mismatch": "an entry no longer links to the previous one",
+        "row_altered": "an entry was modified",
+        "truncated": "the most recent entries were removed",
+        "head_rewritten": "the chain was recomputed after a change",
+        "unchained": "entries were inserted outside the chain",
+        "error": "the verification could not run"
+      }
     },
     "series": {
       "heading": "Series (fonds)",
@@ -460,7 +484,14 @@
       "archive_exported": "archive exported",
       "confidentiality_changed": "confidentiality changed",
       "document_access_changed": "document access level changed",
-      "user_permissions_changed": "user permissions changed"
+      "user_permissions_changed": "user permissions changed",
+      "document_viewed": "document viewed",
+      "document_downloaded": "document downloaded",
+      "document_version_added": "version added",
+      "document_version_restored": "version restored",
+      "document_reextracted": "document re-extracted",
+      "integrity_check_completed": "integrity check completed",
+      "integrity_chain_broken": "audit chain broken"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -644,5 +675,44 @@
     "internal": "Internal",
     "confidential": "Confidential",
     "secret": "Secret"
+  },
+  "versions": {
+    "heading": "File versions",
+    "addVersion": "+ New version",
+    "current": "current",
+    "unnamed": "(unnamed file)",
+    "open": "Open",
+    "download": "Download",
+    "restore": "Restore",
+    "restoredFrom": "restored from v{{n}}",
+    "restoreTitle": "Restore version {{n}}?",
+    "restoreConfirm": "Version {{n}}'s file becomes the current one again, as a new version. Nothing is deleted - every version stays in the history.",
+    "restored": "Version {{n}} created from the restored file.",
+    "added": "Version {{n}} added.",
+    "addedReextracting": "Version {{n}} added - extraction is running, the fields will update when it finishes (previous values stay in the history).",
+    "commentPlaceholder": "What changed? (optional)",
+    "reextract": "Re-extract the fields from this file",
+    "reextractHint": "Runs the extraction again into this same document. Current values are kept in the history.",
+    "upload": "Upload version",
+    "uploading": "Uploading…",
+    "cancel": "Cancel",
+    "loading": "Loading versions…",
+    "loadError": "Failed to load versions.",
+    "none": "No file recorded for this document."
+  },
+  "history": {
+    "fieldChanges": "Field changes",
+    "events": "Events",
+    "noFieldChanges": "No field has been changed since extraction.",
+    "noEvents": "No events recorded.",
+    "system": "system",
+    "loading": "Loading history…",
+    "loadError": "Failed to load history.",
+    "source": {
+      "edit": "edit",
+      "review": "review",
+      "reextract": "re-extraction",
+      "sync": "sync"
+    }
   }
 }

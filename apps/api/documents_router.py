@@ -42,13 +42,14 @@ from auth import (
     require_reviewer,
     require_user,
 )
-from cache import _path_key_builder, invalidate_cache
+from cache import _path_key_builder, first_in_window, invalidate_cache
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from datetime import datetime, timezone
 
 from export_format import insert_statement, list_to_csv, serial
 from fastapi.responses import FileResponse, Response
 from fastapi_cache.decorator import cache
+from history import field_changes, record_field_changes
 from i18n import t
 from ingest_router import DOCS_DIR as _INGEST_DOCS_DIR
 from ingest_router import UPLOADS_DIR as _INGEST_UPLOADS_DIR
@@ -65,8 +66,11 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
 # Directories the /image endpoint is allowed to serve files from -
 # processed page images, original uploads (incl. source PDFs), and files
 # ingested via a server path or Google Drive.
+# Processed page images - every other servable file is an uploaded or
+# ingested original (see serve_processed_image's download audit).
+_IMAGES_ROOT = (DATA_DIR / "images").resolve()
 _SAFE_FILE_ROOTS = [
-    (DATA_DIR / "images").resolve(),
+    _IMAGES_ROOT,
     _INGEST_UPLOADS_DIR.resolve(),
     _INGEST_DOCS_DIR.resolve(),
 ]
@@ -203,6 +207,47 @@ def _build_field_set_clause(
             set_parts.append(f'"{col}" = :{pname}')
             params[pname] = str(val)
     return editable, set_parts, params
+
+
+async def _row_for_update(conn, table: str, doc_id: str) -> dict | None:
+    """The document's current row, locked until the caller's transaction
+    ends - the "before" side of a field edit's history."""
+    row = (
+        await conn.execute(
+            text(f'SELECT * FROM "{table}" WHERE id = CAST(:id AS uuid) FOR UPDATE'), {"id": doc_id}
+        )
+    ).mappings().one_or_none()
+    return dict(row) if row is not None else None
+
+
+async def _record_edit_history(
+    conn,
+    current_user: CurrentUser,
+    table: str,
+    doc_id: str,
+    old: dict | None,
+    new,
+    fields,
+    source: str,
+) -> dict:
+    """Write sdai_field_history rows for what an edit actually changed, in
+    the caller's transaction, and return those changes ({field: {old,
+    new}}) for the audit entry. Shared by update_document_fields and
+    review_router.patch_review."""
+    if old is None or new is None:
+        return {}
+    changes = field_changes(old, new, fields)
+    await record_field_changes(
+        conn,
+        tenant_id=current_user.tenant_id,
+        table_name=table,
+        document_id=doc_id,
+        changes=changes,
+        changed_by=current_user.id,
+        source=source,
+        version_no=new.get("current_version"),
+    )
+    return changes
 
 
 def _searchable_cols(cols: dict[str, str]) -> list[str]:
@@ -407,6 +452,23 @@ async def _effective_permission(
     return granted[-1] if granted else None
 
 
+def _upload_match(table: str, cols: dict[str, str]) -> str:
+    """SQL condition: the row is the document the uploads :__bd_ids
+    produced - filed from one of them, or re-extracted into by one (a new
+    file version's upload names its document, see
+    ingest_router._apply_reextraction). `table` comes from
+    _get_tables_columns, i.e. a sanitized identifier, so it can be inlined."""
+    assert re.fullmatch(r"[a-z0-9_]+", table), table
+    conds = [
+        "id IN (SELECT target_document_id FROM batch_documents"
+        " WHERE id = ANY(CAST(:__bd_ids AS uuid[]))"
+        f" AND target_table = '{table}')"
+    ]
+    if "batch_document_id" in cols:
+        conds.insert(0, "batch_document_id = ANY(CAST(:__bd_ids AS uuid[]))")
+    return "(" + " OR ".join(conds) + ")"
+
+
 async def _filed_rows_permitted(
     conn,
     current_user: CurrentUser,
@@ -454,11 +516,7 @@ async def _filed_document_permitted(
             conn,
             current_user,
             sorted(tables_cols),
-            lambda table: (
-                "batch_document_id = ANY(CAST(:__bd_ids AS uuid[]))"
-                if "batch_document_id" in tables_cols[table]
-                else None
-            ),
+            lambda table: _upload_match(table, tables_cols[table]),
             {"__bd_ids": batch_document_ids},
             permission,
         )
@@ -476,6 +534,38 @@ def _doc_file_match(cols: dict[str, str]) -> str:
             "page_image_paths @> jsonb_build_array(CAST(:__path1 AS text))",
         ]
     return "(" + " OR ".join(conds) + ")"
+
+
+async def _named_document_has_file(
+    conn,
+    current_user: CurrentUser,
+    tables_cols: dict[str, dict[str, str]],
+    paths: list[str],
+    table: str | None,
+    doc_id: str | None,
+) -> str | None:
+    """The sanitized table name when the document the caller names (table
+    + id) is readable by them and references one of `paths`, else None."""
+    if not (table and doc_id):
+        return None
+    safe = _sanitize(table)
+    if safe not in tables_cols:
+        return None
+    clause = _access_where_clause(safe, current_user)
+    where = f"id = CAST(:__doc_id AS uuid) AND {_doc_file_match(tables_cols[safe])}"
+    if clause:
+        where += f" AND {clause}"
+    row = await conn.execute(
+        text(f'SELECT 1 FROM "{safe}" WHERE {where}'),
+        {
+            "__doc_id": doc_id,
+            "__paths": paths,
+            "__path0": paths[0],
+            "__path1": paths[-1],
+            **_access_params(current_user),
+        },
+    )
+    return safe if row.one_or_none() is not None else None
 
 
 async def _file_permitted(
@@ -501,19 +591,8 @@ async def _file_permitted(
     tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
     match_params = {"__paths": paths, "__path0": paths[0], "__path1": paths[-1]}
 
-    if table and doc_id:
-        safe = _sanitize(table)
-        if safe in tables_cols:
-            clause = _access_where_clause(safe, current_user)
-            where = f"id = CAST(:__doc_id AS uuid) AND {_doc_file_match(tables_cols[safe])}"
-            if clause:
-                where += f" AND {clause}"
-            row = await conn.execute(
-                text(f'SELECT 1 FROM "{safe}" WHERE {where}'),
-                {"__doc_id": doc_id, **match_params, **_access_params(current_user)},
-            )
-            if row.one_or_none() is not None:
-                return True
+    if await _named_document_has_file(conn, current_user, tables_cols, paths, table, doc_id):
+        return True
 
     bd_rows = await conn.execute(
         text("""
@@ -536,11 +615,7 @@ async def _file_permitted(
             conn,
             current_user,
             sorted(tables_cols),
-            lambda table: (
-                "batch_document_id = ANY(CAST(:__bd_ids AS uuid[]))"
-                if "batch_document_id" in tables_cols[table]
-                else None
-            ),
+            lambda table: _upload_match(table, tables_cols[table]),
             {"__bd_ids": bd_ids},
             "read",
         )
@@ -885,8 +960,15 @@ def _serialize_row(row) -> dict:
     return data
 
 
+# One document_viewed / original-file document_downloaded audit entry per
+# user and document (file) within this many seconds - opening a document
+# reloads its detail and files several times.
+ACCESS_AUDIT_WINDOW_SECONDS = 300
+
+
 @router.get("/documents/{table_name}/{doc_id}", summary="Document detail")
 async def get_document_detail(
+    request: Request,
     table_name: str,
     doc_id: str,
     current_user: CurrentUser = Depends(require_user),
@@ -921,6 +1003,17 @@ async def get_document_detail(
             status_code=404, detail=t("common.document_not_found", current_user.locale)
         )
 
+    if await first_in_window(
+        f"viewed:{current_user.id}:{safe}:{doc_id}", ACCESS_AUDIT_WINDOW_SECONDS
+    ):
+        await log_action(
+            action="document_viewed",
+            user_id=current_user.id,
+            user_email=current_user.email,
+            table_name=safe,
+            document_id=doc_id,
+            ip_address=client_ip(request),
+        )
     return _serialize_row(row)
 
 
@@ -1049,6 +1142,7 @@ async def update_document_fields(
                 status_code=422, detail=t("documents.no_editable_fields", current_user.locale)
             )
 
+        old = await _row_for_update(conn, safe, doc_id)
         params["id"] = doc_id
         result = await conn.execute(
             text(
@@ -1057,6 +1151,9 @@ async def update_document_fields(
             params,
         )
         row = result.mappings().one_or_none()
+        changes = await _record_edit_history(
+            conn, current_user, safe, doc_id, old, row, editable.keys(), "edit"
+        )
 
     if row is None:
         raise HTTPException(
@@ -1069,7 +1166,7 @@ async def update_document_fields(
         user_email=current_user.email,
         table_name=safe,
         document_id=doc_id,
-        details={"fields_changed": list(editable.keys())},
+        details={"fields_changed": list(editable.keys()), "changes": changes},
     )
 
     return _serialize_row(row)
@@ -2147,6 +2244,7 @@ async def get_schema(request: Request, current_user: CurrentUser = Depends(requi
 
 @router.get("/image")
 async def serve_processed_image(
+    request: Request,
     path: str,
     table: str | None = None,
     id: str | None = None,
@@ -2168,6 +2266,31 @@ async def serve_processed_image(
     paths = list(dict.fromkeys([path, str(file_path)]))
     async with _engine().connect() as conn:
         permitted = await _file_permitted(conn, current_user, paths, table, id)
-    if not permitted or not file_path.exists():
-        raise HTTPException(status_code=404, detail=t("common.file_not_found", current_user.locale))
+        if not permitted or not file_path.exists():
+            raise HTTPException(
+                status_code=404, detail=t("common.file_not_found", current_user.locale)
+            )
+        # Anything outside the page-image directory is an uploaded original
+        # (or a path/Drive-ingested source file) - serving it is a download.
+        # Attributed to the named document only when that document really
+        # references the file, so a caller can't pin it on another one.
+        named = None
+        is_original = not file_path.is_relative_to(_IMAGES_ROOT)
+        if is_original:
+            tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+            named = await _named_document_has_file(
+                conn, current_user, tables_cols, paths, table, id
+            )
+    if is_original and await first_in_window(
+        f"download:{current_user.id}:{file_path}", ACCESS_AUDIT_WINDOW_SECONDS
+    ):
+        await log_action(
+            action="document_downloaded",
+            user_id=current_user.id,
+            user_email=current_user.email,
+            table_name=named,
+            document_id=id if named else None,
+            details={"via": "image", "file": file_path.name},
+            ip_address=client_ip(request),
+        )
     return FileResponse(file_path)

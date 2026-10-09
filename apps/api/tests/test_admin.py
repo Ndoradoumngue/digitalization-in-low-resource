@@ -6,6 +6,7 @@ import zipfile
 from unittest.mock import AsyncMock
 
 import admin_router
+import pytest
 from conftest import TENANT_SLUG, make_result
 
 # ── Auth & role guards ────────────────────────────────────────────────────────
@@ -197,11 +198,37 @@ def test_integrity_check_requires_admin(auth_client):
     assert auth_client.post("/api/admin/integrity-check").status_code == 403
 
 
-def test_integrity_check_returns_summary(admin_client, mock_db):
+def test_integrity_check_returns_summary(admin_client, mock_db, monkeypatch):
+    import admin_router
+
+    chain = {"ok": True, "checked": 7, "chains": [], "first_broken": None}
+    monkeypatch.setattr(admin_router, "_audit_chain_check", AsyncMock(return_value=chain))
     mock_db.execute.return_value = make_result(rows=[])  # no tables at all
     resp = admin_client.post("/api/admin/integrity-check")
     assert resp.status_code == 200
-    assert resp.json() == {"checked": 0, "ok": 0, "mismatched": 0, "missing": 0}
+    assert resp.json() == {
+        "checked": 0,
+        "ok": 0,
+        "mismatched": 0,
+        "missing": 0,
+        "versions_checked": 0,
+        "versions_ok": 0,
+        "audit_chain": {"ok": True, "checked": 7, "first_broken": None},
+    }
+    # The run is recorded for the integrity panel.
+    audit = mock_db.execute.call_args_list[-1].args[1]
+    assert audit["action"] == "integrity_check_completed"
+    assert '"tenant": "default"' in audit["details"]
+
+
+def test_last_integrity_check_none_yet(admin_client, mock_db):
+    mock_db.execute.return_value = make_result(one_or_none=None)
+    assert admin_client.get("/api/admin/integrity").json() == {"last_run": None}
+
+
+@pytest.mark.parametrize("path", ["/api/admin/integrity", "/api/admin/integrity/audit-chain"])
+def test_integrity_status_requires_admin(auth_client, path):
+    assert auth_client.get(path).status_code == 403
 
 
 # ── Archive export ────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AuditChainSummarySchema } from "./versions";
 import { ConfidentialitySchema } from "./auth";
 
 // Cumulative grant levels, lowest first: read (view/search) < download
@@ -97,10 +98,31 @@ export type GranteesResponse = z.infer<typeof GranteesResponseSchema>;
 
 // ── Fixity / integrity check ─────────────────────────────────────────────────
 
-export const IntegrityCheckResultSchema = z.object({
+// Fixity counts - documents (checked/ok) and, since GED Phase 2, every
+// version file (versions_checked/versions_ok); mismatched/missing cover both.
+export const FixityCountsSchema = z.object({
   checked: z.number(),
   ok: z.number(),
   mismatched: z.number(),
   missing: z.number(),
+  versions_checked: z.number().optional(),
+  versions_ok: z.number().optional(),
+});
+export type FixityCounts = z.infer<typeof FixityCountsSchema>;
+
+export const IntegrityCheckResultSchema = FixityCountsSchema.extend({
+  audit_chain: AuditChainSummarySchema.optional(),
 });
 export type IntegrityCheckResult = z.infer<typeof IntegrityCheckResultSchema>;
+
+export const LastIntegrityRunSchema = z.object({
+  last_run: z
+    .object({
+      ran_at: z.string(),
+      ran_by: z.string().nullable(),
+      fixity: FixityCountsSchema.nullable(),
+      audit_chain: AuditChainSummarySchema.nullable(),
+    })
+    .nullable(),
+});
+export type LastIntegrityRun = z.infer<typeof LastIntegrityRunSchema>;

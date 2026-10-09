@@ -34,7 +34,8 @@ On top of the extraction pipeline, the platform is being extended into a complet
 | Access control | Admin, reviewer and read-only reader roles; user groups; access grants per document, per series or per document type with permission levels (read / download / edit); confidentiality levels (public → secret) checked against each user's clearance; documents private to their uploader after review; delegated permissions (access management, extraction editing, archivist, sharing) |
 | Classification | Archival series (fonds) and chain-of-custody links between documents |
 | Search | French full-text search across every extracted field, with filters |
-| Integrity & audit | Original file kept and SHA-256-verified for every upload (scheduled fixity check), full audit log |
+| Versioning & traceability | File versions with restore (history never rewritten), optional re-extraction of a new version, before/after history of every field change, view/download logging |
+| Integrity & audit | Original and every file version kept and SHA-256-verified (scheduled fixity check); tamper-evident audit log (hash-chained per server, append-only, verifiable on demand) |
 | Export | Full archive export (data + files, JSON/SQL) and per-document export (JSON/SQL/CSV) |
 | Interface | French / English |
 
@@ -47,7 +48,6 @@ On top of the extraction pipeline, the platform is being extended into a complet
 
 | Area | Planned |
 |---|---|
-| Versioning & traceability | File versions with restore, before/after history of every field change, tamper-evident (hash-chained) audit log, view/download logging |
 | Hybrid local + cloud | Local server stays primary and works offline; a cloud copy (standard VM, no GPU) is synchronized both ways automatically; conflicts are flagged, never lost; documents uploaded remotely are processed by the local GPU; encrypted off-site backups |
 | Classification | Hierarchical classification scheme (*plan de classement*), tags, automatic filing, link suggestions |
 | Search | Full-text search inside the OCR text of every page, with highlighted snippets |

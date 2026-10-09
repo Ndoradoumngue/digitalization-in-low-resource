@@ -11,6 +11,8 @@ import {
   useAddUserToGroup,
   useRemoveUserFromGroup,
   useRunIntegrityCheck,
+  useLastIntegrityRun,
+  useVerifyAuditChain,
   useExportArchive,
 } from "../hooks/useAdmin";
 import { useSeries, useCreateSeries, useDeleteSeries } from "../hooks/useSeries";
@@ -18,7 +20,9 @@ import {
   CONFIDENTIALITY_LEVELS,
   type AccessGrant,
   type AdminUser,
+  type AuditChainSummary,
   type Confidentiality,
+  type FixityCounts,
   type Group,
   type PermissionLevel,
   type Series,
@@ -80,10 +84,62 @@ function ExportArchivePanel() {
 
 // ── Fixity / integrity check panel ──────────────────────────────────────────
 
-function IntegrityCheckPanel() {
+function FixityTiles({ counts }: { counts: FixityCounts }) {
   const { t } = useTranslation();
+  const tiles: [string, number | undefined, string][] = [
+    ["checked", counts.checked, "bg-gray-50 text-gray-800"],
+    ["ok", counts.ok, "bg-emerald-50 text-emerald-700"],
+    ["versionsChecked", counts.versions_checked, "bg-gray-50 text-gray-800"],
+    ["versionsOk", counts.versions_ok, "bg-emerald-50 text-emerald-700"],
+    ["mismatched", counts.mismatched, "bg-amber-50 text-amber-700"],
+    ["missing", counts.missing, "bg-red-50 text-red-700"],
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-3 text-center">
+      {tiles
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value, cls]) => (
+          <div key={key} className={`rounded-md py-2 ${cls}`}>
+            <div className="text-lg font-bold">{value}</div>
+            <div className="text-[11px] opacity-80">{t(`accessAdmin.integrity.${key}`)}</div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function ChainVerdict({ chain }: { chain: AuditChainSummary }) {
+  const { t } = useTranslation();
+  if (chain.ok) {
+    return (
+      <p className="text-sm text-emerald-700">
+        ✓ {t("accessAdmin.integrity.chainOk", { count: chain.checked })}
+      </p>
+    );
+  }
+  const brk = chain.first_broken;
+  return (
+    <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-800">
+      <p className="font-semibold">✗ {t("accessAdmin.integrity.chainBroken")}</p>
+      {brk && (
+        <p className="mt-1 text-xs">
+          {t(`accessAdmin.integrity.chainReason.${brk.reason}`, brk.reason)}
+          {brk.chain_seq != null && <> — {t("accessAdmin.integrity.chainPosition", { node: brk.origin_node ?? "?", seq: brk.chain_seq })}</>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function IntegrityCheckPanel() {
+  const { t, i18n } = useTranslation();
   const runMutation = useRunIntegrityCheck();
-  const result = runMutation.data;
+  const chainMutation = useVerifyAuditChain();
+  const { data: last } = useLastIntegrityRun();
+  const lastRun = last?.last_run ?? null;
+  // A run made from this page is newer than whatever was loaded before it.
+  const fixity = runMutation.data ?? lastRun?.fixity ?? null;
+  const chain = chainMutation.data ?? runMutation.data?.audit_chain ?? lastRun?.audit_chain ?? null;
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-5">
@@ -92,44 +148,66 @@ function IntegrityCheckPanel() {
         {t("accessAdmin.integrity.description")}
       </p>
 
-      <button
-        onClick={() => runMutation.mutate()}
-        disabled={runMutation.isPending}
-        className="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-      >
-        {runMutation.isPending ? t("accessAdmin.integrity.running") : t("accessAdmin.integrity.run")}
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => runMutation.mutate()}
+          disabled={runMutation.isPending}
+          className="px-3 py-2 rounded-md text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+        >
+          {runMutation.isPending ? t("accessAdmin.integrity.running") : t("accessAdmin.integrity.run")}
+        </button>
+        <button
+          onClick={() => chainMutation.mutate()}
+          disabled={chainMutation.isPending}
+          className="px-3 py-2 rounded-md text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+        >
+          {chainMutation.isPending ? t("accessAdmin.integrity.running") : t("accessAdmin.integrity.verifyChain")}
+        </button>
+      </div>
 
-      {runMutation.isError && (
-        <p className="text-xs text-red-600 mt-3">{(runMutation.error as Error).message}</p>
+      {(runMutation.isError || chainMutation.isError) && (
+        <p className="text-xs text-red-600 mt-3">
+          {((runMutation.error ?? chainMutation.error) as Error).message}
+        </p>
       )}
 
-      {result && (
-        <div className="mt-4 grid grid-cols-4 gap-3 text-center">
-          <div className="rounded-md bg-gray-50 py-2">
-            <div className="text-lg font-bold text-gray-800">{result.checked}</div>
-            <div className="text-[11px] text-gray-500">{t("accessAdmin.integrity.checked")}</div>
-          </div>
-          <div className="rounded-md bg-emerald-50 py-2">
-            <div className="text-lg font-bold text-emerald-700">{result.ok}</div>
-            <div className="text-[11px] text-emerald-600">{t("accessAdmin.integrity.ok")}</div>
-          </div>
-          <div className="rounded-md bg-amber-50 py-2">
-            <div className="text-lg font-bold text-amber-700">{result.mismatched}</div>
-            <div className="text-[11px] text-amber-600">{t("accessAdmin.integrity.mismatched")}</div>
-          </div>
-          <div className="rounded-md bg-red-50 py-2">
-            <div className="text-lg font-bold text-red-700">{result.missing}</div>
-            <div className="text-[11px] text-red-600">{t("accessAdmin.integrity.missing")}</div>
-          </div>
+      {lastRun && !runMutation.data && (
+        <p className="text-xs text-gray-500 mt-3">
+          {t("accessAdmin.integrity.lastRun", {
+            date: new Date(lastRun.ran_at).toLocaleString(i18n.language),
+            by: lastRun.ran_by ?? t("accessAdmin.integrity.scheduled"),
+          })}
+        </p>
+      )}
+      {!lastRun && !runMutation.data && (
+        <p className="text-xs text-gray-400 mt-3">{t("accessAdmin.integrity.neverRun")}</p>
+      )}
+
+      {fixity && (
+        <div className="mt-3">
+          <FixityTiles counts={fixity} />
         </div>
       )}
-      {result && (result.mismatched > 0 || result.missing > 0) && (
+      {fixity && (fixity.mismatched > 0 || fixity.missing > 0) && (
         <p className="text-xs text-gray-500 mt-3">
           {t("accessAdmin.integrity.failuresNotePrefix")}
           <code className="font-mono">integrity_check_failed</code>
           {t("accessAdmin.integrity.failuresNoteSuffix")}
         </p>
+      )}
+
+      {chain && (
+        <div className="mt-4">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
+            {t("accessAdmin.integrity.chainHeading")}
+          </h3>
+          <ChainVerdict chain={chain} />
+          {chainMutation.data?.chains.map((c) => (
+            <p key={c.origin_node} className="mt-1 text-[11px] text-gray-500 font-mono">
+              {c.origin_node}: {c.length} · {c.head_hash?.slice(0, 16)}…
+            </p>
+          ))}
+        </div>
       )}
     </div>
   );
