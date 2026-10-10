@@ -68,7 +68,7 @@ def _env(node_id, role, db_url, data_dir, **extra):
 class Proc:
     def __init__(self, name, args, env, log_dir):
         self.name = name
-        self.log = open(log_dir / f"{name}.log", "w")
+        self.log = open(log_dir / f"{name}.log", "a")
         self.p = subprocess.Popen(
             [sys.executable, *args],
             cwd=API_DIR,
@@ -116,6 +116,9 @@ async def _sql(url, sql, params=None, node=None):
     engine = create_async_engine(url, poolclass=NullPool)
     try:
         async with engine.begin() as conn:
+            # Never wait forever on another session's lock - fail with a
+            # diagnosis instead (see _wait_for).
+            await conn.execute(text("SET LOCAL lock_timeout = '20s'"))
             if node:
                 await conn.execute(text(f"SET LOCAL sdai.node_id = '{node}'"))
             result = await conn.execute(text(sql), params or {})
@@ -147,6 +150,22 @@ async def _ensure_table(url, node, table, fields):
         await engine.dispose()
 
 
+def _db_activity() -> str:
+    """What every session on the test server is doing - attached to a
+    timeout so a stuck run explains itself."""
+    base = TEST_DATABASE_URL.rpartition("/")[0]
+    try:
+        rows = sql(
+            f"{base}/postgres",
+            "SELECT datname, application_name, state, wait_event_type, wait_event,"
+            " left(query, 160) AS query, now() - xact_start AS xact_age FROM pg_stat_activity"
+            " WHERE datname LIKE 'sdai_test%' AND pid <> pg_backend_pid()",
+        )
+        return "\n".join(str(r) for r in rows)
+    except Exception as exc:  # noqa: BLE001 - diagnostics only
+        return f"(could not read pg_stat_activity: {exc})"
+
+
 def _wait_for(check, timeout=90, what="condition"):
     deadline = time.time() + timeout
     last = None
@@ -158,7 +177,7 @@ def _wait_for(check, timeout=90, what="condition"):
         except Exception as exc:  # noqa: BLE001 - keep polling
             last = exc
         time.sleep(1)
-    raise TimeoutError(f"timed out waiting for {what}: {last!r}")
+    raise TimeoutError(f"timed out waiting for {what}: {last!r}\nDB sessions:\n{_db_activity()}")
 
 
 def _snapshot(url):

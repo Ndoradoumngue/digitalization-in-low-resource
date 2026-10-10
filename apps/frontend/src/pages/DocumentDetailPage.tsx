@@ -12,6 +12,7 @@ import AccessSection from "../components/AccessSection";
 import ConfidentialityBadge, { asConfidentiality } from "../components/ConfidentialityBadge";
 import { useDocumentPermissions } from "../hooks/useAccess";
 import SeriesSection from "../components/SeriesSection";
+import TagsSection from "../components/TagsSection";
 import VersionsSection from "../components/VersionsSection";
 import HistorySection from "../components/HistorySection";
 
@@ -276,6 +277,9 @@ export default function DocumentDetailPage() {
                   seriesId={typeof data?.series_id === "string" ? data.series_id : null}
                   canEdit={perms.canAct}
                 />
+              )}
+              {tab === "record" && tableName && id && (
+                <TagsSection tableName={tableName} id={id} canEdit={perms.canAct} />
               )}
               {tab === "record" && tableName && id && <AccessSection
                   tableName={tableName}

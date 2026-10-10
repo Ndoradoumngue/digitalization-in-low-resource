@@ -14,6 +14,7 @@ import AccessSection from "../components/AccessSection";
 import ConfidentialityBadge, { asConfidentiality } from "../components/ConfidentialityBadge";
 import { useDocumentPermissions } from "../hooks/useAccess";
 import SeriesSection from "../components/SeriesSection";
+import TagsSection from "../components/TagsSection";
 
 // The Ops/QA detail view: every raw column, confidence/review-status
 // internals, and pipeline actions (retry a crashed extraction, hard
@@ -297,6 +298,7 @@ export default function DataBrowserDetailPage() {
                   canEdit={perms.canAct}
                 />
               )}
+              {tableName && id && <TagsSection tableName={tableName} id={id} canEdit={perms.canAct} />}
               {tableName && id && <AccessSection
                   tableName={tableName}
                   id={id}

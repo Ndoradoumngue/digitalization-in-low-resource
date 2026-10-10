@@ -430,6 +430,67 @@ CREATE TABLE IF NOT EXISTS sdai_series (
     UNIQUE (tenant_id, name)
 );
 
+-- Plan de classement (GED Phase 3): series form a tree. parent_id is the
+-- parent series, path the materialized chain of ids from the root down to
+-- the series itself ('/<root id>/.../<own id>/') for subtree queries and
+-- grant inheritance (classification_router keeps it in step with
+-- parent_id, and so does sync after applying a peer's moves). code is the
+-- archival classification code shown to users (e.g. 1.2.3), position the
+-- order among siblings. system_key marks a series the application itself
+-- created - 'to_be_filed' is where documents with no filing rule land.
+-- Names are unique among siblings, no longer across the whole tenant.
+ALTER TABLE sdai_series ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES sdai_series(id);
+ALTER TABLE sdai_series ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE sdai_series ADD COLUMN IF NOT EXISTS path TEXT;
+ALTER TABLE sdai_series ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sdai_series ADD COLUMN IF NOT EXISTS system_key TEXT;
+UPDATE sdai_series SET path = '/' || id::text || '/' WHERE path IS NULL;
+ALTER TABLE sdai_series DROP CONSTRAINT IF EXISTS sdai_series_tenant_id_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_series_sibling_name
+    ON sdai_series (tenant_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), name);
+CREATE INDEX IF NOT EXISTS idx_sdai_series_path ON sdai_series (tenant_id, path text_pattern_ops);
+CREATE INDEX IF NOT EXISTS idx_sdai_series_parent ON sdai_series (parent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_series_system_key
+    ON sdai_series (tenant_id, system_key) WHERE system_key IS NOT NULL;
+
+-- Free tags (GED Phase 3): a tenant-wide vocabulary, any number per
+-- document. A document tag is keyed like links and grants - tenant, table,
+-- document - since no real FK to a per-type table is possible.
+CREATE TABLE IF NOT EXISTS sdai_tags (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID NOT NULL REFERENCES sdai_tenants(id),
+    name       TEXT NOT NULL,
+    color      TEXT,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_tags_name ON sdai_tags (tenant_id, lower(name));
+
+CREATE TABLE IF NOT EXISTS sdai_document_tags (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID NOT NULL REFERENCES sdai_tenants(id),
+    table_name  TEXT NOT NULL,
+    document_id UUID NOT NULL,
+    tag_id      UUID NOT NULL REFERENCES sdai_tags(id) ON DELETE CASCADE,
+    created_by  UUID,
+    created_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sdai_document_tags_unique
+    ON sdai_document_tags (tenant_id, table_name, document_id, tag_id);
+CREATE INDEX IF NOT EXISTS idx_sdai_document_tags_tag ON sdai_document_tags (tag_id);
+
+-- Automatic filing (GED Phase 3): the series a newly filed document of a
+-- given type (its per-type table) goes into when nothing else filed it.
+CREATE TABLE IF NOT EXISTS sdai_type_series_defaults (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID NOT NULL REFERENCES sdai_tenants(id),
+    table_name TEXT NOT NULL,
+    series_id  UUID NOT NULL REFERENCES sdai_series(id) ON DELETE CASCADE,
+    created_by UUID,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (tenant_id, table_name)
+);
+
 -- A grant targets one document (scope 'document'), every document filed
 -- in one series ('series', series_id) or every document of one type
 -- ('doc_type', table_name = that type's per-tenant table). A document is
@@ -717,6 +778,28 @@ END $$;
 #    edited through SQL, except for rows not chained yet
 #    (_backfill_audit_chain). Bypassing triggers (superuser) is still
 #    caught by _verify_audit_chain.
+# A series inserted without a path (scripts, older code, a peer) gets one
+# from its parent, so the subtree logic never sees a NULL path. Own
+# statements for the same reason as _AUDIT_CHAIN_DDL.
+_SERIES_PATH_DDL = (
+    r"""
+CREATE OR REPLACE FUNCTION sdai_series_default_path() RETURNS trigger AS $$
+BEGIN
+    IF NEW.path IS NULL THEN
+        NEW.path := COALESCE((SELECT path FROM sdai_series WHERE id = NEW.parent_id), '/')
+            || NEW.id::text || '/';
+    END IF;
+    RETURN NEW;
+END
+$$ LANGUAGE plpgsql
+""",
+    """
+CREATE OR REPLACE TRIGGER sdai_series_default_path BEFORE INSERT OR UPDATE OF path ON sdai_series
+    FOR EACH ROW EXECUTE FUNCTION sdai_series_default_path()
+""",
+)
+
+
 _AUDIT_CHAIN_DDL = (
     r"""
 CREATE OR REPLACE FUNCTION sdai_audit_row_hash(
@@ -806,6 +889,8 @@ async def _init_db() -> None:
         # trigger on a table - see _TOUCH_ROW_FN_DDL's docstring.
         await conn.execute(text(_TOUCH_ROW_FN_DDL))
         for statement in _AUDIT_CHAIN_DDL:
+            await conn.execute(text(statement))
+        for statement in _SERIES_PATH_DDL:
             await conn.execute(text(statement))
         # Rebuild every ingest table's FTS index under the generalized
         # "any TEXT column" rule - see _backfill_fts_indexes's docstring.
@@ -1069,6 +1154,9 @@ _SYNCED_STATIC_TABLES = (
     "sdai_user_groups",
     "sdai_document_access",
     "sdai_series",
+    "sdai_tags",
+    "sdai_document_tags",
+    "sdai_type_series_defaults",
     "sdai_document_versions",
     "sdai_field_history",
     "batches",
@@ -3135,6 +3223,66 @@ async def _original_upload_path(conn, batch_document_id: str) -> str | None:
     return source_path
 
 
+# Name of the series documents land in when no filing rule covers their
+# type (sdai_series.system_key 'to_be_filed'). The UI shows it translated,
+# whatever the stored name.
+TO_BE_FILED_NAME = os.getenv("TO_BE_FILED_SERIES_NAME", "À classer")
+
+
+async def _to_be_filed_series(conn, tenant_id: str) -> str:
+    """The tenant's 'to be filed' series, created on first need - or an
+    existing root series of that name adopted as such."""
+    found = (
+        await conn.execute(
+            text(
+                "SELECT id::text FROM sdai_series"
+                " WHERE tenant_id = CAST(:tid AS uuid) AND system_key = 'to_be_filed'"
+            ),
+            {"tid": tenant_id},
+        )
+    ).scalar()
+    if found:
+        return found
+    adopted = (
+        await conn.execute(
+            text(
+                "UPDATE sdai_series SET system_key = 'to_be_filed'"
+                " WHERE tenant_id = CAST(:tid AS uuid) AND parent_id IS NULL AND name = :n"
+                " AND system_key IS NULL RETURNING id::text"
+            ),
+            {"tid": tenant_id, "n": TO_BE_FILED_NAME},
+        )
+    ).scalar()
+    if adopted:
+        return adopted
+    return (
+        await conn.execute(
+            text(
+                "INSERT INTO sdai_series (tenant_id, name, system_key, position)"
+                " VALUES (CAST(:tid AS uuid), :n, 'to_be_filed', 9999)"
+                " ON CONFLICT (tenant_id, system_key) WHERE system_key IS NOT NULL"
+                " DO UPDATE SET system_key = EXCLUDED.system_key RETURNING id::text"
+            ),
+            {"tid": tenant_id, "n": TO_BE_FILED_NAME},
+        )
+    ).scalar()
+
+
+async def _filing_series(conn, tenant_id: str, table_name: str) -> str:
+    """Series a newly filed document of this type goes into (GED Phase 3):
+    the type's filing rule (sdai_type_series_defaults), else 'to be filed'."""
+    rule = (
+        await conn.execute(
+            text(
+                "SELECT series_id::text FROM sdai_type_series_defaults"
+                " WHERE tenant_id = CAST(:tid AS uuid) AND table_name = :t"
+            ),
+            {"tid": tenant_id, "t": table_name},
+        )
+    ).scalar()
+    return rule or await _to_be_filed_series(conn, tenant_id)
+
+
 async def _store_extraction(
     batch_id: str,
     image_path: str,
@@ -3164,6 +3312,9 @@ async def _store_extraction(
 
         col_names = ["source_image_path", "batch_id", "confidence", "review_status", "record_id"]
         col_vals = [image_path, batch_id, confidence, review_status, record_id]
+        # Automatic filing: the type's filing rule, else "À classer".
+        col_names.append("series_id")
+        col_vals.append(await _filing_series(conn, tenant_id, table_name))
 
         if uploaded_by is not None:
             col_names.append("uploaded_by")

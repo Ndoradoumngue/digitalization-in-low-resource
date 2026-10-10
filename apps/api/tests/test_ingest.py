@@ -422,6 +422,8 @@ def test_store_extraction_grants_uploader_when_auto_approved(mock_db, monkeypatc
     """High-confidence documents skip review_required and land as
     auto_approved directly at ingest - privacy must apply immediately,
     not wait for a separate review action."""
+    # Automatic filing has its own real-PostgreSQL tests.
+    monkeypatch.setattr(ingest_router, "_filing_series", AsyncMock(return_value=None))
     monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
     monkeypatch.setattr(
         ingest_router, "_next_record_id", AsyncMock(return_value="DEFAULT-2026-000001")
@@ -452,6 +454,8 @@ def test_store_extraction_grants_uploader_when_auto_approved(mock_db, monkeypatc
 def test_store_extraction_no_grant_when_review_required(mock_db, monkeypatch):
     """A document still in the shared review pipeline stays open to every
     reviewer - no grant should be created."""
+    # Automatic filing has its own real-PostgreSQL tests.
+    monkeypatch.setattr(ingest_router, "_filing_series", AsyncMock(return_value=None))
     monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
     monkeypatch.setattr(
         ingest_router, "_next_record_id", AsyncMock(return_value="DEFAULT-2026-000001")
@@ -481,6 +485,8 @@ def test_store_extraction_no_grant_when_review_required(mock_db, monkeypatch):
 def test_store_extraction_no_grant_when_no_uploader(mock_db, monkeypatch):
     """auto_approved but no created_by on the batch (predates this
     feature) - stays open, no grant, no crash."""
+    # Automatic filing has its own real-PostgreSQL tests.
+    monkeypatch.setattr(ingest_router, "_filing_series", AsyncMock(return_value=None))
     monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
     monkeypatch.setattr(
         ingest_router, "_next_record_id", AsyncMock(return_value="DEFAULT-2026-000001")
@@ -822,6 +828,8 @@ def test_original_upload_path_none_without_source(mock_db):
 
 
 def test_store_extraction_records_original(mock_db, monkeypatch, tmp_path):
+    # Automatic filing has its own real-PostgreSQL tests.
+    monkeypatch.setattr(ingest_router, "_filing_series", AsyncMock(return_value=None))
     monkeypatch.setattr(ingest_router, "IMAGES_DIR", tmp_path / "images")
     monkeypatch.setattr(ingest_router, "_ensure_table", AsyncMock(return_value="unchanged"))
     monkeypatch.setattr(

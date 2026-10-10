@@ -66,13 +66,18 @@ SYNC_TABLES: tuple[SyncTable, ...] = (
     SyncTable("sdai_api_keys", order_by="created_at"),
     SyncTable("sdai_groups", order_by="created_at"),
     SyncTable("sdai_user_groups", pk=("user_id", "group_id")),
-    SyncTable("sdai_series", order_by="created_at"),
+    # Parents before children, whenever each was created (a series can be
+    # moved under a younger one).
+    SyncTable("sdai_series", order_by="length(path) - length(replace(path, '/', '')), created_at"),
+    SyncTable("sdai_tags", order_by="created_at"),
+    SyncTable("sdai_type_series_defaults", order_by="created_at"),
     SyncTable("sdai_document_access", order_by="granted_at"),
     SyncTable("batches", order_by="created_at"),
     SyncTable("batch_documents", order_by="ingested_at"),
     SyncTable("batch_document_pages", order_by="batch_document_id, page_number"),
     # (dynamic per-type tables are seeded here, after the batches they point at)
     SyncTable("sdai_document_links", order_by="created_at"),
+    SyncTable("sdai_document_tags", order_by="created_at"),
     SyncTable("sdai_document_versions", order_by="created_at, version_no"),
     SyncTable("sdai_field_history", order_by="created_at"),
     SyncTable("sdai_audit_log", insert_only=True, order_by="origin_node, chain_seq"),

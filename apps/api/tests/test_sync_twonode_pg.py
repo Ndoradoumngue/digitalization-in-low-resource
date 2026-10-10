@@ -1599,3 +1599,69 @@ def test_problem_files_listed_and_retried(nodes, dirs, monkeypatch):
     assert (
         run(local.q("SELECT 1 FROM sdai_sync_file_queue WHERE status = 'failed'")) == []
     )
+
+
+# ── Phase 3: series moves through sync ────────────────────────────────────────
+
+
+def test_concurrent_series_moves_converge_without_a_cycle(nodes):
+    local, cloud = nodes
+    p, q, child = _id(), _id(), _id()
+    for sid, name, parent in ((p, "P", None), (q, "Q", None), (child, "Q-child", q)):
+        run(
+            local.q(
+                "INSERT INTO sdai_series (id, tenant_id, name, parent_id)"
+                " VALUES (CAST(:s AS uuid), CAST(:t AS uuid), :n, CAST(:p AS uuid))",
+                {"s": sid, "t": DATA["tenant"], "n": name, "p": parent},
+            )
+        )
+    run(_sync(local, cloud))
+
+    def move(node, sid, parent):
+        parent_path = run(
+            node.one(
+                "SELECT path FROM sdai_series WHERE id = CAST(:p AS uuid)",
+                {"p": parent},
+            )
+        )["path"]
+        old = run(
+            node.one(
+                "SELECT path FROM sdai_series WHERE id = CAST(:s AS uuid)", {"s": sid}
+            )
+        )["path"]
+        run(
+            node.q(
+                "UPDATE sdai_series SET parent_id = CAST(:p AS uuid) WHERE id = CAST(:s AS uuid)",
+                {"p": parent, "s": sid},
+            )
+        )
+        run(
+            node.q(
+                "UPDATE sdai_series SET path = :new || substr(path, length(:old) + 1) WHERE starts_with(path, :old)",
+                {"new": f"{parent_path}{sid}/", "old": old},
+            )
+        )
+
+    # Disconnected: each side moves one series under the other - fine on
+    # each side alone, a cycle once both are merged.
+    move(local, p, q)
+    move(cloud, q, p)
+    run(_sync(local, cloud))
+    run(_sync(local, cloud))
+
+    def tree(node):
+        rows = run(
+            node.q(
+                "SELECT id::text, parent_id::text, path FROM sdai_series WHERE id = ANY(CAST(:ids AS uuid[]))",
+                {"ids": [p, q, child]},
+            )
+        )
+        return {r["id"]: (r["parent_id"], r["path"]) for r in rows}
+
+    local_tree, cloud_tree = tree(local), tree(cloud)
+    assert local_tree == cloud_tree
+    breaker = min(p, q)
+    other = q if breaker == p else p
+    assert local_tree[breaker] == (None, f"/{breaker}/")
+    assert local_tree[other] == (breaker, f"/{breaker}/{other}/")
+    assert local_tree[child][1] == local_tree[q][1] + f"{child}/"

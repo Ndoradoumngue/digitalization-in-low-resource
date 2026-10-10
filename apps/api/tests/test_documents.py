@@ -892,55 +892,7 @@ def test_delete_document_access_success(access_manager_client, mock_db):
 # ── fonds/series hierarchy ─────────────────────────────────────────────────────
 
 
-def test_list_series_returns_items(auth_client, mock_db):
-    import datetime as _dt
-
-    rows = [("series-1", "Land Deeds", "1990-2000", _dt.datetime(2026, 1, 1))]
-    mock_db.execute.return_value = make_result(rows=rows)
-    resp = auth_client.get("/api/db/series")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body[0]["name"] == "Land Deeds"
-    assert body[0]["description"] == "1990-2000"
-
-
-def test_create_series_requires_admin(auth_client):
-    resp = auth_client.post("/api/db/series", json={"name": "Land Deeds"})
-    assert resp.status_code == 403
-
-
-def test_create_series_success(admin_client, mock_db):
-    mock_db.execute.side_effect = [
-        make_result(scalar="series-uuid-1"),  # INSERT ... RETURNING id
-        make_result(),  # log_action
-    ]
-    resp = admin_client.post("/api/db/series", json={"name": "Land Deeds"})
-    assert resp.status_code == 200
-    assert resp.json() == {"id": "series-uuid-1", "name": "Land Deeds"}
-
-
-def test_create_series_duplicate_returns_409(admin_client, mock_db):
-    mock_db.execute.return_value = make_result(scalar=None)
-    resp = admin_client.post("/api/db/series", json={"name": "Land Deeds"})
-    assert resp.status_code == 409
-
-
-def test_delete_series_requires_admin(auth_client):
-    resp = auth_client.delete("/api/db/series/series-1")
-    assert resp.status_code == 403
-
-
-def test_delete_series_not_found(admin_client, mock_db):
-    mock_db.execute.return_value = make_result(one_or_none=None)
-    resp = admin_client.delete("/api/db/series/missing-id")
-    assert resp.status_code == 404
-
-
-def test_delete_series_success(admin_client, mock_db):
-    mock_db.execute.return_value = make_result(one_or_none=("series-1",))
-    resp = admin_client.delete("/api/db/series/series-1")
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+# Series tree endpoints: tests/test_classification.py (+ _pg).
 
 
 def test_assign_document_series_table_not_found(auth_client, mock_db, monkeypatch):

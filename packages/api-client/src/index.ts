@@ -79,6 +79,12 @@ import {
   type SyncResolution,
   type SyncResolveResponse,
   type SyncStatus,
+  FilingRulesSchema,
+  LinkSuggestionListSchema,
+  TagListSchema,
+  type FilingRules,
+  type LinkSuggestion,
+  type Tag,
 } from "@sdai/types";
 
 // ── Core fetch helper ─────────────────────────────────────────────────────────
@@ -353,6 +359,9 @@ export interface DbListParams {
   q?: string;
   reviewed_by?: string;
   series?: string;
+  /** with `series`: also every series below it */
+  include_subseries?: boolean;
+  tag?: string;
 }
 
 export async function fetchDbDocuments(params: DbListParams = {}): Promise<DbDocumentList> {
@@ -558,20 +567,35 @@ export async function fetchSeries(): Promise<Series[]> {
   return fetchJson("/api/db/series", SeriesListResponseSchema);
 }
 
+export interface SeriesInput {
+  name: string;
+  description?: string | null;
+  parent_id?: string | null;
+  code?: string | null;
+  position?: number;
+}
+
 export async function createSeries(
   name: string,
   description?: string,
+  extra: Omit<SeriesInput, "name" | "description"> = {},
 ): Promise<{ id: string; name: string }> {
   const res = await fetch("/api/db/series", withAuth({
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({ name, description, ...extra }),
   }));
   if (!res.ok) {
     const b = await res.json().catch(() => ({}));
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   return CreateSeriesResponseSchema.parse(await res.json());
+}
+
+/** Rename / recode / reorder / move (parent_id null = to the root). Only
+ * the keys present are changed. */
+export async function updateSeries(seriesId: string, changes: Partial<SeriesInput>): Promise<void> {
+  await sendJson(`/api/db/series/${encodeURIComponent(seriesId)}`, "PATCH", changes);
 }
 
 export async function deleteSeries(seriesId: string): Promise<void> {
@@ -996,5 +1020,69 @@ export async function retrySyncFiles(): Promise<{ retried: number }> {
     throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
   }
   return (await res.json()) as { retried: number };
+}
+
+// ── Classification: tags, filing rules, link suggestions ─────────────────────
+
+function docPath(tableName: string, id: string): string {
+  return `/api/db/documents/${encodeURIComponent(tableName)}/${encodeURIComponent(id)}`;
+}
+
+export async function fetchTags(): Promise<Tag[]> {
+  return fetchJson("/api/db/tags", TagListSchema);
+}
+
+export async function fetchDocumentTags(tableName: string, id: string): Promise<Tag[]> {
+  return fetchJson(`${docPath(tableName, id)}/tags`, TagListSchema);
+}
+
+/** Tag a document with an existing tag (`tagId`) or by name (an unknown
+ * name creates the tag). Returns the document's tags. */
+export async function addDocumentTag(
+  tableName: string,
+  id: string,
+  tag: { tagId?: string; name?: string },
+): Promise<Tag[]> {
+  return TagListSchema.parse(
+    await (
+      await sendJson(`${docPath(tableName, id)}/tags`, "POST", { tag_id: tag.tagId ?? null, name: tag.name ?? null })
+    ).json(),
+  );
+}
+
+export async function removeDocumentTag(tableName: string, id: string, tagId: string): Promise<Tag[]> {
+  return TagListSchema.parse(
+    await (await sendJson(`${docPath(tableName, id)}/tags/${encodeURIComponent(tagId)}`, "DELETE")).json(),
+  );
+}
+
+export async function createTag(name: string, color?: string | null): Promise<Tag> {
+  return TagListSchema.element.parse(
+    await (await sendJson("/api/db/tags", "POST", { name, color: color ?? null })).json(),
+  );
+}
+
+export async function updateTag(tagId: string, changes: { name?: string; color?: string | null }): Promise<void> {
+  await sendJson(`/api/db/tags/${encodeURIComponent(tagId)}`, "PATCH", changes);
+}
+
+export async function mergeTag(tagId: string, intoId: string): Promise<void> {
+  await sendJson(`/api/db/tags/${encodeURIComponent(tagId)}/merge`, "POST", { into_id: intoId });
+}
+
+export async function deleteTag(tagId: string): Promise<void> {
+  await sendJson(`/api/db/tags/${encodeURIComponent(tagId)}`, "DELETE");
+}
+
+export async function fetchFilingRules(): Promise<FilingRules> {
+  return fetchJson("/api/db/filing-rules", FilingRulesSchema);
+}
+
+export async function setFilingRule(tableName: string, seriesId: string | null): Promise<void> {
+  await sendJson(`/api/db/filing-rules/${encodeURIComponent(tableName)}`, "PUT", { series_id: seriesId });
+}
+
+export async function fetchLinkSuggestions(tableName: string, id: string): Promise<LinkSuggestion[]> {
+  return fetchJson(`${docPath(tableName, id)}/link-suggestions`, LinkSuggestionListSchema);
 }
 

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { seriesTrail } from "@sdai/types";
 import { useSeries, useAssignDocumentSeries } from "../hooks/useSeries";
+import { flattenTree, seriesLabel } from "../utils/series";
 
 export default function SeriesSection({
   tableName,
@@ -19,7 +21,8 @@ export default function SeriesSection({
   const assignMutation = useAssignDocumentSeries(tableName, id);
   const [editing, setEditing] = useState(false);
 
-  const currentName = series?.find((s) => s.id === seriesId)?.name ?? null;
+  // Breadcrumb through the plan de classement, root first.
+  const trail = seriesTrail(series ?? [], seriesId);
 
   function assign(value: string) {
     assignMutation.mutate(value || null, { onSuccess: () => setEditing(false) });
@@ -51,8 +54,11 @@ export default function SeriesSection({
             className="h-8 flex-1 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
           >
             <option value="">{t("series.none")}</option>
-            {(series ?? []).map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+            {flattenTree(series ?? []).map(({ series: s, depth }) => (
+              <option key={s.id} value={s.id}>
+                {"  ".repeat(depth)}
+                {seriesLabel(s, t)}
+              </option>
             ))}
           </select>
           <button
@@ -62,9 +68,18 @@ export default function SeriesSection({
             {t("series.cancel")}
           </button>
         </div>
+      ) : trail.length > 0 ? (
+        <nav aria-label={t("series.breadcrumb")} className="text-sm text-gray-700 flex flex-wrap items-center gap-1">
+          {trail.map((s, i) => (
+            <span key={s.id} className="flex items-center gap-1">
+              {i > 0 && <span className="text-gray-300">›</span>}
+              <span className={i === trail.length - 1 ? "font-medium" : "text-gray-500"}>{seriesLabel(s, t)}</span>
+            </span>
+          ))}
+        </nav>
       ) : (
         <p className="text-sm text-gray-700">
-          {currentName ?? <span className="text-gray-400">{t("series.notAssigned")}</span>}
+          <span className="text-gray-400">{t("series.notAssigned")}</span>
         </p>
       )}
     </div>

@@ -441,6 +441,12 @@ from versions_router import router as versions_router
 
 app.include_router(versions_router)
 
+# ── Classification router (series tree, tags, filing rules, link suggestions) ─
+
+from classification_router import router as classification_router
+
+app.include_router(classification_router)
+
 # ── Review queue router ───────────────────────────────────────────────────────
 
 from review_router import router as review_router

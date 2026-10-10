@@ -116,7 +116,13 @@
     "loading": "Loading…",
     "noLinks": "No related documents yet.",
     "relatesTo": "Relates to",
-    "referencedBy": "Referenced by"
+    "referencedBy": "Referenced by",
+    "suggestions": "Suggested links",
+    "suggestedRelation": "concerns",
+    "relationLabel": "Relation",
+    "mentions": "cited here ({{value}})",
+    "mentionedBy": "cites this document ({{value}})",
+    "linkIt": "Link"
   },
   "linkPicker": {
     "searchPlaceholder": "Search for a document to link…",
@@ -135,7 +141,26 @@
     "assign": "+ Assign",
     "none": "No series",
     "cancel": "Cancel",
-    "notAssigned": "Not assigned to a series"
+    "notAssigned": "Not assigned to a series",
+    "toBeFiled": "To be filed",
+    "planHeading": "Filing plan",
+    "addRoot": "+ Series",
+    "allDocuments": "All documents",
+    "noneYet": "No series yet.",
+    "includeSubseries": "Include sub-series",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "addChild": "Add a sub-series",
+    "rename": "Rename",
+    "move": "Move",
+    "delete": "Delete",
+    "moveTo": "Move under",
+    "root": "(top level)",
+    "codePlaceholder": "1.2",
+    "namePlaceholder": "Series name",
+    "code": "Code",
+    "name": "Name",
+    "breadcrumb": "Place in the filing plan"
   },
   "access": {
     "group": "Group",
@@ -464,6 +489,27 @@
     "scopedGrants": {
       "loading": "Loading…",
       "confirmRemove": "Remove this grant? If it is the last one, the documents it covers become visible to everyone again."
+    },
+    "filing": {
+      "heading": "Automatic filing",
+      "help": "Series each new document of a type is filed into. Without a rule, documents go to \"To be filed\".",
+      "noTypes": "No document type yet.",
+      "toBeFiled": "To be filed (default)",
+      "seriesFor": "Series for {{type}}"
+    },
+    "tags": {
+      "heading": "Tags",
+      "help": "Tenant-wide vocabulary. Anyone who may edit a document can tag it; renaming, merging and deleting tags is for admins.",
+      "none": "No tags yet.",
+      "count_one": "{{count}} document",
+      "count_other": "{{count}} documents",
+      "edit": "Edit",
+      "delete": "Delete",
+      "confirmDelete": "Delete the tag \"{{name}}\"? It is removed from every document.",
+      "name": "Name",
+      "color": "Colour",
+      "mergeInto": "Merge into…",
+      "merge": "Merge"
     }
   },
   "audit": {
@@ -497,7 +543,17 @@
       "integrity_chain_broken": "audit chain broken",
       "sync_conflict": "Sync conflict",
       "sync_conflict_resolved": "Sync conflict resolved",
-      "sync_files_retried": "Sync files retried"
+      "sync_files_retried": "Sync files retried",
+      "series_updated": "Series updated",
+      "series_moved": "Series moved",
+      "series_deleted": "Series deleted",
+      "tag_created": "Tag created",
+      "tag_updated": "Tag updated",
+      "tags_merged": "Tags merged",
+      "tag_deleted": "Tag deleted",
+      "document_tagged": "Document tagged",
+      "document_untagged": "Document untagged",
+      "filing_rule_set": "Filing rule set"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -834,5 +890,13 @@
       },
       "help": "Nightly encrypted backups with restic (30 daily + 12 monthly). Sync is not a backup - see RESTORE.md to restore."
     }
+  },
+  "tags": {
+    "heading": "Tags",
+    "none": "No tags",
+    "addPlaceholder": "Add a tag…",
+    "add": "Add",
+    "filter": "Filter by tag",
+    "all": "All tags"
   }
 }

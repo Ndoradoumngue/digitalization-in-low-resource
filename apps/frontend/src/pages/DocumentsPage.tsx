@@ -3,6 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useDbDocuments, useDbReviewers, useDbTypes } from "../hooks/useDocumentsDb";
 import { useSeries } from "../hooks/useSeries";
+import { useTags } from "../hooks/useTags";
+import SeriesTree from "../components/SeriesTree";
+import { seriesLabel } from "../utils/series";
 import NavSidebar from "../components/NavSidebar";
 import type { DbListParams } from "@sdai/api-client";
 import { summarizeExtra } from "../utils/format";
@@ -30,6 +33,9 @@ export default function DocumentsPage() {
   const [category, setCategory] = useState("");
   const [reviewedBy, setReviewedBy] = useState("");
   const [seriesId, setSeriesId] = useState("");
+  const [includeSubseries, setIncludeSubseries] = useState(true);
+  const [tagId, setTagId] = useState("");
+  const { data: tags } = useTags();
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [q, setQ] = useState("");
@@ -41,7 +47,8 @@ export default function DocumentsPage() {
     page_size: PAGE_SIZE,
     ...(category && { document_type: category }),
     ...(reviewedBy && { reviewed_by: reviewedBy }),
-    ...(seriesId && { series: seriesId }),
+    ...(seriesId && { series: seriesId, include_subseries: includeSubseries }),
+    ...(tagId && { tag: tagId }),
     ...(dateFrom && { date_from: dateFrom }),
     ...(dateTo && { date_to: dateTo }),
     ...(q && { q }),
@@ -57,9 +64,9 @@ export default function DocumentsPage() {
 
   const seriesName = useMemo(() => {
     const map = new Map<string, string>();
-    for (const s of series ?? []) map.set(s.id, s.name);
+    for (const s of series ?? []) map.set(s.id, seriesLabel(s, t, false));
     return map;
-  }, [series]);
+  }, [series, t]);
 
   const handleSearch = useCallback((value: string) => {
     setInputQ(value);
@@ -78,7 +85,7 @@ export default function DocumentsPage() {
   const rows = data?.results ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = category || reviewedBy || seriesId || dateFrom || dateTo || q;
+  const hasFilters = category || reviewedBy || seriesId || tagId || dateFrom || dateTo || q;
 
   return (
     <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
@@ -113,19 +120,19 @@ export default function DocumentsPage() {
             ))}
           </select>
 
-          {series && series.length > 0 && (
+          {tags && tags.length > 0 && (
             <select
-              value={seriesId}
-              onChange={(e) => { setSeriesId(e.target.value); setPage(1); }}
+              value={tagId}
+              onChange={(e) => { setTagId(e.target.value); setPage(1); }}
               className="h-9 rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              aria-label={t("tags.filter")}
             >
-              <option value="">{t("documents.allSeries")}</option>
-              {series.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
+              <option value="">{t("tags.all")}</option>
+              {tags.map((tag) => (
+                <option key={tag.id} value={tag.id}>{tag.name}</option>
               ))}
             </select>
           )}
-
           <label className="flex items-center gap-1 text-xs text-gray-500">
             {t("documents.from")}
             <input
@@ -148,7 +155,7 @@ export default function DocumentsPage() {
           {hasFilters && (
             <button
               onClick={() => {
-                setCategory(""); setReviewedBy(""); setSeriesId("");
+                setCategory(""); setReviewedBy(""); setSeriesId(""); setTagId("");
                 setDateFrom(""); setDateTo("");
                 setQ(""); setInputQ(""); setPage(1);
               }}
@@ -180,7 +187,14 @@ export default function DocumentsPage() {
           </div>
         )}
 
-        {/* Results */}
+        {/* Plan de classement + results */}
+        <div className="flex-1 flex overflow-hidden">
+        <SeriesTree
+          selectedId={seriesId}
+          includeSubseries={includeSubseries}
+          onSelect={(id) => { setSeriesId(id); setPage(1); }}
+          onIncludeSubseriesChange={(value) => { setIncludeSubseries(value); setPage(1); }}
+        />
         <div className="flex-1 overflow-auto p-6">
           {error ? (
             <div className="text-sm text-red-500">{t("documents.loadError")}</div>
@@ -236,6 +250,7 @@ export default function DocumentsPage() {
               ))}
             </div>
           )}
+        </div>
         </div>
 
         {/* Pagination */}

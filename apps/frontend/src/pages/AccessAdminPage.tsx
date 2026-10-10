@@ -15,7 +15,16 @@ import {
   useVerifyAuditChain,
   useExportArchive,
 } from "../hooks/useAdmin";
-import { useSeries, useCreateSeries, useDeleteSeries } from "../hooks/useSeries";
+import {
+  useSeries,
+  useCreateSeries,
+  useDeleteSeries,
+  useFilingRules,
+  useSetFilingRule,
+} from "../hooks/useSeries";
+import { useDeleteTag, useMergeTag, useTags, useUpdateTag } from "../hooks/useTags";
+import { TagChip } from "../components/TagsSection";
+import { flattenTree, seriesLabel } from "../utils/series";
 import {
   CONFIDENTIALITY_LEVELS,
   type AccessGrant,
@@ -78,6 +87,140 @@ function ExportArchivePanel() {
       {exportMutation.isSuccess && !exportMutation.isPending && (
         <p className="text-xs text-emerald-600 mt-3">{t("accessAdmin.export.started")}</p>
       )}
+    </div>
+  );
+}
+
+// ── Automatic filing rules ───────────────────────────────────────────────────
+
+function FilingRulesPanel({ series }: { series: Series[] }) {
+  const { t } = useTranslation();
+  const { data: rules, isLoading } = useFilingRules();
+  const { data: types } = useDbTypes();
+  const setRule = useSetFilingRule();
+  const typeLabel = new Map((types ?? []).map((ty) => [ty.table_name, ty.document_type]));
+  const options = flattenTree(series);
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-5">
+      <h2 className="text-sm font-bold text-gray-900 mb-1">{t("accessAdmin.filing.heading")}</h2>
+      <p className="text-xs text-gray-500 mb-3">{t("accessAdmin.filing.help")}</p>
+      {isLoading ? (
+        <p className="text-xs text-gray-400">{t("common.loading")}</p>
+      ) : (rules?.rules ?? []).length === 0 ? (
+        <p className="text-xs text-gray-400">{t("accessAdmin.filing.noTypes")}</p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {rules!.rules.map((rule) => (
+            <div key={rule.table_name} className="flex items-center justify-between gap-3 py-2">
+              <span className="text-sm text-gray-800">{typeLabel.get(rule.table_name) ?? rule.table_name}</span>
+              <select
+                value={rule.series_id ?? ""}
+                onChange={(e) => setRule.mutate({ tableName: rule.table_name, seriesId: e.target.value || null })}
+                className="h-8 w-64 rounded-md border border-gray-300 px-2 text-sm"
+                aria-label={t("accessAdmin.filing.seriesFor", { type: rule.table_name })}
+              >
+                <option value="">{t("accessAdmin.filing.toBeFiled")}</option>
+                {options.map(({ series: s, depth }) => (
+                  <option key={s.id} value={s.id}>
+                    {"\u00a0\u00a0".repeat(depth)}
+                    {seriesLabel(s, t)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+      {setRule.error && <p className="mt-2 text-xs text-red-600">{(setRule.error as Error).message}</p>}
+    </div>
+  );
+}
+
+// ── Tag vocabulary ───────────────────────────────────────────────────────────
+
+function TagsAdminPanel() {
+  const { t } = useTranslation();
+  const confirm = useConfirm();
+  const { data: tags, isLoading } = useTags();
+  const updateTag = useUpdateTag();
+  const mergeTag = useMergeTag();
+  const deleteTag = useDeleteTag();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState("#4f46e5");
+  const [mergeInto, setMergeInto] = useState("");
+  const error = (updateTag.error ?? mergeTag.error ?? deleteTag.error) as Error | null;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-5">
+      <h2 className="text-sm font-bold text-gray-900 mb-1">{t("accessAdmin.tags.heading")}</h2>
+      <p className="text-xs text-gray-500 mb-3">{t("accessAdmin.tags.help")}</p>
+      {isLoading ? (
+        <p className="text-xs text-gray-400">{t("common.loading")}</p>
+      ) : (tags ?? []).length === 0 ? (
+        <p className="text-xs text-gray-400">{t("accessAdmin.tags.none")}</p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {tags!.map((tag) => (
+            <div key={tag.id} className="py-2">
+              <div className="flex items-center gap-2">
+                <TagChip tag={tag} />
+                <span className="text-xs text-gray-400">{t("accessAdmin.tags.count", { count: tag.document_count ?? 0 })}</span>
+                <span className="ml-auto flex gap-3 text-xs">
+                  <button
+                    onClick={() => {
+                      setEditing(tag.id);
+                      setName(tag.name);
+                      setColor(tag.color ?? "#4f46e5");
+                      setMergeInto("");
+                    }}
+                    className="text-indigo-600 hover:underline"
+                  >
+                    {t("accessAdmin.tags.edit")}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (await confirm({ message: t("accessAdmin.tags.confirmDelete", { name: tag.name }) }))
+                        deleteTag.mutate(tag.id);
+                    }}
+                    className="text-gray-400 hover:text-red-600"
+                  >
+                    {t("accessAdmin.tags.delete")}
+                  </button>
+                </span>
+              </div>
+              {editing === tag.id && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input value={name} onChange={(e) => setName(e.target.value)} className="h-8 rounded border border-gray-300 px-2 text-sm" aria-label={t("accessAdmin.tags.name")} />
+                  <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-8 w-10" aria-label={t("accessAdmin.tags.color")} />
+                  <button
+                    onClick={() => updateTag.mutate({ id: tag.id, changes: { name, color } }, { onSuccess: () => setEditing(null) })}
+                    className="px-2 py-1 rounded bg-indigo-600 text-white text-xs"
+                  >
+                    {t("common.save")}
+                  </button>
+                  <select value={mergeInto} onChange={(e) => setMergeInto(e.target.value)} className="h-8 rounded border border-gray-300 text-xs" aria-label={t("accessAdmin.tags.mergeInto")}>
+                    <option value="">{t("accessAdmin.tags.mergeInto")}</option>
+                    {tags!.filter((o) => o.id !== tag.id).map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    disabled={!mergeInto}
+                    onClick={() => mergeTag.mutate({ id: tag.id, intoId: mergeInto }, { onSuccess: () => setEditing(null) })}
+                    className="px-2 py-1 rounded border border-gray-300 text-xs disabled:opacity-40"
+                  >
+                    {t("accessAdmin.tags.merge")}
+                  </button>
+                  <button onClick={() => setEditing(null)} className="text-xs text-gray-400">{t("common.cancel")}</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-600">{error.message}</p>}
     </div>
   );
 }
@@ -275,10 +418,10 @@ function SeriesPanel({ series, isLoading }: { series: Series[]; isLoading: boole
         <p className="text-sm text-gray-400">{t("accessAdmin.series.none")}</p>
       ) : (
         <div className="divide-y divide-gray-100">
-          {series.map((s) => (
-            <div key={s.id} className="flex items-center justify-between gap-2 py-2">
+          {flattenTree(series).map(({ series: s, depth }) => (
+            <div key={s.id} className="flex items-center justify-between gap-2 py-2" style={{ paddingLeft: depth * 16 }}>
               <div>
-                <span className="text-sm font-medium text-gray-800">{s.name}</span>
+                <span className="text-sm font-medium text-gray-800">{seriesLabel(s, t)}</span>
                 {s.description && (
                   <span className="text-xs text-gray-400 ml-2">{s.description}</span>
                 )}
@@ -668,6 +811,8 @@ export default function AccessAdminPage() {
           <GroupsPanel groups={groups ?? []} isLoading={groupsLoading} />
           <UsersPanel users={users ?? []} groups={groups ?? []} isLoading={usersLoading} />
           <SeriesPanel series={series ?? []} isLoading={seriesLoading} />
+          <FilingRulesPanel series={series ?? []} />
+          <TagsAdminPanel />
           <ScopedGrantsPanel scope="series" />
           <ScopedGrantsPanel scope="doc_type" />
           <IntegrityCheckPanel />

@@ -27,6 +27,7 @@ sdai_digitalization/
 │   │   ├── review_router.py     # /api/review/*
 │   │   ├── versions_router.py   # /api/db/documents/{t}/{id}/versions|history (GED file versions, history)
 │   │   ├── history.py           # field-history diff + insert - call from every path that changes fields
+│   │   ├── classification_router.py  # /api/db series tree, tags, filing rules, link suggestions
 │   │   ├── admin_router.py      # /api/admin/* (admin-only)
 │   │   ├── sync/                # local/cloud sync (GED Phase 8)
 │   │   │   ├── capture.py       # changelog triggers, row clocks, SYNC_TABLES, seed, node-local tables
@@ -183,6 +184,7 @@ pre-commit run --all-files  # run manually
   - per-type tables are only created/altered through `_ensure_table` (it emits the ddl event the peer replays);
   - work that must happen once per deployment (numbering, extraction, scheduled jobs) runs on the local node only (`NODE_ROLE == "local"`; `_require_processing_node()` for routes, `_submit()` instead of `_queue.put`);
   - writes made on behalf of the peer run with `SET LOCAL sdai.applying_sync = on` (only `sync.apply` does this) - never set it elsewhere, those writes would not be synchronised.
+- **Series tree**: never write `sdai_series.path` by hand outside `classification_router` - moves go through `PATCH /api/db/series/{id}` (cycle check + subtree rewrite), and series-scope access always goes through `documents_router._series_grant_match` (subtree inheritance).
 - `ingest_router.py` owns `_engine()`. Both `auth.py` and `audit.py` import it lazily (inside function bodies) to avoid the circular import: `ingest_router → auth → ingest_router`.
 - **Deduplication**: `_compute_hash(path)` computes SHA-256 in 64 KB chunks; `_find_duplicate(hash)` queries all tables with a `content_hash` column. `_register_and_enqueue()` calls both before touching the queue. Duplicates get `status='duplicate'` in `batch_documents` and are counted in the `duplicates_skipped` field of `GET /api/ingest/status/{batch_id}`.
 - Every per-type document table has a `content_hash TEXT` column with a unique index (`idx_{table_name}_content_hash`).

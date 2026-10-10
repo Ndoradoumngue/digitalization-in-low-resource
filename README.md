@@ -32,8 +32,8 @@ On top of the extraction pipeline, the platform is being extended into a complet
 | Identification | Persistent, citable record number per document (e.g. `LAND-2026-000123`) |
 | Multi-organisation | One installation, several ministries/departments, physically separate tables per tenant |
 | Access control | Admin, reviewer and read-only reader roles; user groups; access grants per document, per series or per document type with permission levels (read / download / edit); confidentiality levels (public → secret) checked against each user's clearance; documents private to their uploader after review; delegated permissions (access management, extraction editing, archivist, sharing) |
-| Classification | Archival series (fonds) and chain-of-custody links between documents |
-| Search | French full-text search across every extracted field, with filters |
+| Classification | Hierarchical plan de classement (series tree with codes, grants inherited by sub-series), tags, automatic filing by document type ("À classer" otherwise), chain-of-custody links with automatic link suggestions |
+| Search | French full-text search across every extracted field, with filters (series incl. sub-series, tags, type, reviewer, dates) |
 | Versioning & traceability | File versions with restore (history never rewritten), optional re-extraction of a new version, before/after history of every field change, view/download logging |
 | Integrity & audit | Original and every file version kept and SHA-256-verified (scheduled fixity check); tamper-evident audit log (hash-chained per server, append-only, verifiable on demand) |
 | Hybrid local + cloud | The local server stays primary and works offline; a cloud copy (standard VM at DigitalOcean or AWS, no GPU) is synchronized both ways automatically - field-level merge, conflicts flagged for a decision and never lost, files copied, documents uploaded remotely processed by the local GPU, restored or rebuilt servers catch up by themselves; admin Synchronisation page with alerts |
@@ -59,7 +59,6 @@ restore and rebuild procedures are in [RESTORE.md](./RESTORE.md).
 
 | Area | Planned |
 |---|---|
-| Classification | Hierarchical classification scheme (*plan de classement*), tags, automatic filing, link suggestions |
 | Search | Full-text search inside the OCR text of every page, with highlighted snippets |
 | Sharing & export | Traceable download of originals, expiring/password-protected share links, selective export with integrity manifest |
 | Lifecycle | Trash and restore, archiving, retention rules, legal hold, two-person approved destruction with a generated destruction certificate |

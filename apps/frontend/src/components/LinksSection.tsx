@@ -1,8 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import type { DocumentLink } from "@sdai/types";
-import { useDocumentLinks, useDeleteDocumentLink } from "../hooks/useDocumentLinks";
+import { useQueryClient } from "@tanstack/react-query";
+import type { DocumentLink, LinkSuggestion } from "@sdai/types";
+import {
+  useCreateDocumentLink,
+  useDocumentLinks,
+  useDeleteDocumentLink,
+} from "../hooks/useDocumentLinks";
+import { useLinkSuggestions } from "../hooks/useTags";
 import DocumentLinkPicker from "./DocumentLinkPicker";
 
 function LinkRow({
@@ -58,6 +64,62 @@ function LinkRow({
   );
 }
 
+/** Documents this one cites (or that cite it) by reference number - one
+ * click links them with a free-text relation (pre-filled). */
+function SuggestionsPanel({ tableName, id, basePath }: { tableName: string; id: string; basePath: string }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { data: suggestions, isLoading } = useLinkSuggestions(tableName, id);
+  const createMutation = useCreateDocumentLink(tableName, id);
+  const queryClient = useQueryClient();
+  const [relation, setRelation] = useState(t("links.suggestedRelation"));
+
+  if (isLoading || !suggestions || suggestions.length === 0) return null;
+
+  function link(s: LinkSuggestion) {
+    createMutation.mutate(
+      { to_table: s.table_name, to_id: s.id, relation: relation.trim() || t("links.suggestedRelation") },
+      { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["link-suggestions", tableName, id] }) },
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2">
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <span className="text-[11px] font-semibold text-amber-800">{t("links.suggestions")}</span>
+        <input
+          value={relation}
+          onChange={(e) => setRelation(e.target.value)}
+          className="h-6 w-32 rounded border border-amber-300 bg-white px-1 text-[11px]"
+          aria-label={t("links.relationLabel")}
+        />
+      </div>
+      {suggestions.map((s) => (
+        <div key={`${s.table_name}-${s.id}`} className="flex items-center gap-2 py-1 text-xs">
+          <button
+            onClick={() => navigate(`${basePath}/${s.table_name}/${s.id}`)}
+            className="flex-1 min-w-0 text-left hover:underline truncate"
+          >
+            <span className="font-medium text-gray-800">{s.label ?? s.record_id ?? s.document_type}</span>
+            <span className="text-gray-500">
+              {" "}
+              · {t(s.direction === "mentions" ? "links.mentions" : "links.mentionedBy", { value: s.matched })}
+            </span>
+          </button>
+          <button
+            onClick={() => link(s)}
+            disabled={createMutation.isPending}
+            className="flex-shrink-0 px-2 py-0.5 rounded bg-amber-600 text-white text-[11px] font-semibold disabled:opacity-40"
+          >
+            {t("links.linkIt")}
+          </button>
+        </div>
+      ))}
+      {createMutation.error && <p className="text-[11px] text-red-600">{(createMutation.error as Error).message}</p>}
+    </div>
+  );
+}
+
 export default function LinksSection({
   tableName,
   id,
@@ -108,6 +170,8 @@ export default function LinksSection({
           onDone={() => setShowPicker(false)}
         />
       )}
+
+      {canEdit && <SuggestionsPanel tableName={tableName} id={id} basePath={basePath} />}
 
       {isLoading ? (
         <p className="text-sm text-gray-400">{t("links.loading")}</p>

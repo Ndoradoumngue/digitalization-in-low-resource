@@ -288,6 +288,35 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The file of this version is no longer on disk",
         "fr": "Le fichier de cette version n'est plus sur le disque",
     },
+    "common.invalid_id": {
+        "en": "Invalid identifier",
+        "fr": "Identifiant invalide",
+    },
+    # ── classification_router.py ─────────────────────────────────────────
+    "classification.tag_not_found": {
+        "en": "Tag not found",
+        "fr": "Étiquette introuvable",
+    },
+    "classification.tag_exists": {
+        "en": "A tag named '{name}' already exists",
+        "fr": "Une étiquette « {name} » existe déjà",
+    },
+    "classification.tag_name_required": {
+        "en": "Give either an existing tag or a tag name",
+        "fr": "Indiquez soit une étiquette existante, soit un nom d'étiquette",
+    },
+    "classification.tag_merge_self": {
+        "en": "A tag cannot be merged into itself",
+        "fr": "Une étiquette ne peut pas être fusionnée avec elle-même",
+    },
+    "classification.series_cycle": {
+        "en": "A series cannot be moved under itself or one of its sub-series",
+        "fr": "Une série ne peut pas être déplacée sous elle-même ou sous une de ses sous-séries",
+    },
+    "classification.series_not_empty": {
+        "en": "This series is not empty ({children} sub-series, {documents} documents, {rules} filing rules)",
+        "fr": "Cette série n'est pas vide ({children} sous-séries, {documents} documents, {rules} règles de classement)",
+    },
     # ── sync/admin.py ────────────────────────────────────────────────────
     "sync.conflict_not_found": {
         "en": "Sync conflict not found",

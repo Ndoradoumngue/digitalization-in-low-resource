@@ -93,6 +93,44 @@ This file captures what has been built, why, and what is known to be incomplete 
 - **UI**: `DocumentDetailPage` right pane has tabs Record / Versions / History (`VersionsSection`, `HistorySection`, `hooks/useVersions.ts`); the integrity panel on `AccessAdminPage` shows the last run, version counts and the chain verdict with a "Verify audit chain" button; new actions in `AuditPage`. fr/en.
 - **Tests**: `tests/test_versions.py` (mocked: Stage 3 routing, version fixity, diff, filename sanitizing) and `tests/test_versions_pg.py` (real PostgreSQL, opt-in `-m pg`: backfill, upload/restore/download, lock/archive refusals, re-extraction into the same row, history on edit/review/re-extract/re-merge, view/download audit, chain under concurrency, edited/deleted/truncated rows, legacy chaining, fixity on versions).
 
+### Classification - Plan de Classement, Tags, Automatic Filing (GED Phase 3)
+
+Code in `apps/api/classification_router.py` (routes under `/api/db`), UI in `SeriesTree`,
+`SeriesSection`, `TagsSection`, `LinksSection` and the admin panels on `AccessAdminPage`.
+
+- **Series tree**: `sdai_series` gains `parent_id`, `code` (archival code, e.g. `1.2.3`), `path`
+  (materialized `/<root id>/.../<own id>/`, filled by the `sdai_series_default_path` trigger when
+  missing), `position` and `system_key`. Names are unique among siblings. `GET /series` (flat, with
+  `document_count` of documents the caller can see), `GET /series/tree`, `POST /series` (optional
+  `parent_id`), `PATCH /series/{id}` (rename, code, position, move - refuses cycles, rewrites the
+  subtree's paths in the same transaction, one move at a time per tenant), `DELETE /series/{id}` only when
+  empty (no sub-series, no document incl. trashed, no filing rule). Assigning a document stays
+  `PATCH /documents/{t}/{id}/series`.
+- **Inherited grants**: a series-scope grant covers every document filed anywhere below the series
+  (`documents_router._series_grant_match`: direct id match OR the id in the document series' path).
+- **Filters**: the document list/search take `include_subseries=true` (with `series`) and `tag`.
+- **Tags**: `sdai_tags` (tenant vocabulary, case-insensitive unique names, optional colour) and
+  `sdai_document_tags`. Any user with `edit` on a document tags/untags it (a new name creates the tag);
+  `GET /tags` counts only visible documents; rename/recolour/merge/delete are admin-only.
+- **Automatic filing**: `sdai_type_series_defaults` (one series per document type).
+  `_store_extraction` files a new document in its type's series, else in the tenant's system series
+  "À classer" (`system_key='to_be_filed'`, name from `TO_BE_FILED_SERIES_NAME`, shown translated in the
+  UI). Admin: `GET /filing-rules`, `PUT /filing-rules/{table}`.
+- **Link suggestions**: `GET /documents/{t}/{id}/link-suggestions` - documents whose reference-like
+  value (field named like ref/reference/numero/num/number/no, or `record_id`; ≥ 4 characters with a
+  digit) appears in this document's text ("mentions"), and documents whose text contains this one's
+  references ("mentioned_by", French full-text prefilter + exact match). Excludes itself, already linked
+  documents and anything the caller can't see; the UI links one in a click (free-text relation,
+  pre-filled "concerne").
+- **Sync**: the four tables are synced (series seeded parents first). Paths are derived data: after
+  applying a peer's series changes, `repair_series_paths` recomputes them from `parent_id` and breaks a
+  cycle two disconnected moves may have created (cut at the smallest id - same result on both nodes).
+- **Audit**: `series_updated`, `series_moved`, `series_deleted`, `tag_created`, `tag_updated`,
+  `tags_merged`, `tag_deleted`, `document_tagged`, `document_untagged`, `filing_rule_set`.
+- **Tests**: `test_classification.py` (paths, cycles, tree), `test_classification_pg.py` (tree, moves,
+  cycles, delete-if-empty, inherited grants + leak/count checks, subtree and tag filters, tags, filing,
+  suggestions), two-node `test_concurrent_series_moves_converge_without_a_cycle`, permission matrix.
+
 ### Local/Cloud Sync and Backups (GED Phase 8)
 
 Two servers hold the same deployment: the **local** node (on site, GPU, works offline, drives the
@@ -299,7 +337,10 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | HLC counter wrap | Two changes of one node in the same millisecond after 100 000 others (counter wrap) could be ordered wrongly - not reachable in practice |
 | Hourly-scale clock skew | Sync requests are refused beyond ±5 min skew - both nodes must run NTP |
 | Conflicts per node | Each node keeps its own conflict list; resolving on one closes the other's copy only when the resolution reaches it (next cycle) |
-| UI not clicked through | The Synchronisation page and badges were type-checked and built, not tested in a browser |
+| UI not clicked through | The Synchronisation page and badges, and the classification UI (series tree, tags, suggestions, filing rules), were type-checked and built, not tested in a browser |
+| Existing documents not auto-filed | Automatic filing applies to documents filed from Phase 3 on; older documents without a series stay unfiled until assigned |
+| Link suggestions are lexical | Only exact reference strings are matched (no fuzzy match on "N° 123" vs "N°123") |
+| Series names on sync | Two series with the same name created under the same parent on both nodes while disconnected arrive as a `unique_violation` sync conflict |
 | Audit entries of API keys | API-key actions carry no `sdai_users` id, so the tenant-scoped audit view only shows them when they name one of the tenant's tables |
 
 ---
@@ -326,6 +367,7 @@ apps/api/
   versions_router.py                # /api/db/documents/{t}/{id}/versions|history - file versions, restore, history
   history.py                        # field-history diff + insert (sdai_field_history), shared by every edit path
   sync/                             # local/cloud sync: capture, hlc, apply, store, conflicts, files, api, admin, worker, join
+  classification_router.py          # /api/db series tree, tags, filing rules, link suggestions
   create_admin.py                   # seed script to create/upsert a user within a tenant
   create_tenant.py                  # seed script to create/upsert a tenant (ministry)
   tests/

@@ -31,6 +31,10 @@ BROWSE = [
     ("GET", f"{DOC}/versions", None),
     ("GET", f"{DOC}/versions/1/file", None),
     ("GET", f"{DOC}/history", None),
+    ("GET", "/api/db/series/tree", None),
+    ("GET", "/api/db/tags", None),
+    ("GET", f"{DOC}/tags", None),
+    ("GET", f"{DOC}/link-suggestions", None),
 ]
 
 # Document actions - admin and reviewer only.
@@ -57,6 +61,8 @@ ACT = [
     ),
     ("DELETE", "/api/db/links/00000000-0000-0000-0000-0000000000dd", None),
     ("PATCH", f"{DOC}/series", {"series_id": None}),
+    ("POST", f"{DOC}/tags", {"name": "urgent"}),
+    ("DELETE", f"{DOC}/tags/{BD}", None),
     ("POST", f"{DOC}/versions/1/restore", {}),
     ("POST", f"{PAGE}/retry", None),
     ("POST", f"{PAGE}/reload", None),
@@ -224,7 +230,9 @@ def _with(user, **changes):
 def test_clause_covers_all_three_scopes():
     clause = documents_router._access_where_clause(T, REVIEWER)
     assert "da.scope = 'document'" in clause
-    assert f'da.series_id = "{T}".series_id' in clause
+    # series grants reach the whole subtree through the materialized path
+    assert f'gs.id = "{T}".series_id' in clause
+    assert "gs.id = da.series_id OR strpos(gs.path, '/' || da.series_id::text || '/') > 0" in clause
     assert "da.scope = 'doc_type'" in clause
     assert "CAST(:__access_tenant_id AS uuid)" in clause
 
@@ -714,3 +722,25 @@ def test_audit_log_is_tenant_scoped(admin_client, mock_db):
     params = mock_db.execute.call_args_list[0].args[1]
     assert "starts_with(table_name, :table_prefix)" in sql
     assert params["table_prefix"] == "t_default_"
+
+
+# Plan de classement / tag vocabulary / filing rules - admins only.
+CLASSIFY_ADMIN = [
+    ("POST", "/api/db/series", {"name": "x"}),
+    ("PATCH", f"/api/db/series/{BD}", {"name": "x"}),
+    ("DELETE", f"/api/db/series/{BD}", None),
+    ("POST", "/api/db/tags", {"name": "x"}),
+    ("PATCH", f"/api/db/tags/{BD}", {"name": "x"}),
+    ("POST", f"/api/db/tags/{BD}/merge", {"into_id": BD}),
+    ("DELETE", f"/api/db/tags/{BD}", None),
+    ("GET", "/api/db/filing-rules", None),
+    ("PUT", "/api/db/filing-rules/t_default_invoice", {"series_id": None}),
+]
+
+
+@pytest.mark.parametrize("method,path,body", CLASSIFY_ADMIN)
+@pytest.mark.parametrize("client_name", ["auth_client", "reader_client"])
+def test_classification_management_is_admin_only(request, mock_db, client_name, method, path, body):
+    resp = _call(request.getfixturevalue(client_name), method, path, body)
+    assert resp.status_code == 403, (client_name, method, path)
+

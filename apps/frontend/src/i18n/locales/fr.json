@@ -116,7 +116,13 @@
     "loading": "Chargement…",
     "noLinks": "Aucun document lié pour le moment.",
     "relatesTo": "Concerne",
-    "referencedBy": "Référencé par"
+    "referencedBy": "Référencé par",
+    "suggestions": "Liens suggérés",
+    "suggestedRelation": "concerne",
+    "relationLabel": "Relation",
+    "mentions": "cité ici ({{value}})",
+    "mentionedBy": "cite ce document ({{value}})",
+    "linkIt": "Lier"
   },
   "linkPicker": {
     "searchPlaceholder": "Rechercher un document à lier…",
@@ -135,7 +141,26 @@
     "assign": "+ Assigner",
     "none": "Aucune série",
     "cancel": "Annuler",
-    "notAssigned": "Non assigné à une série"
+    "notAssigned": "Non assigné à une série",
+    "toBeFiled": "À classer",
+    "planHeading": "Plan de classement",
+    "addRoot": "+ Série",
+    "allDocuments": "Tous les documents",
+    "noneYet": "Aucune série pour l'instant.",
+    "includeSubseries": "Inclure les sous-séries",
+    "collapse": "Replier",
+    "expand": "Déplier",
+    "addChild": "Ajouter une sous-série",
+    "rename": "Renommer",
+    "move": "Déplacer",
+    "delete": "Supprimer",
+    "moveTo": "Déplacer sous",
+    "root": "(premier niveau)",
+    "codePlaceholder": "1.2",
+    "namePlaceholder": "Nom de la série",
+    "code": "Code",
+    "name": "Nom",
+    "breadcrumb": "Place dans le plan de classement"
   },
   "access": {
     "group": "Groupe",
@@ -464,6 +489,27 @@
     "scopedGrants": {
       "loading": "Chargement…",
       "confirmRemove": "Retirer cette autorisation ? Si c'est la dernière, les documents concernés redeviennent visibles par tous."
+    },
+    "filing": {
+      "heading": "Classement automatique",
+      "help": "Série dans laquelle chaque nouveau document d'un type est classé. Sans règle, les documents vont dans « À classer ».",
+      "noTypes": "Aucun type de document pour l'instant.",
+      "toBeFiled": "À classer (par défaut)",
+      "seriesFor": "Série pour {{type}}"
+    },
+    "tags": {
+      "heading": "Étiquettes",
+      "help": "Vocabulaire commun du ministère. Toute personne pouvant modifier un document peut l'étiqueter ; renommer, fusionner et supprimer des étiquettes est réservé aux administrateurs.",
+      "none": "Aucune étiquette pour l'instant.",
+      "count_one": "{{count}} document",
+      "count_other": "{{count}} documents",
+      "edit": "Modifier",
+      "delete": "Supprimer",
+      "confirmDelete": "Supprimer l'étiquette « {{name}} » ? Elle est retirée de tous les documents.",
+      "name": "Nom",
+      "color": "Couleur",
+      "mergeInto": "Fusionner avec…",
+      "merge": "Fusionner"
     }
   },
   "audit": {
@@ -497,7 +543,17 @@
       "integrity_chain_broken": "chaîne d'audit rompue",
       "sync_conflict": "Conflit de synchronisation",
       "sync_conflict_resolved": "Conflit de synchronisation résolu",
-      "sync_files_retried": "Fichiers de synchronisation relancés"
+      "sync_files_retried": "Fichiers de synchronisation relancés",
+      "series_updated": "Série modifiée",
+      "series_moved": "Série déplacée",
+      "series_deleted": "Série supprimée",
+      "tag_created": "Étiquette créée",
+      "tag_updated": "Étiquette modifiée",
+      "tags_merged": "Étiquettes fusionnées",
+      "tag_deleted": "Étiquette supprimée",
+      "document_tagged": "Document étiqueté",
+      "document_untagged": "Étiquette retirée",
+      "filing_rule_set": "Règle de classement définie"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -834,5 +890,13 @@
       },
       "help": "Sauvegardes chiffrées chaque nuit avec restic (30 quotidiennes + 12 mensuelles). La synchronisation n'est pas une sauvegarde - voir RESTORE.md pour restaurer."
     }
+  },
+  "tags": {
+    "heading": "Étiquettes",
+    "none": "Aucune étiquette",
+    "addPlaceholder": "Ajouter une étiquette…",
+    "add": "Ajouter",
+    "filter": "Filtrer par étiquette",
+    "all": "Toutes les étiquettes"
   }
 }

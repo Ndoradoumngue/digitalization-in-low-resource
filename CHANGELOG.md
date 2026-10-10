@@ -9,6 +9,20 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 3 (classification)
+- Hierarchical plan de classement: series with parent, classification code and order; tree view with document counts, create / rename / move (cycles refused) / delete-if-empty; breadcrumb on the document page.
+- Series-level access grants now cover every sub-series.
+- Document list and search filter by series "including sub-series" and by tag.
+- Tags: tenant-wide vocabulary with colours, tagging by anyone who may edit the document (autocomplete, new names create tags), admin rename / merge / delete.
+- Automatic filing: a series per document type; documents without a rule go to "À classer" / "To be filed".
+- Link suggestions: documents cited by reference number (or citing this one) are suggested on the document page and linked in one click.
+- Synchronised between local and cloud nodes; concurrent series moves on both nodes converge without cycles.
+- Audit actions for series, tag and filing-rule changes. UI in French and English.
+
+### Changed - GED Phase 3
+- Series names are unique among siblings instead of across the whole tenant.
+- Series endpoints moved to `classification_router.py` (same URLs; `GET /api/db/series` returns more fields).
+
 ### Added - GED Phase 8 (hybrid local/cloud deployment, sync, backups)
 - Two-server deployment: the local server (GPU, works offline) stays primary and a cloud node (plain VM at DigitalOcean or AWS, no GPU, `docker-compose.cloud.yml`) holds the same data for remote users. Changes on either side are synchronised both ways whenever the link is up; days offline are fine.
 - Change capture by database triggers on every synced table (incl. every per-type document table, group memberships, the audit log and the token blocklist) into `sdai_sync_changelog`, with hybrid-logical-clock stamps and per-field clocks; creating or extending a document type is replayed on the other node before its rows arrive.

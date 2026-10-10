@@ -131,6 +131,12 @@ async def apply_from_peer(
         """),
         {"p": peer, "r": received, "e": str(epoch)},
     )
+    if "sdai_series" in result.tables:
+        from classification_router import repair_series_paths
+
+        # Paths follow parent_id; concurrent moves on both nodes may even
+        # have formed a cycle - fixed identically on both sides.
+        await repair_series_paths(conn)
     if any(t and t.startswith("t_") for t in result.tables):
         import ingest_router
 

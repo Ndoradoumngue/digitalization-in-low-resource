@@ -18,9 +18,7 @@ Endpoints:
   GET    /api/db/grants?scope=series|doc_type - series-/type-level grants (admin-only)
   POST   /api/db/grants                       - grant on a whole series or type (admin-only)
   GET    /api/db/grantees                     - groups/users available to tag a document with
-  GET    /api/db/series                       - list this tenant's series
-  POST   /api/db/series                       - create a series (admin-only)
-  DELETE /api/db/series/{id}                  - delete a series (admin-only)
+  (series tree, tags, filing rules, link suggestions: classification_router)
   PATCH  /api/db/documents/{tbl}/{id}/series   - assign/unassign a document's series
   GET    /api/db/types                        - table inventory with counts
   GET    /api/db/reviewers                    - users who have reviewed at least one document
@@ -31,6 +29,7 @@ Endpoints:
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 
 from audit import client_ip, log_action
@@ -316,6 +315,19 @@ def _sql_list(values) -> str:
     return ", ".join(f"'{v}'" for v in values)
 
 
+def _series_grant_match(doc_series: str, grant_series: str) -> str:
+    """A series-scope grant covers its whole subtree (plan de classement):
+    true iff the document's series is the granted series or lies anywhere
+    below it - the granted id appears in the document series' materialized
+    path (sdai_series.path = '/<root>/.../<self>/'). The direct match does
+    not depend on the path, so a grant can never stop restricting the
+    series it names."""
+    return (
+        f"EXISTS (SELECT 1 FROM sdai_series gs WHERE gs.id = {doc_series}"
+        f" AND (gs.id = {grant_series} OR strpos(gs.path, '/' || {grant_series}::text || '/') > 0))"
+    )
+
+
 def _access_where_clause(
     table: str,
     current_user: CurrentUser,
@@ -369,7 +381,7 @@ def _access_where_clause(
     doc = f'"{table}"'
     targets = f"""da.tenant_id = CAST(:__access_tenant_id AS uuid)
               AND ((da.scope = 'document' AND da.table_name = '{table}' AND da.document_id = {doc}.id)
-                OR (da.scope = 'series' AND da.series_id = {doc}.series_id)
+                OR (da.scope = 'series' AND {_series_grant_match(f"{doc}.series_id", "da.series_id")})
                 OR (da.scope = 'doc_type' AND da.table_name = '{table}'))"""
     access = f"""(
         COALESCE({doc}.confidentiality, 'internal') IN ({_sql_list(allowed_levels)})
@@ -647,6 +659,8 @@ def _per_table_select(
     current_user: CurrentUser,
     reviewed_by: str | None = None,
     series: str | None = None,
+    include_subseries: bool = False,
+    tag: str | None = None,
 ) -> str | None:
     """Build the per-table SELECT fragment for the UNION.  Returns None when
     the table should be excluded (e.g. q is set but table has no text cols,
@@ -711,8 +725,22 @@ def _per_table_select(
         where.append("ingested_at <= CAST(:date_to AS timestamptz)")
     if reviewed_by:
         where.append("reviewed_by = CAST(:reviewed_by AS uuid)")
-    if series:
+    if series and include_subseries:
+        # The series and everything filed below it (plan de classement).
+        where.append(
+            "series_id IN (SELECT id FROM sdai_series"
+            " WHERE tenant_id = CAST(:__access_tenant_id AS uuid)"
+            " AND strpos(path, '/' || CAST(:series AS text) || '/') > 0)"
+        )
+    elif series:
         where.append("series_id = CAST(:series AS uuid)")
+    if tag:
+        where.append(
+            "EXISTS (SELECT 1 FROM sdai_document_tags dt"
+            " WHERE dt.tenant_id = CAST(:__access_tenant_id AS uuid)"
+            f" AND dt.table_name = '{table}' AND dt.document_id = \"{table}\".id"
+            " AND dt.tag_id = CAST(:tag AS uuid))"
+        )
     access_clause = _access_where_clause(table, current_user)
     if access_clause:
         where.append(access_clause)
@@ -736,6 +764,8 @@ async def _run_list_query(
     current_user: CurrentUser,
     reviewed_by: str | None = None,
     series: str | None = None,
+    include_subseries: bool = False,
+    tag: str | None = None,
 ) -> tuple[list[dict], int]:
     scope = (
         {only_table: tables_cols[only_table]}
@@ -756,6 +786,8 @@ async def _run_list_query(
             date_to=date_to,
             reviewed_by=reviewed_by,
             series=series,
+            include_subseries=include_subseries,
+            tag=tag,
             current_user=current_user,
         )
         for tbl, cols in scope.items()
@@ -784,6 +816,8 @@ async def _run_list_query(
         params["reviewed_by"] = reviewed_by
     if series:
         params["series"] = series
+    if tag:
+        params["tag"] = tag
 
     sql = f"""
         WITH combined AS (
@@ -903,6 +937,8 @@ async def list_documents(
     q: str | None = None,
     reviewed_by: str | None = None,
     series: str | None = None,
+    include_subseries: bool = False,
+    tag: str | None = None,
     current_user: CurrentUser = Depends(require_user),
 ):
     """
@@ -913,7 +949,17 @@ async def list_documents(
     - date_from / date_to: filter on ingested_at (ISO 8601 dates)
     - reviewed_by: restrict to documents reviewed by this user id
     - series: restrict to documents assigned to this series id
+      (include_subseries=true: or to any series below it)
+    - tag: restrict to documents carrying this tag id
     """
+    for value in (series, tag):
+        if value is not None:
+            try:
+                uuid.UUID(value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422, detail=t("common.invalid_id", current_user.locale)
+                ) from exc
     only_table = _sanitize(document_type) if document_type else None
 
     async with _engine().connect() as conn:
@@ -935,6 +981,8 @@ async def list_documents(
             page_size=page_size,
             reviewed_by=reviewed_by,
             series=series,
+            include_subseries=include_subseries,
+            tag=tag,
             current_user=current_user,
         )
 
@@ -1642,8 +1690,12 @@ async def get_document_access(
                 FROM sdai_document_access
                 WHERE tenant_id = CAST(:tid AS uuid)
                   AND ((scope = 'document' AND table_name = :t AND document_id = CAST(:id AS uuid))
-                    OR (scope = 'series'
-                        AND series_id = (SELECT series_id FROM "{safe}" WHERE id = CAST(:id AS uuid)))
+                    OR (scope = 'series' AND {
+                        _series_grant_match(
+                            f'(SELECT series_id FROM "{safe}" WHERE id = CAST(:id AS uuid))',
+                            "sdai_document_access.series_id",
+                        )
+                    })
                     OR (scope = 'doc_type' AND table_name = :t))
                 ORDER BY CASE scope WHEN 'document' THEN 0 WHEN 'series' THEN 1 ELSE 2 END,
                          granted_at
@@ -2005,90 +2057,8 @@ async def set_document_confidentiality(
 # tenant user - organizational, not a security control.
 
 
-class CreateSeriesBody(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    description: str | None = None
-
-
 class AssignSeriesBody(BaseModel):
     series_id: str | None = None
-
-
-@router.get("/series", summary="List series")
-async def list_series(current_user: CurrentUser = Depends(require_user)):
-    async with _engine().connect() as conn:
-        rows = await conn.execute(
-            text("""
-                SELECT id, name, description, created_at
-                FROM sdai_series
-                WHERE tenant_id = CAST(:tid AS uuid)
-                ORDER BY name
-            """),
-            {"tid": current_user.tenant_id},
-        )
-        return [
-            {
-                "id": str(r[0]),
-                "name": r[1],
-                "description": r[2],
-                "created_at": r[3].isoformat() if r[3] else None,
-            }
-            for r in rows
-        ]
-
-
-@router.post("/series", summary="Create a series")
-async def create_series(body: CreateSeriesBody, current_user: CurrentUser = Depends(require_admin)):
-    async with _engine().begin() as conn:
-        result = await conn.execute(
-            text("""
-                INSERT INTO sdai_series (tenant_id, name, description, created_by)
-                VALUES (CAST(:tid AS uuid), :name, :description, CAST(:cb AS uuid))
-                ON CONFLICT (tenant_id, name) DO NOTHING
-                RETURNING id
-            """),
-            {
-                "tid": current_user.tenant_id,
-                "name": body.name,
-                "description": body.description,
-                "cb": current_user.id,
-            },
-        )
-        series_id = result.scalar()
-        if series_id is None:
-            raise HTTPException(
-                status_code=409,
-                detail=t("common.series_already_exists", current_user.locale, name=body.name),
-            )
-
-    await log_action(
-        action="series_created",
-        user_id=current_user.id,
-        user_email=current_user.email,
-        details={"series_id": str(series_id), "name": body.name},
-    )
-    return {"id": str(series_id), "name": body.name}
-
-
-@router.delete("/series/{series_id}", summary="Delete a series")
-async def delete_series(series_id: str, current_user: CurrentUser = Depends(require_admin)):
-    """Documents keep their series_id pointing at a now-nonexistent row -
-    no FK from the dynamic tables to sdai_series (there are too many of
-    them, per document type, to maintain one) - so the frontend treats an
-    unresolvable series_id the same as "no series", matching how a removed
-    access grant's grantee is already handled."""
-    async with _engine().begin() as conn:
-        result = await conn.execute(
-            text(
-                "DELETE FROM sdai_series WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid) RETURNING id"
-            ),
-            {"id": series_id, "tid": current_user.tenant_id},
-        )
-        if result.one_or_none() is None:
-            raise HTTPException(
-                status_code=404, detail=t("common.series_not_found", current_user.locale)
-            )
-    return {"ok": True}
 
 
 @router.patch("/documents/{table_name}/{doc_id}/series", summary="Assign a document to a series")
