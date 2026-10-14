@@ -231,6 +231,7 @@ async def _merge_fields(
             result.superseded.append((spec.name, pk, col))
         if (
             base is not None
+            and col not in spec.quiet
             and base.get(col) != local_stamp
             and remote.get(col) != row.get(col)
         ):

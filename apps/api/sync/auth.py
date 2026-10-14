@@ -96,7 +96,15 @@ async def verify_node(request: Request) -> str:
         raise HTTPException(
             status_code=401, detail="Sync request timestamp out of range"
         )
+    # Refuse an oversized body before reading it into memory - nothing is
+    # authenticated yet. Push pages and file chunks have their own caps.
+    limit = max(config.MAX_PUSH_BYTES, config.MAX_FILE_CHUNK_BYTES) + 64 * 1024
+    length = headers.get("Content-Length", "")
+    if length and (not length.isdigit() or int(length) > limit):
+        raise HTTPException(status_code=413, detail="Sync request too large")
     body = await request.body()
+    if len(body) > limit:
+        raise HTTPException(status_code=413, detail="Sync request too large")
     expected = hmac.new(
         config.SYNC_NODE_TOKEN.encode(),
         canonical(request.method, _path_qs(request), node, timestamp, nonce, body),

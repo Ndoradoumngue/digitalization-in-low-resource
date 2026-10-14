@@ -1,11 +1,18 @@
 """Sync settings (see .env.example, "Local/cloud sync")."""
 
+import logging
 import os
 from pathlib import Path
 
 # Shared secret both nodes sign their sync requests with. Unset = sync
 # disabled: the /api/sync routes answer 404 and the worker idles.
 SYNC_NODE_TOKEN = os.getenv("SYNC_NODE_TOKEN", "")
+if SYNC_NODE_TOKEN and len(SYNC_NODE_TOKEN) < 32:
+    # Whoever guesses it can push changes into this node's archive.
+    logging.getLogger(__name__).warning(
+        "SYNC_NODE_TOKEN is shorter than 32 characters - generate one with"
+        " `openssl rand -hex 32` (the same value on both nodes)"
+    )
 # Set on the node that initiates sync (the local one - it can reach the
 # cloud, not the other way round). Empty on the cloud node.
 SYNC_PEER_URL = os.getenv("SYNC_PEER_URL", "").rstrip("/")

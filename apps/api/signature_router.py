@@ -37,7 +37,7 @@ import document_files
 import ingest_router
 import notifications
 import signatures
-from audit import client_ip, log_action
+from audit import client_ip, display_email_sql, log_action
 from auth import CurrentUser, require_reviewer, require_user
 from cache import invalidate_cache
 from documents_router import (
@@ -820,7 +820,13 @@ async def verify(
                     text("""
                         SELECT id::text AS id, request_id::text AS request_id, version_no,
                                source_version_no, field_name, signer_id::text AS signer_id,
-                               signer_name, signer_title, reason, level, signed_at, ip_address,
+                               -- the signed PDF keeps the name; screens show
+                               -- a since-deleted signer as no longer in system
+                               CASE WHEN EXISTS (SELECT 1 FROM sdai_users du WHERE du.id = signer_id
+                                                 AND du.deleted_at IS NOT NULL)
+                                    THEN signer_id::text || '@deleted.invalid'
+                                    ELSE signer_name END AS signer_name,
+                               signer_title, reason, level, signed_at, ip_address,
                                cert_subject, cert_fingerprint, source_file_hash, signed_file_hash
                         FROM sdai_signatures
                         WHERE tenant_id = CAST(:tid AS uuid) AND table_name = :t
@@ -835,8 +841,8 @@ async def verify(
             {k: _iso(v) for k, v in dict(r).items()}
             for r in (
                 await conn.execute(
-                    text("""
-                        SELECT action, user_email, created_at, details
+                    text(f"""
+                        SELECT action, {display_email_sql()} AS user_email, created_at, details
                         FROM sdai_audit_log
                         WHERE table_name = :t AND document_id = CAST(:id AS uuid)
                           AND action = ANY(:actions)

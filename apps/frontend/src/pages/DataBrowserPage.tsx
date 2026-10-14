@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n/config";
+import { formatDate } from "../utils/dates";
 import { useDbDocuments, useDbTypes } from "../hooks/useDocumentsDb";
 import NavSidebar from "../components/NavSidebar";
 import type { DbListParams } from "@sdai/api-client";
@@ -30,8 +32,7 @@ function reviewColor(status: string | null) {
 }
 
 function fmtDate(iso: string | null) {
-  if (!iso) return "-";
-  try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
+  return iso ? formatDate(iso, i18n.language) : "-";
 }
 
 export default function DataBrowserPage() {

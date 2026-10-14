@@ -1,5 +1,7 @@
 import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n/config";
+import { formatDateTime } from "../utils/dates";
 import { useAuditLog } from "../hooks/useAudit";
 import NavSidebar from "../components/NavSidebar";
 import type { AuditLogEntry } from "@sdai/types";
@@ -178,10 +180,7 @@ export default function AuditPage() {
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 1;
 
   function formatTs(iso: string) {
-    return new Date(iso).toLocaleString("fr-TD", {
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
-    });
+    return formatDateTime(iso, i18n.language);
   }
 
   return (

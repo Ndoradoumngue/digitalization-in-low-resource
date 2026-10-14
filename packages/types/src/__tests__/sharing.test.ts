@@ -24,7 +24,7 @@ const share = {
 
 describe("share links", () => {
   it("parses a created link with its one-time URL", () => {
-    const res = CreateShareResponseSchema.parse({ share, url: "https://ged.example.td/s/abc" });
+    const res = CreateShareResponseSchema.parse({ share, url: "https://ged.example.org/s/abc" });
     expect(res.url).toContain("/s/");
     expect(res.share.version_no).toBeNull();
   });

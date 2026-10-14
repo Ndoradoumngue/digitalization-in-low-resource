@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import NavSidebar from "../components/NavSidebar";
 import { useConfirm } from "../context/ConfirmContext";
@@ -6,10 +7,6 @@ import {
   useGroups,
   useCreateGroup,
   useDeleteGroup,
-  useAdminUsers,
-  useUpdateAdminUser,
-  useAddUserToGroup,
-  useRemoveUserFromGroup,
   useRunIntegrityCheck,
   useLastIntegrityRun,
   useVerifyAuditChain,
@@ -26,17 +23,13 @@ import { useDeleteTag, useMergeTag, useTags, useUpdateTag } from "../hooks/useTa
 import { TagChip } from "../components/TagsSection";
 import { flattenTree, seriesLabel } from "../utils/series";
 import {
-  CONFIDENTIALITY_LEVELS,
   type AccessGrant,
-  type AdminUser,
   type AuditChainSummary,
-  type Confidentiality,
   type FixityCounts,
   type Group,
   type PermissionLevel,
   type Series,
 } from "@sdai/types";
-import type { UpdateUserBody } from "@sdai/api-client";
 import {
   useCreateScopedGrant,
   useDeleteGrant,
@@ -516,148 +509,17 @@ function GroupsPanel({ groups, isLoading }: { groups: Group[]; isLoading: boolea
   );
 }
 
-// ── Users panel ───────────────────────────────────────────────────────────────
+// ── Users ─────────────────────────────────────────────────────────────────────
+// Accounts, their rights and group memberships: the "Utilisateurs" page.
 
-const USER_FLAGS = [
-  ["can_manage_access", "accessAdmin.users.canManageAccess"],
-  ["can_edit_extraction", "accessAdmin.users.canEditExtraction"],
-  ["can_manage_lifecycle", "accessAdmin.users.canManageLifecycle"],
-  ["can_share", "accessAdmin.users.canShare"],
-] as const;
-
-function UserRow({ user, groups }: { user: AdminUser; groups: Group[] }) {
-  const { t } = useTranslation();
-  const updateUser      = useUpdateAdminUser();
-  const addToGroup      = useAddUserToGroup();
-  const removeFromGroup = useRemoveUserFromGroup();
-  const [addingGroupId, setAddingGroupId] = useState("");
-
-  const memberGroups   = groups.filter((g) => user.group_ids.includes(g.id));
-  const availableGroups = groups.filter((g) => !user.group_ids.includes(g.id));
-  const update = (body: UpdateUserBody) => updateUser.mutate({ userId: user.id, body });
-
-  return (
-    <div className="py-3 border-b border-gray-100 last:border-0">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <span className="text-sm font-medium text-gray-800 truncate">
-            {user.full_name ?? user.email}
-          </span>
-          <span className="text-xs text-gray-400 ml-2">{user.email}</span>
-          {user.role === "admin" ? (
-            <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-700">
-              {t("roles.admin")}
-            </span>
-          ) : (
-            <div className="flex items-center gap-2 mt-1.5">
-              <select
-                value={user.role}
-                onChange={(e) => update({ role: e.target.value as "reviewer" | "reader" })}
-                aria-label={t("accessAdmin.users.role")}
-                className="h-7 rounded-md border border-gray-300 px-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
-              >
-                <option value="reviewer">{t("roles.reviewer")}</option>
-                <option value="reader">{t("roles.reader")}</option>
-              </select>
-              <label className="flex items-center gap-1 text-xs text-gray-500">
-                {t("accessAdmin.users.clearance")}
-                <select
-                  value={user.clearance}
-                  onChange={(e) => update({ clearance: e.target.value as Confidentiality })}
-                  className="h-7 rounded-md border border-gray-300 px-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                >
-                  {CONFIDENTIALITY_LEVELS.map((level) => (
-                    <option key={level} value={level}>{t(`confidentiality.${level}`)}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          )}
-        </div>
-        {user.role !== "admin" && (
-          <div className="flex flex-col items-start gap-1 flex-shrink-0">
-            {USER_FLAGS.map(([flag, label]) => {
-              // A reader stays read-only: only sharing applies to it.
-              const inert = user.role === "reader" && flag !== "can_share";
-              return (
-                <label
-                  key={flag}
-                  className={`flex items-center gap-1.5 text-xs ${inert ? "text-gray-300" : "text-gray-600"}`}
-                  title={inert ? t("accessAdmin.users.readerFlagHint") : undefined}
-                >
-                  <input
-                    type="checkbox"
-                    checked={user[flag]}
-                    disabled={inert}
-                    onChange={(e) => update({ [flag]: e.target.checked })}
-                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-400 disabled:opacity-40"
-                  />
-                  {t(label)}
-                </label>
-              );
-            })}
-          </div>
-        )}
-      </div>
-      {updateUser.isError && (
-        <p className="text-xs text-red-600 mt-1">{(updateUser.error as Error).message}</p>
-      )}
-
-      <div className="flex items-center flex-wrap gap-1.5 mt-2">
-        {memberGroups.map((g) => (
-          <span
-            key={g.id}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800"
-          >
-            {g.name}
-            <button
-              onClick={() => removeFromGroup.mutate({ userId: user.id, groupId: g.id })}
-              className="text-amber-500 hover:text-amber-900"
-              aria-label={t("accessAdmin.users.removeFromGroup", { group: g.name })}
-            >
-              ✕
-            </button>
-          </span>
-        ))}
-        {availableGroups.length > 0 && (
-          <select
-            value={addingGroupId}
-            onChange={(e) => {
-              const gid = e.target.value;
-              if (gid) {
-                addToGroup.mutate({ userId: user.id, groupId: gid });
-                setAddingGroupId("");
-              }
-            }}
-            className="text-xs rounded-md border border-gray-300 px-1.5 py-0.5 text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-          >
-            <option value="">{t("accessAdmin.users.addToGroup")}</option>
-            {availableGroups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name}</option>
-            ))}
-          </select>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function UsersPanel({ users, groups, isLoading }: { users: AdminUser[]; groups: Group[]; isLoading: boolean }) {
+function UsersLinkPanel() {
   const { t } = useTranslation();
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-5">
-      <h2 className="text-sm font-bold text-gray-900 mb-3">{t("accessAdmin.users.heading")}</h2>
-      {isLoading ? (
-        <p className="text-sm text-gray-400">{t("accessAdmin.users.loading")}</p>
-      ) : users.length === 0 ? (
-        <p className="text-sm text-gray-400">{t("accessAdmin.users.none")}</p>
-      ) : (
-        <div>
-          {users.map((u) => (
-            <UserRow key={u.id} user={u} groups={groups} />
-          ))}
-        </div>
-      )}
+    <div className="bg-white rounded-lg border border-gray-200 p-5 flex items-center gap-3">
+      <p className="flex-1 text-sm text-gray-600">{t("users.movedNote")}</p>
+      <Link to="/ops/users" className="text-sm font-semibold text-indigo-600 hover:underline">
+        {t("nav.users")} →
+      </Link>
     </div>
   );
 }
@@ -793,7 +655,6 @@ function ScopedGrantsPanel({ scope }: { scope: "series" | "doc_type" }) {
 export default function AccessAdminPage() {
   const { t } = useTranslation();
   const { data: groups, isLoading: groupsLoading } = useGroups();
-  const { data: users, isLoading: usersLoading }   = useAdminUsers();
   const { data: series, isLoading: seriesLoading }  = useSeries();
 
   return (
@@ -809,7 +670,7 @@ export default function AccessAdminPage() {
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-3xl">
           <GroupsPanel groups={groups ?? []} isLoading={groupsLoading} />
-          <UsersPanel users={users ?? []} groups={groups ?? []} isLoading={usersLoading} />
+          <UsersLinkPanel />
           <SeriesPanel series={series ?? []} isLoading={seriesLoading} />
           <FilingRulesPanel series={series ?? []} />
           <TagsAdminPanel />

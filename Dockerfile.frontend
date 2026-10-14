@@ -1,6 +1,6 @@
 # ── Stage 1: build ────────────────────────────────────────────────────────────
 # Must be built from the monorepo root so workspace packages are available.
-FROM node:18-alpine AS builder
+FROM node:22-alpine AS builder
 
 RUN npm install -g pnpm@10
 
@@ -25,17 +25,11 @@ RUN pnpm --filter @sdai/frontend build
 # ── Stage 2: serve ────────────────────────────────────────────────────────────
 FROM nginx:alpine
 
-# openssl  - generates the self-signed certificate below
+# openssl  - generates the self-signed certificate at first start (entrypoint):
+#            never at build time, or every installation made from the same
+#            image would share one private key
 # certbot certbot-nginx - issues and renews Let's Encrypt certificates
 RUN apk add --no-cache openssl certbot certbot-nginx
-
-# Generate self-signed certificate at build time.
-# Used by HTTPS_MODE=self_signed (the default).  No volume or runtime openssl call needed.
-RUN mkdir -p /etc/nginx/ssl && \
-  openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-  -keyout /etc/nginx/ssl/key.pem \
-  -out    /etc/nginx/ssl/cert.pem \
-  -subj   "/CN=sdai.local/O=SDAI/C=TD" 2>/dev/null
 
 # Static files from the build stage
 COPY --from=builder /app/apps/frontend/dist /usr/share/nginx/html

@@ -55,6 +55,9 @@ class SyncTable(NamedTuple):
     # Seeding order inside the table (rows referencing earlier rows of the
     # same table, or a chain that must stay in order).
     order_by: str | None = None
+    # Bookkeeping columns both nodes routinely update (a sign-in time):
+    # last writer wins, never reported as a conflict.
+    quiet: tuple[str, ...] = ()
 
 
 # Static tables that are replicated, in foreign-key order - the order the
@@ -62,7 +65,7 @@ class SyncTable(NamedTuple):
 SYNC_TABLES: tuple[SyncTable, ...] = (
     SyncTable("sdai_tenants", order_by="created_at"),
     SyncTable("sdai_prompt_presets", order_by="created_at"),
-    SyncTable("sdai_users", order_by="created_at"),
+    SyncTable("sdai_users", order_by="created_at", quiet=("last_login_at",)),
     SyncTable("sdai_api_keys", order_by="created_at"),
     SyncTable("sdai_groups", order_by="created_at"),
     SyncTable("sdai_user_groups", pk=("user_id", "group_id")),

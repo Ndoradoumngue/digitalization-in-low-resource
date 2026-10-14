@@ -576,6 +576,41 @@ async def _filed_document_permitted(
     return permitted is not False
 
 
+async def _unreadable_uploads(batch_document_ids: list[str], current_user: CurrentUser) -> set[str]:
+    """The uploads among `batch_document_ids` that produced documents the
+    caller can't read (none of them readable) - a batch's per-upload
+    listing must not reveal their filename or type. Unfiled uploads follow
+    the shared pipeline rules and are never in the result."""
+    if not batch_document_ids or current_user.role == "admin":
+        return set()
+    async with _engine().connect() as conn:
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+        parts = []
+        for table in sorted(tables_cols):
+            assert re.fullmatch(r"[a-z0-9_]+", table), table
+            doc = f'"{table}"'
+            match = f"(bd.target_table = '{table}' AND {doc}.id = bd.target_document_id)"
+            if "batch_document_id" in tables_cols[table]:
+                match = f"({doc}.batch_document_id = bd.id OR {match})"
+            # No alias on the document table: the access clause correlates
+            # on "{table}".id.
+            clause = _access_where_clause(table, current_user) or "TRUE"
+            parts.append(
+                f"SELECT bd.id::text, ({clause}) FROM batch_documents bd JOIN {doc} ON {match}"
+                " WHERE bd.id = ANY(CAST(:__bd_ids AS uuid[]))"
+            )
+        if not parts:
+            return set()
+        rows = await conn.execute(
+            text("\nUNION ALL\n".join(parts)),
+            {"__bd_ids": batch_document_ids, **_access_params(current_user)},
+        )
+        readable: dict[str, bool] = {}
+        for bd, ok in rows:
+            readable[bd] = readable.get(bd, False) or bool(ok)
+    return {bd for bd, ok in readable.items() if not ok}
+
+
 def _doc_file_match(cols: dict[str, str]) -> str:
     """SQL condition: the row references one of :__paths as any of its
     files - only over the file columns this table actually has (tables
@@ -1821,6 +1856,7 @@ async def list_grantees(current_user: CurrentUser = Depends(require_access_manag
             text("""
                 SELECT id, email, full_name FROM sdai_users
                 WHERE tenant_id = CAST(:tid AS uuid)
+                  AND deleted_at IS NULL AND is_active IS NOT FALSE
                 ORDER BY COALESCE(full_name, email)
             """),
             {"tid": current_user.tenant_id},

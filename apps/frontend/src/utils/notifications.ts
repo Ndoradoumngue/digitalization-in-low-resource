@@ -26,7 +26,12 @@ const KIND_TAB: Record<string, string> = {
   signature_declined: "signatures",
 };
 
+// Only a path inside the app is ever followed - never another site
+// ("//host", "/\\host" or a full URL), whatever the stored link says.
+const IN_APP_PATH = /^\/(?![\/\\])[^\s]*$/;
+
 export function notificationLink(n: Notification): string {
+  if (!IN_APP_PATH.test(n.link)) return "/notifications";
   const tab = KIND_TAB[n.kind];
   return tab && n.document_id && n.link.startsWith("/documents/") ? `${n.link}?tab=${tab}` : n.link;
 }

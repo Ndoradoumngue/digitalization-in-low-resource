@@ -59,6 +59,18 @@ def client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
 
+def display_email_sql(table: str = "sdai_audit_log") -> str:
+    """SQL for an audit row's user_email as screens show it: the copy taken
+    at the time, or - for an account deleted since - its tombstone
+    '<id>@deleted.invalid' (shown as "user no longer in system"). The stored
+    row is never changed (it is hash-chained)."""
+    return (
+        f"CASE WHEN EXISTS (SELECT 1 FROM sdai_users du WHERE du.id = {table}.user_id"
+        f" AND du.deleted_at IS NOT NULL) THEN CAST({table}.user_id AS text) || '@deleted.invalid'"
+        f" ELSE {table}.user_email END"
+    )
+
+
 # ── Core helper ───────────────────────────────────────────────────────────────
 
 

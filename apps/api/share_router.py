@@ -48,7 +48,7 @@ from documents_router import (
 from export_format import serial
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from i18n import resolve_locale, t
+from i18n import format_datetime, resolve_locale, t
 from ingest_router import _engine
 from pydantic import BaseModel, Field
 from rate_limit import limiter
@@ -479,7 +479,7 @@ def _landing_page(
 ):
     e = html.escape
     name = document_files.download_name(f.record_id, f.original_filename, "document")
-    expires = row["expires_at"].astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    expires = format_datetime(row["expires_at"], locale)
     facts = [(t("shares.page_expires", locale), expires)]
     if f.size:
         facts.append((t("shares.page_size", locale), f"{f.size / 1024:.0f} KB"))

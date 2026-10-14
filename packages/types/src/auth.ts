@@ -18,6 +18,9 @@ export const UserSchema = z.object({
   can_manage_lifecycle: z.boolean().default(false),
   can_share: z.boolean().default(false),
   clearance: ConfidentialitySchema.default("internal"),
+  // User management (GED Phase 9)
+  can_manage_users: z.boolean().default(false),
+  must_change_password: z.boolean().default(false),
   // Which server answered (hybrid local + cloud deployment, see README).
   node_id:     z.string().optional(),
   node_role:   z.enum(["local", "cloud"]).optional(),

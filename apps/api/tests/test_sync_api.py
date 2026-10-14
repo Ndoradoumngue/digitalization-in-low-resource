@@ -314,3 +314,58 @@ def test_sync_admin_routes_are_admin_only(dirs, method, path):
             finally:
                 api_server.app.dependency_overrides.pop(get_current_user, None)
             assert r.status_code == 403, (user.role, path)
+
+
+def test_oversized_body_refused_before_reading(client, monkeypatch):
+    """GED Phase 9: an unauthenticated caller can't make the node buffer an
+    arbitrarily large body - refused on its declared length."""
+    monkeypatch.setattr(sync_config, "MAX_PUSH_BYTES", 1024)
+    monkeypatch.setattr(sync_config, "MAX_FILE_CHUNK_BYTES", 1024)
+    body = b"x" * (70 * 1024)
+    assert signed(client, "POST", "/api/sync/push", body=body).status_code == 413
+    resp = client.post(
+        "/api/sync/push", content=b"", headers={"Content-Length": "999999999"}
+    )
+    assert resp.status_code in (401, 413)
+
+
+# ── python -m sync.check (GED Phase 9 first-run script) ─────────────────────
+
+
+def test_sync_check_reports_the_peer_or_the_cause(monkeypatch, capsys):
+    import asyncio
+
+    import sync.worker
+    from sync import check
+
+    class FakePeer:
+        outcome: object = {"node_id": "cloud-1", "node_role": "cloud"}
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def hello(self):
+            if isinstance(FakePeer.outcome, Exception):
+                raise FakePeer.outcome
+            return FakePeer.outcome
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(sync.worker, "HttpPeer", FakePeer)
+    monkeypatch.setattr(sync_config, "SYNC_NODE_TOKEN", TOKEN)
+    monkeypatch.setattr(sync_config, "SYNC_PEER_URL", "https://ged.example.org")
+    assert asyncio.run(check.check()) == 0
+    assert "reached cloud-1" in capsys.readouterr().out
+
+    FakePeer.outcome = sync.worker.PeerError(401, "Bad sync signature")
+    assert asyncio.run(check.check()) == 1
+    assert "SYNC_NODE_TOKEN differs" in capsys.readouterr().err
+
+    FakePeer.outcome = ConnectionError("refused")
+    assert asyncio.run(check.check()) == 1
+    assert "cannot reach https://ged.example.org" in capsys.readouterr().err
+
+    # the cloud node has no peer to call
+    monkeypatch.setattr(sync_config, "SYNC_PEER_URL", "")
+    assert asyncio.run(check.check()) == 0

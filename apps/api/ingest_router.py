@@ -900,6 +900,21 @@ CREATE INDEX IF NOT EXISTS idx_sdai_notifications_unread
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS locale TEXT;
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS email_notifications TEXT NOT NULL DEFAULT 'immediate';
 
+-- User management (GED Phase 9): delegated permission to add / update /
+-- (de)activate accounts, temporary passwords that must be changed at the
+-- next sign-in, sessions issued before password_changed_at refused, and
+-- soft deletion - deleted_at hides the account everywhere, its e-mail is
+-- replaced by '<id>@deleted.invalid' (frees the address, shown as "user no
+-- longer in system"), the original kept in deleted_email / deleted_full_name.
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS can_manage_users BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_by UUID;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_email TEXT;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_full_name TEXT;
+
 -- E-mail outbox - node-local: the node that queued an e-mail sends it
 -- (notifications.send_due). dedupe_key makes queueing idempotent
 -- (n:<notification id>, digest:<user>:<date>). No document content in
@@ -5467,57 +5482,6 @@ async def _skip_page(page_id: str, locale: str = DEFAULT_LOCALE) -> None:
 # ── Google Drive helper ───────────────────────────────────────────────────────
 
 
-async def _download_google_drive_folder(folder_id: str, dest_dir: Path) -> list[Path]:
-    sa_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-    if not sa_file:
-        raise HTTPException(
-            status_code=501,
-            detail="Google Drive not configured. Set GOOGLE_SERVICE_ACCOUNT_FILE env var.",
-        )
-    try:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
-        from googleapiclient.http import MediaIoBaseDownload
-    except ImportError:
-        raise HTTPException(
-            status_code=501,
-            detail="google-api-python-client not installed.",
-        )
-
-    creds = service_account.Credentials.from_service_account_file(
-        sa_file, scopes=["https://www.googleapis.com/auth/drive.readonly"]
-    )
-    service = build("drive", "v3", credentials=creds, cache_discovery=False)
-
-    mime_filter = " or ".join(
-        f"mimeType='{m}'" for m in ("image/jpeg", "image/png", "application/pdf")
-    )
-    items = (
-        service.files()
-        .list(
-            q=f"'{folder_id}' in parents and ({mime_filter})",
-            fields="files(id, name)",
-            pageSize=200,
-        )
-        .execute()
-        .get("files", [])
-    )
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    downloaded: list[Path] = []
-    for item in items:
-        dest = dest_dir / item["name"]
-        req = service.files().get_media(fileId=item["id"])
-        with open(dest, "wb") as fh:
-            dl = MediaIoBaseDownload(fh, req)
-            done = False
-            while not done:
-                _, done = dl.next_chunk()
-        downloaded.append(dest)
-
-    return downloaded
-
-
 # ── API router ────────────────────────────────────────────────────────────────
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
@@ -5651,6 +5615,14 @@ async def ingest_from_path(
             detail=t("ingest.provide_path_or_drive", current_user.locale),
         )
 
+    if body.google_drive_folder_id and not _DRIVE_FOLDER_ID_RE.match(
+        body.google_drive_folder_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=t("ingest.provide_path_or_drive", current_user.locale),
+        )
+
     batch_id = await _create_batch(
         "google_drive" if body.google_drive_folder_id else "server_path",
         current_user.tenant_id,
@@ -5659,11 +5631,16 @@ async def ingest_from_path(
 
     if body.google_drive_folder_id:
         dest_dir = DOCS_DIR  # as per spec: copy to anonymized_docs/
-        files = await asyncio.to_thread(
-            _download_google_drive_folder_sync,
-            body.google_drive_folder_id,
-            dest_dir,
-        )
+        try:
+            files = await asyncio.to_thread(
+                _download_google_drive_folder_sync,
+                body.google_drive_folder_id,
+                dest_dir,
+            )
+        except DriveNotConfigured:
+            raise HTTPException(
+                status_code=501, detail=t("ingest.drive_not_configured", current_user.locale)
+            ) from None
     else:
         src_dir = Path(body.path).resolve()
         if not src_dir.is_relative_to(INGEST_ROOT):
@@ -5691,17 +5668,21 @@ async def ingest_from_path(
     return {"batch_id": batch_id}
 
 
+class DriveNotConfigured(RuntimeError):
+    """GOOGLE_SERVICE_ACCOUNT_FILE unset, or the Google client not installed."""
+
+
 def _download_google_drive_folder_sync(folder_id: str, dest_dir: Path) -> list[Path]:
     """Sync wrapper so it can be called via asyncio.to_thread."""
     sa_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
     if not sa_file:
-        raise RuntimeError("Google Drive not configured. Set GOOGLE_SERVICE_ACCOUNT_FILE.")
+        raise DriveNotConfigured("Set GOOGLE_SERVICE_ACCOUNT_FILE.")
     try:
         from google.oauth2 import service_account
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaIoBaseDownload
     except ImportError:
-        raise RuntimeError("google-api-python-client not installed.")
+        raise DriveNotConfigured("google-api-python-client not installed.") from None
 
     creds = service_account.Credentials.from_service_account_file(
         sa_file, scopes=["https://www.googleapis.com/auth/drive.readonly"]
@@ -5723,18 +5704,45 @@ def _download_google_drive_folder_sync(folder_id: str, dest_dir: Path) -> list[P
     )
 
     dest_dir.mkdir(parents=True, exist_ok=True)
+    root = dest_dir.resolve()
     downloaded: list[Path] = []
     for item in items:
-        dest = dest_dir / item["name"]
+        # The name comes from whoever can write to the Drive folder: keep a
+        # portable basename only, never a path, and never overwrite.
+        dest = _drive_destination(root, item.get("name") or "", item["id"])
+        if dest is None:
+            continue
         req = service.files().get_media(fileId=item["id"])
-        with open(dest, "wb") as fh:
+        with open(dest, "xb") as fh:
             dl = MediaIoBaseDownload(fh, req)
             done = False
             while not done:
                 _, done = dl.next_chunk()
+        with open(dest, "rb") as fh:
+            head = fh.read(16)
+        if not _sniff_matches_extension(head, dest.suffix.lower()):
+            dest.unlink(missing_ok=True)
+            continue
         downloaded.append(dest)
 
     return downloaded
+
+
+_DRIVE_FOLDER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,128}$")
+
+
+def _drive_destination(root: Path, name: str, file_id: str) -> Path | None:
+    """Where a Drive file is saved in `root`: '<file id>_<safe basename>',
+    None when the name has no allowed extension or would leave `root`."""
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name.replace("\\", "/")).name).strip("._")
+    ext = Path(base).suffix.lower()
+    if ext not in ALLOWED_EXTS:
+        return None
+    safe_id = re.sub(r"[^A-Za-z0-9_-]+", "", file_id)[:64]
+    dest = (root / f"{safe_id}_{Path(base).stem[:100]}{ext}").resolve()
+    if not dest.is_relative_to(root) or dest.exists():
+        return None
+    return dest
 
 
 @router.get("/batches")
@@ -5924,6 +5932,12 @@ async def get_batch_status(
             status_code=404, detail=t("common.batch_not_found", current_user.locale)
         )
 
+    from documents_router import _unreadable_uploads
+
+    # Counts cover the whole batch (the batch list shows them anyway), but
+    # an upload filed into a document the caller can't read is not listed.
+    hidden = await _unreadable_uploads([str(r[0]) for r in rows], current_user)
+    statuses = [r[2] for r in rows]
     documents = [
         {
             "id": str(r[0]),
@@ -5936,14 +5950,15 @@ async def get_batch_status(
             "image_path": r[7],
         }
         for r in rows
+        if str(r[0]) not in hidden
     ]
 
     def _count(s: str) -> int:
-        return sum(1 for d in documents if d["status"] == s)
+        return sum(1 for status in statuses if status == s)
 
     return {
         "batch_id": batch_id,
-        "total": len(documents),
+        "total": len(statuses),
         "completed": _count("completed"),
         "crashed": _count("crashed"),
         "review_required": _count("review_required"),

@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import lifecycle
+from i18n import format_date, format_datetime
 from sqlalchemy import text
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data"))
@@ -399,7 +400,11 @@ async def load_record(
                        r.document_count, r.proposed_by::text AS proposed_by, r.proposed_at,
                        r.decided_by::text AS decided_by, r.decided_at, r.decision_note,
                        r.executed_at, r.file_path, r.file_hash,
-                       pu.email AS proposed_by_email, du.email AS decided_by_email
+                       pu.email AS proposed_by_email, du.email AS decided_by_email,
+                       -- The PV is a sealed record: it keeps the real address of
+                       -- someone deleted since (screens show the tombstone).
+                       COALESCE(pu.deleted_email, pu.email) AS pv_proposed_by_email,
+                       COALESCE(du.deleted_email, du.email) AS pv_decided_by_email
                 FROM sdai_destruction_records r
                 LEFT JOIN sdai_users pu ON pu.id = r.proposed_by
                 LEFT JOIN sdai_users du ON du.id = r.decided_by
@@ -864,10 +869,6 @@ _PV = {
 }
 
 
-def _d(v) -> str:
-    return str(v)[:10] if v else "-"
-
-
 def render_pv(
     record: dict, tenant_name: str, locales: list[str], file_count: int
 ) -> bytes:
@@ -893,13 +894,13 @@ def render_pv(
                 (L["count"], str(record["document_count"])),
                 (
                     L["proposed"],
-                    f"{record.get('proposed_by_email') or auto} - {_d(record.get('proposed_at'))}",
+                    f"{record.get('pv_proposed_by_email') or record.get('proposed_by_email') or auto} - {format_date(record.get('proposed_at'), locale)}",
                 ),
                 (
                     L["approved"],
-                    f"{record.get('decided_by_email') or auto} - {_d(record.get('decided_at'))}",
+                    f"{record.get('pv_decided_by_email') or record.get('decided_by_email') or auto} - {format_date(record.get('decided_at'), locale)}",
                 ),
-                (L["executed"], str(record.get("executed_at") or "-")[:19]),
+                (L["executed"], format_datetime(record.get("executed_at"), locale)),
                 (L["comment"], record.get("comment") or "-"),
                 (L["note"], record.get("decision_note") or "-"),
             ]
@@ -909,13 +910,13 @@ def render_pv(
         report.subheading(L["docs"])
         rows = []
         for d in docs:
-            dates = [f"{L['ingested']} {_d(d.get('ingested_at'))}"]
+            dates = [f"{L['ingested']} {format_date(d.get('ingested_at'), locale)}"]
             if d.get("archived_at"):
-                dates.append(f"{L['archived']} {_d(d['archived_at'])}")
+                dates.append(f"{L['archived']} {format_date(d['archived_at'], locale)}")
             if d.get("retention_until"):
-                dates.append(f"{L['retention']} {_d(d['retention_until'])}")
+                dates.append(f"{L['retention']} {format_date(d['retention_until'], locale)}")
             if d.get("trashed_at"):
-                dates.append(f"{L['trashed']} {_d(d['trashed_at'])}")
+                dates.append(f"{L['trashed']} {format_date(d['trashed_at'], locale)}")
             # One line per distinct file hash, with every file that had it
             # (the original is usually version 1 too).
             labels: dict[str, list[str]] = {}
@@ -944,7 +945,7 @@ def render_pv(
         report.fields([(L["proposed"], f"\n{line}"), (L["approved"], f"\n{line}")])
         report.paragraph(
             L["generated"].format(
-                when=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+                when=format_datetime(datetime.now(timezone.utc), locale)
             ),
             size=7,
         )

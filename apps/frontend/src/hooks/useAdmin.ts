@@ -11,17 +11,23 @@ import {
   fetchLastIntegrityRun,
   verifyAuditChain,
   updateAdminUser,
+  createAdminUser,
+  setUserActive,
+  resetUserPassword,
+  deleteAdminUser,
+  type CreateUserBody,
   updateUserAccessManager,
   updateUserExtractionEditor,
   type UpdateUserBody,
 } from "@sdai/api-client";
 import { saveBlob } from "../utils/download";
 
-export function useGroups() {
+export function useGroups(enabled = true) {
   return useQuery({
     queryKey: ["admin-groups"],
     queryFn: fetchGroups,
     staleTime: 30_000,
+    enabled,
   });
 }
 
@@ -64,6 +70,39 @@ export function useUpdateAdminUser() {
       queryClient.invalidateQueries({ queryKey: ["admin-users"] });
     },
   });
+}
+
+// ── Account management (GED Phase 9) ─────────────────────────────────────────
+
+function useUserMutation<V>(fn: (vars: V) => Promise<unknown>) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-groups"] });
+    },
+  });
+}
+
+export function useCreateAdminUser() {
+  return useUserMutation((body: CreateUserBody) => createAdminUser(body));
+}
+
+export function useSetUserActive() {
+  return useUserMutation(({ userId, active }: { userId: string; active: boolean }) =>
+    setUserActive(userId, active),
+  );
+}
+
+export function useResetUserPassword() {
+  return useUserMutation(({ userId, password }: { userId: string; password: string }) =>
+    resetUserPassword(userId, password),
+  );
+}
+
+export function useDeleteAdminUser() {
+  return useUserMutation((userId: string) => deleteAdminUser(userId));
 }
 
 export function useUpdateUserAccessManager() {

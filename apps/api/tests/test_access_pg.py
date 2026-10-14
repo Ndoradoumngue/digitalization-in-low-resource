@@ -544,6 +544,30 @@ def test_pages_follow_filed_document(as_user):
     assert as_user(READER()).get(f"/api/ingest/pages/{BD['open']}").status_code == 403
 
 
+def test_batch_status_hides_unreadable_uploads(as_user):
+    """GED Phase 9: a batch's status lists an upload only when the caller
+    may read what it was filed into - the counts still cover the batch."""
+    batch_id = as_user(ADMIN()).get("/api/ingest/batches").json()[0]["batch_id"]
+
+    def listed(user):
+        resp = as_user(user).get(f"/api/ingest/status/{batch_id}")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == len(BD)
+        return {d["id"] for d in body["documents"]}
+
+    assert listed(ADMIN()) == set(BD.values())
+    assert listed(REV2()) == set(BD.values())
+    assert listed(REV()) == {BD["open"], BD["pipeline"]}
+
+
+def test_malformed_ids_answer_404(as_user):
+    """A non-UUID id never turns into a 500 (GED Phase 9)."""
+    r = as_user(REV())
+    assert r.get("/api/ingest/status/not-a-uuid").status_code == 404
+    assert r.get(f"/api/db/documents/{TI}/not-a-uuid").status_code == 404
+
+
 # ── Grants, scoped grants, confidentiality (writes) ──────────────────────────
 
 

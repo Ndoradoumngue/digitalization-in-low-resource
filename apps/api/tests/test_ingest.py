@@ -737,6 +737,10 @@ def _make_fake_session(monkeypatch, *, fetchall):
     session_ctx.__aexit__ = AsyncMock(return_value=False)
 
     monkeypatch.setattr(ingest_router, "SessionLocal", MagicMock(return_value=session_ctx))
+    # The per-upload read check (GED Phase 9) has its own pg tests.
+    import documents_router
+
+    monkeypatch.setattr(documents_router, "_unreadable_uploads", AsyncMock(return_value=set()))
     return session
 
 

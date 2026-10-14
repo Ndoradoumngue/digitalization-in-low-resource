@@ -38,8 +38,24 @@ export const AdminUserSchema = z.object({
   can_share: z.boolean(),
   clearance: ConfidentialitySchema,
   group_ids: z.array(z.string()),
+  // User management (GED Phase 9)
+  can_manage_users: z.boolean().default(false),
+  is_active: z.boolean().default(true),
+  must_change_password: z.boolean().default(false),
+  created_at: z.string().nullable().optional(),
+  last_login_at: z.string().nullable().optional(),
 });
 export type AdminUser = z.infer<typeof AdminUserSchema>;
+
+/** Delegated permissions an account can hold (users_router.FLAGS). */
+export const USER_FLAGS = [
+  "can_manage_access",
+  "can_edit_extraction",
+  "can_manage_lifecycle",
+  "can_share",
+  "can_manage_users",
+] as const;
+export type UserFlag = (typeof USER_FLAGS)[number];
 
 export const AdminUsersResponseSchema = z.array(AdminUserSchema);
 

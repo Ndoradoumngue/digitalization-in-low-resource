@@ -12,7 +12,7 @@ const status = {
     node_role: "local",
     sync_enabled: true,
     initiator: true,
-    peer_url: "https://ged.example.td",
+    peer_url: "https://ged.example.org",
     join_pending: false,
   },
   worker: {

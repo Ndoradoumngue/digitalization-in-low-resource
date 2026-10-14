@@ -10,27 +10,27 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^3.0.0",
+    "@dagrejs/dagre": "^3.1.1",
     "@sdai/api-client": "workspace:*",
     "@sdai/types": "workspace:*",
-    "@tanstack/react-query": "^5.100.10",
-    "@xyflow/react": "^12.10.2",
+    "@tanstack/react-query": "^5.104.2",
+    "@xyflow/react": "^12.12.0",
     "html-to-image": "^1.11.13",
-    "i18next": "^26.4.2",
+    "i18next": "^26.4.5",
     "i18next-browser-languagedetector": "^8.2.1",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-i18next": "^17.0.14",
-    "react-router-dom": "^6.26.2"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.16",
+    "react-router-dom": "^6.30.6"
   },
   "devDependencies": {
-    "@types/react": "^18.2.15",
-    "@types/react-dom": "^18.2.7",
-    "@vitejs/plugin-react": "^4.0.3",
-    "autoprefixer": "^10.5.0",
-    "postcss": "^8.5.14",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.30",
     "tailwindcss": "^3.4.19",
-    "typescript": "^5.0.2",
-    "vite": "^4.4.5"
+    "typescript": "^5.9.3",
+    "vite": "^6.4.4"
   }
 }

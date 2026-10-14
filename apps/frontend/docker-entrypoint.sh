@@ -2,8 +2,13 @@
 # Selects the nginx configuration based on HTTPS_MODE, then starts nginx.
 #
 # HTTPS_MODE=self_signed (default)
-#   Certificate is baked into the image at /etc/nginx/ssl/cert.pem + key.pem
-#   No extra setup required. Accept the browser warning once.
+#   A certificate of this installation is generated at first start into
+#   /etc/nginx/ssl (a volume - kept across restarts and image updates).
+#   CN = SELF_SIGNED_CN (default: this host name). Accept the browser
+#   warning once.
+#
+# DEFAULT_LANGUAGE (en|fr, optional) is written into index.html: the
+# interface language until each person picks one.
 #
 # HTTPS_MODE=letsencrypt
 #   Requires LETSENCRYPT_DOMAIN to be set.
@@ -16,10 +21,28 @@ LETSENCRYPT_DOMAIN="${LETSENCRYPT_DOMAIN:-}"
 LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 CONF=/etc/nginx/conf.d/default.conf
 
+case "${DEFAULT_LANGUAGE:-}" in
+  en|fr|"") ;;
+  *) echo "[entrypoint] WARNING: DEFAULT_LANGUAGE must be en or fr - ignored." >&2
+     DEFAULT_LANGUAGE="" ;;
+esac
+sed -i "s|<meta name=\"sdai-default-language\" content=\"[a-z]*\"|<meta name=\"sdai-default-language\" content=\"${DEFAULT_LANGUAGE:-}\"|" \
+  /usr/share/nginx/html/index.html
+
 case "$HTTPS_MODE" in
 
   self_signed)
-    echo "[entrypoint] HTTPS_MODE=self_signed - using certificate baked into image."
+    if [ ! -s /etc/nginx/ssl/cert.pem ] || [ ! -s /etc/nginx/ssl/key.pem ]; then
+      CN="${SELF_SIGNED_CN:-$(hostname)}"
+      echo "[entrypoint] HTTPS_MODE=self_signed - generating this installation's certificate (CN=${CN})."
+      mkdir -p /etc/nginx/ssl
+      openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout /etc/nginx/ssl/key.pem -out /etc/nginx/ssl/cert.pem \
+        -subj "/CN=${CN}/O=SDAI" -addext "subjectAltName=DNS:${CN}" 2>/dev/null
+      chmod 600 /etc/nginx/ssl/key.pem
+    else
+      echo "[entrypoint] HTTPS_MODE=self_signed - using this installation's certificate."
+    fi
     cp /etc/nginx/templates/self_signed.conf "$CONF"
     ;;
 

@@ -24,6 +24,8 @@ def _user_row(active: bool = True, tenant_active: bool = True):
         False,  # can_manage_lifecycle
         False,  # can_share
         "internal",  # clearance
+        False,  # can_manage_users
+        False,  # must_change_password
     )
 
 

@@ -27,7 +27,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from audit import client_ip, log_action
+from audit import client_ip, display_email_sql, log_action
 from auth import CurrentUser, require_reviewer, require_user
 from cache import invalidate_cache
 import document_files
@@ -719,7 +719,7 @@ async def document_history(
             (
                 await conn.execute(
                     text(f"""
-                    SELECT id, action, user_id, user_email, details, created_at
+                    SELECT id, action, user_id, {display_email_sql()} AS user_email, details, created_at
                     FROM sdai_audit_log
                     WHERE table_name = :t AND document_id = CAST(:id AS uuid)
                       {"AND NOT (action = ANY(:hidden))" if hide_tracking else ""}

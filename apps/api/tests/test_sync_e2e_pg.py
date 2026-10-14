@@ -272,7 +272,7 @@ def deployment(tmp_path_factory):
         sql(
             local_url,
             "INSERT INTO sdai_users (email, hashed_password, role, tenant_id)"
-            " VALUES ('admin@e2e.td', :h, 'admin', CAST(:t AS uuid))",
+            " VALUES ('admin@e2e.example.org', :h, 'admin', CAST(:t AS uuid))",
             {"h": hashed, "t": tenant},
             node="local-e2e",
         )
@@ -324,7 +324,7 @@ def _login(base_url):
 
     client = httpx.Client(base_url=base_url, timeout=30)
     r = client.post(
-        "/api/auth/login", json={"email": "admin@e2e.td", "password": "secret-pass"}
+        "/api/auth/login", json={"email": "admin@e2e.example.org", "password": "secret-pass"}
     )
     assert r.status_code == 200, r.text
     return client

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AdminUserSchema, DocumentAccessResponseSchema, UserSchema } from "../index";
+import { AdminUserSchema, DocumentAccessResponseSchema, USER_FLAGS, UserSchema } from "../index";
 
 const grant = {
   id: "g1",
@@ -44,5 +44,34 @@ describe("access schemas (GED Phase 1)", () => {
         can_manage_access: false, can_edit_extraction: false, group_ids: [],
       }),
     ).toThrow();
+  });
+});
+
+describe("user management fields (GED Phase 9)", () => {
+  const base = {
+    id: "u1", email: "a@example.org", full_name: null, role: "reviewer",
+    can_manage_access: false, can_edit_extraction: false, can_manage_lifecycle: false,
+    can_share: false, clearance: "internal", group_ids: [],
+  };
+
+  it("defaults the new fields for answers from older servers", () => {
+    const u = AdminUserSchema.parse(base);
+    expect(u.is_active).toBe(true);
+    expect(u.can_manage_users).toBe(false);
+    expect(u.must_change_password).toBe(false);
+  });
+
+  it("reads deactivated accounts and the last sign-in", () => {
+    const u = AdminUserSchema.parse({
+      ...base, is_active: false, must_change_password: true, can_manage_users: true,
+      last_login_at: "2026-10-14T10:00:00+00:00", created_at: null,
+    });
+    expect(u.is_active).toBe(false);
+    expect(u.last_login_at).toBe("2026-10-14T10:00:00+00:00");
+  });
+
+  it("lists every delegated permission", () => {
+    expect(USER_FLAGS).toContain("can_manage_users");
+    expect(USER_FLAGS).toHaveLength(5);
   });
 });

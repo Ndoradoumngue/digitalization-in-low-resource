@@ -109,7 +109,7 @@ async def locked_error(conn, table: str, doc_id: str, locale: str):
     """The HTTPException for an edit refused because someone else holds
     the lock: 423 'Checked out by X until ...'."""
     from fastapi import HTTPException
-    from i18n import t
+    from i18n import format_datetime, t
 
     lock = await state(conn, table, doc_id) or {}
     until = lock.get("locked_until")
@@ -119,7 +119,7 @@ async def locked_error(conn, table: str, doc_id: str, locale: str):
             "locks.locked_by",
             locale,
             name=holder_label(lock),
-            until=until.strftime("%Y-%m-%d %H:%M UTC") if until else "-",
+            until=format_datetime(until, locale),
         ),
     )
 

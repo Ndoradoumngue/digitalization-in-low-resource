@@ -1,5 +1,5 @@
-import { Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "./context/AuthContext";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import NotificationsPage from "./pages/NotificationsPage";
@@ -23,11 +23,26 @@ import LifecycleRoute from "./components/auth/LifecycleRoute";
 import TrashPage from "./pages/TrashPage";
 import RetentionRulesPage from "./pages/RetentionRulesPage";
 import DestructionsPage from "./pages/DestructionsPage";
+import UsersPage from "./pages/UsersPage";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
+import UserManagerRoute from "./components/auth/UserManagerRoute";
+
+/** A temporary password must be replaced before anything else (the backend
+ * refuses every other call meanwhile). */
+function PasswordChangeGate() {
+  const { user } = useAuth();
+  const { pathname } = useLocation();
+  if (user?.must_change_password && pathname !== "/account/password") {
+    return <Navigate to="/account/password" replace />;
+  }
+  return null;
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <ConfirmProvider>
+      <PasswordChangeGate />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
 
@@ -180,6 +195,24 @@ export default function App() {
           element={
             <ProtectedRoute>
               <NotificationsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/ops/users"
+          element={
+            <UserManagerRoute>
+              <UsersPage />
+            </UserManagerRoute>
+          }
+        />
+
+        <Route
+          path="/account/password"
+          element={
+            <ProtectedRoute>
+              <ChangePasswordPage />
             </ProtectedRoute>
           }
         />

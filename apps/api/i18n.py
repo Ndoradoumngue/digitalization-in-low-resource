@@ -5,22 +5,29 @@ The frontend sends the user's chosen UI language on every request as the
 standard `Accept-Language` header (see packages/api-client's fetch
 wrapper, which reads it from the same localStorage key the language
 switcher writes to). `resolve_locale` turns that into "en" or "fr",
-defaulting to "en" for anything else (missing header, browser default,
-an unsupported language). `t()` looks up a message by a stable key and
+defaulting to DEFAULT_LOCALE (env DEFAULT_LOCALE, "en" unless set) for
+anything else (missing header, an unsupported language). `t()` looks up a message by a stable key and
 formats it for that locale - this is the single source of truth for
 every user-facing string an API error/response returns; call sites
 should never inline an English literal in `detail=`.
 """
 
+import os
+
 from fastapi import Header
 
 SUPPORTED_LOCALES = ("en", "fr")
-DEFAULT_LOCALE = "en"
+# Language of the deployment (DEFAULT_LANGUAGE in .env): answers without a
+# usable Accept-Language (public share pages, API keys, e-mails to people
+# who never signed in). English unless set.
+DEFAULT_LOCALE = (os.getenv("DEFAULT_LOCALE") or "en").strip().lower()
+if DEFAULT_LOCALE not in SUPPORTED_LOCALES:
+    DEFAULT_LOCALE = "en"
 
 
 def resolve_locale(accept_language: str | None = Header(default=None)) -> str:
     """FastAPI dependency - reads the Accept-Language header and returns
-    a supported locale code, defaulting to English."""
+    a supported locale code, defaulting to DEFAULT_LOCALE."""
     if accept_language:
         lang = accept_language.split(",")[0].split("-")[0].strip().lower()
         if lang in SUPPORTED_LOCALES:
@@ -86,6 +93,78 @@ MESSAGES: dict[str, dict[str, str]] = {
     "common.table_not_found": {
         "en": "Table '{table}' not found",
         "fr": "Table « {table} » introuvable",
+    },
+    "auth.password_change_required": {
+        "en": 'You must choose a new password before continuing',
+        "fr": 'Vous devez choisir un nouveau mot de passe avant de continuer',
+    },
+    "auth.user_manager_required": {
+        "en": 'Managing user accounts requires the user management permission',
+        "fr": 'La gestion des comptes nécessite la permission de gestion des utilisateurs',
+    },
+    "users.wrong_current_password": {
+        "en": 'Your current password is incorrect',
+        "fr": 'Votre mot de passe actuel est incorrect',
+    },
+    "users.password_unchanged": {
+        "en": 'The new password must be different from the current one',
+        "fr": "Le nouveau mot de passe doit être différent de l'actuel",
+    },
+    "users.password_too_short": {
+        "en": 'The password must have at least 8 characters',
+        "fr": 'Le mot de passe doit comporter au moins 8 caractères',
+    },
+    "users.password_like_email": {
+        "en": 'The password must not be the e-mail address',
+        "fr": "Le mot de passe ne doit pas être l'adresse e-mail",
+    },
+    "users.invalid_email": {
+        "en": 'Invalid e-mail address',
+        "fr": 'Adresse e-mail invalide',
+    },
+    "users.email_taken": {
+        "en": 'An account already uses this e-mail address',
+        "fr": 'Un compte utilise déjà cette adresse e-mail',
+    },
+    "users.email_taken_inactive": {
+        "en": 'A deactivated account uses this e-mail address - reactivate it instead',
+        "fr": 'Un compte désactivé utilise cette adresse e-mail - réactivez-le plutôt',
+    },
+    "users.cannot_grant_admin": {
+        "en": 'Only an administrator can give the administrator role',
+        "fr": "Seul un administrateur peut attribuer le rôle d'administrateur",
+    },
+    "users.cannot_grant_permission": {
+        "en": 'You can only give permissions you hold yourself',
+        "fr": 'Vous ne pouvez attribuer que les permissions que vous détenez',
+    },
+    "users.clearance_above_yours": {
+        "en": 'This is above your own clearance',
+        "fr": 'Cela dépasse votre propre habilitation',
+    },
+    "users.cannot_manage_admin": {
+        "en": 'Only an administrator can manage an administrator account',
+        "fr": 'Seul un administrateur peut gérer un compte administrateur',
+    },
+    "users.last_admin": {
+        "en": 'This is the last active administrator - give the role to someone else first',
+        "fr": "C'est le dernier administrateur actif - attribuez d'abord ce rôle à quelqu'un d'autre",
+    },
+    "users.not_your_own_rights": {
+        "en": 'You cannot change your own role, clearance or permissions',
+        "fr": 'Vous ne pouvez pas modifier votre propre rôle, habilitation ou permissions',
+    },
+    "users.not_yourself": {
+        "en": 'You cannot do this to your own account',
+        "fr": 'Vous ne pouvez pas faire cela sur votre propre compte',
+    },
+    "users.use_change_password": {
+        "en": 'Change your own password from your account page',
+        "fr": 'Changez votre propre mot de passe depuis votre page de compte',
+    },
+    "common.not_found": {
+        "en": "Not found",
+        "fr": "Introuvable",
     },
     "common.document_not_found": {
         "en": "Document not found",
@@ -230,6 +309,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ingest.unknown_preset": {
         "en": "Unknown prompt preset '{preset}'. Call GET /api/ingest/presets for the list of valid presets.",
         "fr": "Préréglage de prompt inconnu « {preset} ». Appelez GET /api/ingest/presets pour la liste des préréglages valides.",
+    },
+    "ingest.drive_not_configured": {
+        "en": "Google Drive import is not configured on this server (GOOGLE_SERVICE_ACCOUNT_FILE)",
+        "fr": "L'import Google Drive n'est pas configuré sur ce serveur (GOOGLE_SERVICE_ACCOUNT_FILE)",
     },
     "ingest.provide_path_or_drive": {
         "en": "Provide either 'path' or 'google_drive_folder_id'.",
@@ -762,3 +845,39 @@ def t(key: str, locale: str = DEFAULT_LOCALE, **kwargs) -> str:
         return key
     template = table.get(locale) or table.get(DEFAULT_LOCALE) or key
     return template.format(**kwargs) if kwargs else template
+
+
+def format_date(value, locale: str = DEFAULT_LOCALE) -> str:
+    """A date for people: 14/10/2026 in French, 2026-10-14 otherwise.
+    Takes a date, a datetime (its UTC day) or an ISO string; "-" for none."""
+    from datetime import date, datetime, timezone
+
+    if not value:
+        return "-"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value[:10]
+    if isinstance(value, datetime):
+        value = value.astimezone(timezone.utc).date() if value.tzinfo else value.date()
+    if not isinstance(value, date):
+        return str(value)
+    return value.strftime("%d/%m/%Y" if locale == "fr" else "%Y-%m-%d")
+
+
+def format_datetime(value, locale: str = DEFAULT_LOCALE) -> str:
+    """A UTC timestamp for people: 14/10/2026 13:05 UTC in French,
+    2026-10-14 13:05 UTC otherwise; "-" for none."""
+    from datetime import datetime, timezone
+
+    if not value:
+        return "-"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value[:16]
+    if value.tzinfo:
+        value = value.astimezone(timezone.utc)
+    return value.strftime("%d/%m/%Y %H:%M UTC" if locale == "fr" else "%Y-%m-%d %H:%M UTC")

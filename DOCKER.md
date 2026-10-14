@@ -111,8 +111,8 @@ Requires a public domain name pointing to the server's IP and port 80 reachable 
 ```bash
 # .env
 HTTPS_MODE=letsencrypt
-LETSENCRYPT_DOMAIN=sdai.example.gov.td
-LETSENCRYPT_EMAIL=admin@example.gov.td
+LETSENCRYPT_DOMAIN=sdai.example.org
+LETSENCRYPT_EMAIL=admin@example.org
 AUTH_SECURE_COOKIES=true
 ```
 
@@ -250,8 +250,8 @@ Full list in `.env.example`. Key variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTH_SECRET_KEY` | `dev-secret-key-change-in-production` | JWT signing key - **change this** |
-| `AUTH_SECURE_COOKIES` | `false` | Set `true` when using HTTPS |
+| `AUTH_SECRET_KEY` | *(required)* | JWT signing key, at least 32 characters (`openssl rand -hex 32`) - the API refuses to start without it |
+| `AUTH_SECURE_COOKIES` | `true` (Docker) | Keep `true` in production; `false` only for plain-HTTP local development |
 | `AUTH_TOKEN_EXPIRE_HOURS` | `8` | JWT lifetime |
 | `HTTPS_MODE` | `self_signed` | `self_signed` or `letsencrypt` |
 | `LETSENCRYPT_DOMAIN` | *(empty)* | Required for `letsencrypt` mode |

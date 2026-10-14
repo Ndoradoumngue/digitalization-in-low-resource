@@ -282,7 +282,7 @@ This loads the Docker images, installs local dependencies, and starts the stack.
 
 ```bash
 docker compose exec api python create_admin.py \
-  --email admin@ministry.td --password yourpassword --tenant default
+  --email admin@example.org --password yourpassword --tenant default
 ```
 
 ### How the offline model loading works
@@ -346,8 +346,8 @@ Requires a public domain name that resolves to the server's IP and port 80 reach
 
 ```bash
 HTTPS_MODE=letsencrypt
-LETSENCRYPT_DOMAIN=sdai.example.gov.td
-LETSENCRYPT_EMAIL=admin@example.gov.td
+LETSENCRYPT_DOMAIN=sdai.example.org
+LETSENCRYPT_EMAIL=admin@example.org
 AUTH_SECURE_COOKIES=true
 ```
 
@@ -566,8 +566,8 @@ Copy `.env.example` to `.env` and adjust as needed. Docker Compose reads this fi
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTH_SECRET_KEY` | `change-me-in-production` | JWT signing secret - **change this** |
-| `AUTH_SECURE_COOKIES` | `false` | Set `true` when running behind HTTPS |
+| `AUTH_SECRET_KEY` | *(required)* | JWT signing secret, at least 32 characters (`openssl rand -hex 32`) - the API refuses to start without it |
+| `AUTH_SECURE_COOKIES` | `true` (Docker) | Keep `true` in production; `false` only for plain-HTTP local development |
 | `AUTH_TOKEN_EXPIRE_HOURS` | `8` | JWT lifetime in hours |
 | `HTTPS_MODE` | `self_signed` | `self_signed` or `letsencrypt` - see [HTTPS](#https) |
 | `LETSENCRYPT_DOMAIN` | *(empty)* | Public domain name; required when `HTTPS_MODE=letsencrypt` |

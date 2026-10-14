@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n/config";
+import { formatDate } from "../utils/dates";
 import { useDbDocuments, useDbReviewers, useDbTypes } from "../hooks/useDocumentsDb";
 import { useSeries } from "../hooks/useSeries";
 import { useTags } from "../hooks/useTags";
@@ -27,8 +29,7 @@ const PAGE_SIZE = 24;
 const MAX_PAGE_BADGES = 6;
 
 function fmtDate(iso: string | null) {
-  if (!iso) return "-";
-  try { return new Date(iso).toLocaleDateString(); } catch { return iso; }
+  return iso ? formatDate(iso, i18n.language) : "-";
 }
 
 export default function DocumentsPage() {

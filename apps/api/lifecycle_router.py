@@ -562,13 +562,17 @@ async def list_rules(current_user: CurrentUser = Depends(require_reviewer)):
         )
         counts: dict[str, int] = {}
         for table in await _get_tables_columns(conn, current_user.tenant_slug):
+            # Only documents the caller can see (trashed ones included).
+            access = _access_where_clause(table, current_user, include_deleted=True)
             for rule_id, n in await conn.execute(
                 text(f"""
                     SELECT retention_rule_id::text, count(*) FROM "{table}"
                     WHERE retention_rule_id IS NOT NULL
                       AND lifecycle_status IS DISTINCT FROM 'destroyed'
+                      {f"AND {access}" if access else ""}
                     GROUP BY 1
-                """)
+                """),
+                _access_params(current_user),
             ):
                 counts[rule_id] = counts.get(rule_id, 0) + n
     return [

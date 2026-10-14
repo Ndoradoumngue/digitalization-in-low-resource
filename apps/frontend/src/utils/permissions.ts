@@ -43,3 +43,9 @@ export function canShareLevel(user: User | null | undefined, confidentiality: st
 export function canManageLifecycle(user: User | null | undefined): boolean {
   return user?.role === "admin" || (user?.role === "reviewer" && !!user.can_manage_lifecycle);
 }
+
+/** Add / update / (de)activate accounts - admin, or a reviewer with
+ * can_manage_users. Deleting an account stays admin-only. */
+export function canManageUsers(user: User | null | undefined): boolean {
+  return user?.role === "admin" || (user?.role === "reviewer" && !!user.can_manage_users);
+}

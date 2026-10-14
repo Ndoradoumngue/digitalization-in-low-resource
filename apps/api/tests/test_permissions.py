@@ -188,27 +188,29 @@ def test_api_key_holds_no_flag():
 # ── Admin user editor ─────────────────────────────────────────────────────────
 
 
-def test_update_user_role_and_clearance(admin_client, mock_db):
-    mock_db.execute.return_value = make_result(one_or_none=("user-1",))
-    resp = admin_client.patch(
-        "/api/admin/users/user-1",
-        json={"role": "reader", "clearance": "confidential", "can_share": True},
-    )
-    assert resp.status_code == 200
-    sql = str(mock_db.execute.call_args_list[0].args[0])
-    params = mock_db.execute.call_args_list[0].args[1]
-    assert "role = :role" in sql and "clearance = :clearance" in sql
-    # an admin is never demoted through this endpoint
-    assert "role <> 'admin'" in sql
-    assert params["role"] == "reader" and params["clearance"] == "confidential"
-
-
 @pytest.mark.parametrize(
     "body",
-    [{"role": "admin"}, {"role": "api_key"}, {"clearance": "top-secret"}],
+    [{"role": "api_key"}, {"clearance": "top-secret"}],
 )
 def test_update_user_rejects_invalid_values(admin_client, mock_db, body):
     assert admin_client.patch("/api/admin/users/user-1", json=body).status_code == 422
+
+
+def test_user_manager_flag_needs_a_reviewer():
+    """can_manage_users only works for reviewers (and admins hold it)."""
+    assert ADMIN.can_manage_user_accounts
+    assert not REVIEWER.can_manage_user_accounts
+    assert CurrentUser(**{**REVIEWER.__dict__, "can_manage_users": True}).can_manage_user_accounts
+    assert not CurrentUser(**{**READER.__dict__, "can_manage_users": True}).can_manage_user_accounts
+    assert not API_KEY_USER.can_manage_user_accounts
+
+
+def test_password_problems():
+    from users_router import password_problem
+
+    assert password_problem("short", "a@example.org") == "users.password_too_short"
+    assert password_problem("alice.martin", "alice.martin@example.org") == "users.password_like_email"
+    assert password_problem("a good long pass", "a@example.org") is None
 
 
 def test_me_returns_flags_and_clearance(reader_client):

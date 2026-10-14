@@ -1,22 +1,24 @@
-fastapi==0.115.5
+fastapi==0.136.3
+# Pinned explicitly: FastAPI's range is open-ended (security fixes, GED Phase 9)
+starlette==1.8.0
 uvicorn[standard]==0.32.1
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 bcrypt==3.2.2
-python-multipart==0.0.12
+python-multipart==0.0.32
 
 # Async PostgreSQL
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 
 # Image processing
-Pillow==11.1.0
+Pillow==12.3.0
 opencv-python-headless==4.10.0.84
 pytesseract==0.3.13
 numpy==2.2.1
 pdf2image==1.17.0
 
 # PDF watermark on confidential downloads (GED Phase 5)
-pypdf==5.1.0
+pypdf==6.20.1
 
 # Electronic signature - PAdES (GED Phase 7), image originals to PDF
 pyhanko==0.25.3
@@ -30,6 +32,9 @@ slowapi==0.1.9
 
 # Redis caching
 fastapi-cache2[redis]==0.2.2
+# fastapi-cache2 imports starlette.templating, which (Starlette 1.x) refuses
+# to import without jinja2 - the API would not start
+jinja2==3.1.6
 
 # Google Drive (optional - only needed if using Drive ingestion)
 google-auth==2.37.0

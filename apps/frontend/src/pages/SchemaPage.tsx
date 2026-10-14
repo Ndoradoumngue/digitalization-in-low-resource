@@ -20,6 +20,8 @@ import Dagre from "@dagrejs/dagre";
 import { toPng } from "html-to-image";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n/config";
+import { formatDate } from "../utils/dates";
 import { useDbSchema } from "../hooks/useSchema";
 import NavSidebar from "../components/NavSidebar";
 import type { DbTableInfo } from "@sdai/types";
@@ -176,7 +178,7 @@ function SidePanel({ table, onClose }: { table: DbTableInfo; onClose: () => void
         <div>
           <div className="text-xs text-gray-500">{t("schema.lastIngested")}</div>
           <div className="text-sm font-medium text-gray-800">
-            {table.last_ingested ? new Date(table.last_ingested).toLocaleDateString() : "-"}
+            {table.last_ingested ? formatDate(table.last_ingested, i18n.language) : "-"}
           </div>
         </div>
       </div>

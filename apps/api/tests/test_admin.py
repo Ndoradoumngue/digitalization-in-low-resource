@@ -131,40 +131,10 @@ def test_delete_group_success(admin_client, mock_db):
 # ── Users ─────────────────────────────────────────────────────────────────────
 
 
-def test_list_users_requires_admin(auth_client):
+def test_list_users_requires_user_manager(auth_client):
+    """A reviewer without can_manage_users is refused (users_router; the
+    behaviour against a real database is in test_users_pg.py)."""
     assert auth_client.get("/api/admin/users").status_code == 403
-
-
-def test_list_users_returns_items_with_groups(admin_client, mock_db):
-    rows = [
-        (
-            "user-1", "a@example.com", "Alice", "reader", False, False, ["group-1", "group-2"],
-            False, True, "confidential",
-        )
-    ]
-    mock_db.execute.return_value = make_result(rows=rows)
-    resp = admin_client.get("/api/admin/users")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body[0]["email"] == "a@example.com"
-    assert body[0]["can_edit_extraction"] is False
-    assert body[0]["group_ids"] == ["group-1", "group-2"]
-    assert body[0]["role"] == "reader"
-    assert body[0]["can_share"] is True
-    assert body[0]["clearance"] == "confidential"
-
-
-def test_update_user_can_manage_access(admin_client, mock_db):
-    mock_db.execute.return_value = make_result(one_or_none=("user-1",))
-    resp = admin_client.patch("/api/admin/users/user-1", json={"can_manage_access": True})
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
-
-
-def test_update_user_not_found(admin_client, mock_db):
-    mock_db.execute.return_value = make_result(one_or_none=None)
-    resp = admin_client.patch("/api/admin/users/missing-id", json={"can_manage_access": True})
-    assert resp.status_code == 404
 
 
 def test_add_user_to_group_success(admin_client, mock_db):

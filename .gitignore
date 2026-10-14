@@ -42,3 +42,9 @@ CLAUDE.local.md
 
 # Backup service: SSH keys for the SFTP target and the local NAS repository
 backup/
+
+# Signing certificate of the organisation (mounted read-only at /secrets)
+secrets/
+
+# Offline bundle built by setup.sh (images, VLM model, checksums)
+models/

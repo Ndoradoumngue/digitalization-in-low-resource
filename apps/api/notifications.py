@@ -503,6 +503,15 @@ async def send_due(engine, sender=None, limit: int = 20) -> dict:
             ),
             {"stale": datetime.now(timezone.utc) - _STALE_SENDING},
         )
+        # Accounts deactivated or deleted since (here or on the peer) get
+        # nothing more.
+        await conn.execute(
+            text(
+                "UPDATE sdai_email_outbox SET status = 'failed', last_error = 'account deactivated'"
+                " WHERE status = 'pending' AND user_id IN (SELECT id FROM sdai_users"
+                " WHERE is_active IS FALSE OR deleted_at IS NOT NULL)"
+            )
+        )
         rows = (
             (
                 await conn.execute(

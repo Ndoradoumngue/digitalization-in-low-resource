@@ -4,83 +4,80 @@
 # Run this on the target server - no internet connection required
 # (as long as setup.sh was run first and ./models/ was transferred).
 #
+#   ./install.sh          load the bundle, then configure and start this node
+#   ./install.sh --non-interactive   answers from SDAI_* variables (scripts/first-run.sh)
+#   ./install.sh --dev    also install the Python wheels / Node packages for
+#                         development outside Docker (needs python3-pip, pnpm)
+#
 # Requirements (on the offline server):
-#   - Docker + Docker Compose v2
-#   - pnpm  (if you need local Node development outside Docker)
-#   - Python 3.11 + pip  (if you need local Python development outside Docker)
+#   - Docker Engine + Docker Compose v2 (see the administrator guide)
+#
+# Updating an installed server with a newer bundle: run ./install.sh again -
+# the new images are loaded, .env and all data are kept, the stack restarts.
 
 set -euo pipefail
 
-MODELS_DIR="./models"
-BOLD='\033[1m'; RESET='\033[0m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
+cd "$(dirname "$0")"
 
-step() { echo -e "\n${BOLD}[${1}/4]${RESET} ${2}"; }
+MODELS_DIR="./models"
+BOLD='\033[1m'; RESET='\033[0m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'
+
+step() { echo -e "\n${BOLD}[${1}/3]${RESET} ${2}"; }
 ok()   { echo -e "      ${GREEN}✓ ${1}${RESET}"; }
 warn() { echo -e "      ${YELLOW}⚠ ${1}${RESET}"; }
+die()  { echo -e "      ${RED}✗ ${1}${RESET}" >&2; exit 1; }
+
+DEV=0
+ARGS=()
+for arg in "$@"; do
+  if [ "$arg" = "--dev" ]; then DEV=1; else ARGS+=("$arg"); fi
+done
 
 echo -e "${BOLD}=== SDAI Offline Installation ===${RESET}"
 
-# ── 1. Load Docker images ─────────────────────────────────────────────────────
-step 1 "Loading Docker images…"
+# ── 1. Check and load the bundle ─────────────────────────────────────────────
+step 1 "Checking and loading the bundle…"
+
+if [ -f "$MODELS_DIR/SHA256SUMS" ]; then
+  # A copy over USB disks or a bad link can corrupt a 10 GB file silently.
+  (cd "$MODELS_DIR" && sha256sum --quiet -c SHA256SUMS) \
+    || die "the bundle is damaged (checksum mismatch) - copy ./models/ again"
+  ok "bundle intact (SHA256SUMS)"
+else
+  warn "no models/SHA256SUMS - integrity not checked"
+fi
 
 if [ -f "$MODELS_DIR/docker-images.tar.gz" ]; then
-  docker load < "$MODELS_DIR/docker-images.tar.gz"
-  ok "Images loaded from $MODELS_DIR/docker-images.tar.gz"
+  gunzip -c "$MODELS_DIR/docker-images.tar.gz" | docker load
+  ok "images loaded from $MODELS_DIR/docker-images.tar.gz"
 else
-  warn "No docker-images.tar.gz found. Attempting to pull from internet…"
-  docker compose pull
+  warn "no docker-images.tar.gz - first-run will build the images (needs internet)"
 fi
-
-# ── 2. Python wheels (local development outside Docker) ───────────────────────
-step 2 "Installing Python dependencies…"
-
-if [ -d "$MODELS_DIR/wheels" ] && [ -n "$(ls -A "$MODELS_DIR/wheels" 2>/dev/null)" ]; then
-  # Install into the active Python environment (useful for local dev / scripts).
-  # The Docker API image already has these baked in during docker compose build.
-  pip install --quiet --no-index \
-    --find-links="$MODELS_DIR/wheels/" \
-    -r apps/api/requirements.txt
-  ok "Python deps installed from $MODELS_DIR/wheels/"
+if [ -f "$MODELS_DIR/ollama-models.tar.gz" ]; then
+  ok "VLM model archive present (restored by the ollama container at first start)"
 else
-  warn "No wheel cache found - skipping (Docker image already includes all deps)"
+  warn "no ollama-models.tar.gz - the ollama container will download the model (needs internet)"
 fi
 
-# ── 3. Node packages (local development outside Docker) ───────────────────────
-step 3 "Installing Node packages…"
-
-if [ -d "$MODELS_DIR/pnpm-store" ]; then
-  pnpm --store-dir "$MODELS_DIR/pnpm-store" install --offline
-  ok "Node packages installed from $MODELS_DIR/pnpm-store/"
+# ── 2. Development dependencies (optional) ───────────────────────────────────
+step 2 "Development dependencies…"
+if [ "$DEV" = 1 ]; then
+  if [ -d "$MODELS_DIR/wheels" ] && [ -n "$(ls -A "$MODELS_DIR/wheels" 2>/dev/null)" ]; then
+    pip install --quiet --no-index --find-links="$MODELS_DIR/wheels/" -r apps/api/requirements.txt
+    ok "Python deps installed from $MODELS_DIR/wheels/"
+  else
+    warn "no wheel cache in $MODELS_DIR/wheels/ (setup.sh --dev)"
+  fi
+  if [ -d "$MODELS_DIR/pnpm-store" ]; then
+    pnpm --store-dir "$MODELS_DIR/pnpm-store" install --offline
+    ok "Node packages installed from $MODELS_DIR/pnpm-store/"
+  else
+    warn "no pnpm offline store in $MODELS_DIR/pnpm-store/ (setup.sh --dev)"
+  fi
 else
-  warn "No pnpm offline store found - skipping (not needed for Docker-only deployment)"
+  ok "skipped - not needed to run the application (./install.sh --dev to install them)"
 fi
 
-# ── 4. Start the stack ────────────────────────────────────────────────────────
-step 4 "Starting services (Docker Compose)…"
-
-if [ ! -f ".env" ]; then
-  cp .env.example .env
-  warn ".env created from .env.example - edit AUTH_SECRET_KEY before production use"
-fi
-
-# Build any services that need local source (api, frontend).
-# Pre-pulled images (postgres, ollama) are already loaded and won't be re-pulled.
-docker compose build --quiet
-docker compose up -d
-
-ok "Stack started"
-
-# ── Post-install instructions ─────────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}=== Installation complete ===${RESET}"
-echo ""
-echo "The Ollama model will load from the bundled archive on first start."
-echo "This takes about 30–60 seconds - check progress with:"
-echo "  docker compose logs -f ollama"
-echo ""
-echo "Once the stack is healthy, create the first admin user:"
-echo ""
-echo -e "  ${BOLD}docker compose exec api python create_admin.py \\"
-echo -e "    --email admin@ministry.td --password yourpassword --tenant default${RESET}"
-echo ""
-echo "Then open http://localhost in your browser."
+# ── 3. Configure and start this node ─────────────────────────────────────────
+step 3 "Configuring and starting this node…"
+exec ./scripts/first-run.sh "${ARGS[@]+"${ARGS[@]}"}"

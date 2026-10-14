@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n/config";
+import { formatDateTime } from "../utils/dates";
 import type { TFunction } from "i18next";
 import NavSidebar from "../components/NavSidebar";
 import {
@@ -17,7 +19,7 @@ import type { BackupRun, SyncAlert, SyncConflict, SyncResolution, SyncStatus } f
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function when(value: string | null | undefined, never: string): string {
-  return value ? new Date(value).toLocaleString() : never;
+  return value ? formatDateTime(value, i18n.language) : never;
 }
 
 function megabytes(bytes: number): string {

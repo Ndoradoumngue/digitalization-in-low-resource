@@ -7,6 +7,7 @@ Provides:
   require_user         - any signed-in person (admin/reviewer/reader), never an API key
   require_contributor  - may upload/track ingestion (admin/reviewer/API key), never a reader
   require_reviewer     - may act on documents (admin/reviewer), never a reader or API key
+  require_user_manager - may add / update / (de)activate accounts (admin, or can_manage_users)
 
 Roles: admin, reviewer, reader (read-only), and the synthetic api_key.
 Delegated flags (can_manage_access, can_edit_extraction,
@@ -16,17 +17,24 @@ hold (sharing a document it can see changes nothing in the archive).
 """
 
 import hashlib
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from fastapi import Cookie, Depends, Header, HTTPException
+from fastapi import Cookie, Depends, Header, HTTPException, Request
 from i18n import resolve_locale, t
 from jose import JWTError, jwt
 
 SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError("AUTH_SECRET_KEY environment variable is not set")
+if len(SECRET_KEY) < 32:
+    # Anyone who guesses it can mint a session for any account.
+    logging.getLogger(__name__).warning(
+        "AUTH_SECRET_KEY is shorter than 32 characters - generate one with"
+        " `openssl rand -hex 32` before going to production"
+    )
 ALGORITHM = "HS256"
 
 # Prefix on every minted API key (see create_api_key.py) - lets
@@ -52,6 +60,9 @@ class CurrentUser:
     can_manage_lifecycle: bool = False
     can_share: bool = False
     clearance: str = "internal"
+    can_manage_users: bool = False
+    must_change_password: bool = False
+    password_changed_at: datetime | None = None
 
     @property
     def is_reader(self) -> bool:
@@ -81,13 +92,26 @@ class CurrentUser:
         return self.role == "admin" or (self.role == "reviewer" and self.can_manage_lifecycle)
 
     @property
+    def can_manage_user_accounts(self) -> bool:
+        """Add / update / (de)activate accounts - admin, or a reviewer
+        delegated can_manage_users (users_router enforces what a non-admin
+        manager may grant). Deleting stays admin-only."""
+        return self.role == "admin" or (self.role == "reviewer" and self.can_manage_users)
+
+    @property
     def can_share_documents(self) -> bool:
         """Creating external share links - admin, or any person (reviewer
         or reader) delegated can_share. Never an API key."""
         return self.role == "admin" or (self.role in ("reviewer", "reader") and self.can_share)
 
 
+# What a person whose password must be changed may still call (GED Phase 9):
+# who am I, change it (logout needs no session).
+PASSWORD_CHANGE_PATHS = frozenset({"/api/auth/me", "/api/auth/change-password"})
+
+
 async def get_current_user(
+    request: Request,
     access_token: str | None = Cookie(default=None),
     authorization: str | None = Header(default=None),
     locale: str = Depends(resolve_locale),
@@ -111,6 +135,7 @@ async def get_current_user(
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str | None = payload.get("sub")
         jti: str | None = payload.get("jti")
+        issued_at = payload.get("iat")
         if not user_id:
             raise HTTPException(status_code=401, detail=t("auth.invalid_token", locale))
     except JWTError:
@@ -134,6 +159,19 @@ async def get_current_user(
 
     if user is None:
         raise HTTPException(status_code=401, detail=t("auth.user_not_found_or_deactivated", locale))
+    # A password set or reset since this session began ends it (sessions
+    # from before iat was recorded too, once a password has changed).
+    changed_at = user.password_changed_at
+    if changed_at is not None and (
+        not isinstance(issued_at, (int, float)) or issued_at < changed_at.timestamp()
+    ):
+        raise HTTPException(status_code=401, detail=t("auth.token_revoked", locale))
+    if user.must_change_password and request.url.path not in PASSWORD_CHANGE_PATHS:
+        raise HTTPException(
+            status_code=403,
+            detail=t("auth.password_change_required", locale),
+            headers={"X-Password-Change-Required": "1"},
+        )
     return user
 
 
@@ -149,7 +187,9 @@ async def load_user(conn, user_id: str, locale: str = "en") -> CurrentUser | Non
             "SELECT u.id, u.email, u.full_name, u.role, u.is_active,"
             "       t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,"
             "       t.is_active AS tenant_is_active, u.can_manage_access,"
-            "       u.can_edit_extraction, u.can_manage_lifecycle, u.can_share, u.clearance"
+            "       u.can_edit_extraction, u.can_manage_lifecycle, u.can_share, u.clearance,"
+            "       u.can_manage_users, u.must_change_password, u.deleted_at,"
+            "       u.password_changed_at"
             " FROM sdai_users u"
             " JOIN sdai_tenants t ON t.id = u.tenant_id"
             " WHERE u.id = CAST(:id AS uuid)"
@@ -157,7 +197,7 @@ async def load_user(conn, user_id: str, locale: str = "en") -> CurrentUser | Non
         {"id": user_id},
     )
     user = row.one_or_none()
-    if user is None or not user[4] or not user[8]:
+    if user is None or not user[4] or not user[8] or user[16] is not None:
         return None
 
     group_rows = await conn.execute(
@@ -181,6 +221,9 @@ async def load_user(conn, user_id: str, locale: str = "en") -> CurrentUser | Non
         can_manage_lifecycle=user[11],
         can_share=user[12],
         clearance=user[13],
+        can_manage_users=user[14],
+        must_change_password=user[15],
+        password_changed_at=user[17],
     )
 
 
@@ -274,6 +317,18 @@ async def require_extraction_editor(
     if not current_user.can_edit_extraction_data:
         raise HTTPException(
             status_code=403, detail=t("auth.extraction_editor_required", current_user.locale)
+        )
+    return current_user
+
+
+async def require_user_manager(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """FastAPI dependency - may add / update / (de)activate accounts
+    (admin, or a reviewer delegated can_manage_users)."""
+    if not current_user.can_manage_user_accounts:
+        raise HTTPException(
+            status_code=403, detail=t("auth.user_manager_required", current_user.locale)
         )
     return current_user
 

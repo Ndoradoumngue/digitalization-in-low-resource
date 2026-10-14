@@ -27,7 +27,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import HTTPException
-from i18n import t
+from i18n import format_datetime, t
 from sqlalchemy import text
 
 # Stamp downloaded PDFs of confidential/secret documents with who downloaded
@@ -192,8 +192,8 @@ def watermark_pdf(data: bytes, diagonal: str, footer: str) -> bytes:
         NameObject,
     )
 
-    reader = PdfReader(io.BytesIO(data))
-    writer = PdfWriter()
+    # The pages are stamped once attached to the writer (pypdf 6+).
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(data)))
     font = DictionaryObject(
         {
             NameObject("/Type"): NameObject("/Font"),
@@ -208,7 +208,7 @@ def watermark_pdf(data: bytes, diagonal: str, footer: str) -> bytes:
             NameObject("/ca"): FloatObject(0.22),
         }
     )
-    for page in reader.pages:
+    for page in writer.pages:
         box = page.mediabox
         w, h = float(box.width), float(box.height)
         x0, y0 = float(box.left), float(box.bottom)
@@ -237,7 +237,6 @@ def watermark_pdf(data: bytes, diagonal: str, footer: str) -> bytes:
         stream.set_data(ops)
         overlay[NameObject("/Contents")] = stream
         page.merge_page(overlay)
-        writer.add_page(page)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
@@ -256,7 +255,7 @@ async def deliver(
     headers = {"Content-Disposition": content_disposition(filename, inline)}
     if not f.needs_watermark():
         return FileResponse(path, media_type=f.mime or None, headers=headers), False
-    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    when = format_datetime(datetime.now(timezone.utc), locale)
     level = t(f"download.watermark_level_{f.confidentiality}", locale)
     try:
         data = await asyncio.to_thread(

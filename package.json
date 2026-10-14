@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "pnpm --filter @sdai/frontend dev",
-    "build": "pnpm -r --filter=./packages/** build && pnpm --filter @sdai/frontend build",
+    "build": "pnpm -r --if-present --filter=./packages/** build && pnpm --filter @sdai/frontend build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r --if-present test",
     "test:api": "pytest apps/api/tests/ -v"

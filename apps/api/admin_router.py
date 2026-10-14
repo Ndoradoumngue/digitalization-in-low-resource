@@ -6,8 +6,7 @@ Endpoints:
   GET    /api/admin/groups               - list this tenant's groups
   POST   /api/admin/groups               - create a group
   DELETE /api/admin/groups/{group_id}    - delete a group
-  GET    /api/admin/users                - list this tenant's users, with group membership
-  PATCH  /api/admin/users/{user_id}      - role (reviewer/reader), delegated flags, clearance
+  (accounts themselves: users_router.py)
   POST   /api/admin/users/{user_id}/groups              - add a user to a group
   DELETE /api/admin/users/{user_id}/groups/{group_id}   - remove a user from a group
   POST   /api/admin/integrity-check      - on-demand fixity check for this tenant (+ audit chain)
@@ -26,7 +25,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from audit import log_action
+from audit import display_email_sql, log_action
 from auth import CurrentUser, require_admin
 from documents_router import _SAFE_FILE_ROOTS, _get_tables_columns
 from export_format import insert_statement, serial
@@ -98,7 +97,9 @@ async def get_audit_log(
 
     sql = f"""
         SELECT
-            id, user_id, user_email, action, table_name,
+            id, user_id,
+            {display_email_sql()} AS user_email,
+            action, table_name,
             document_id, details, ip_address, created_at,
             COUNT(*) OVER() AS total_count
         FROM sdai_audit_log
@@ -199,98 +200,8 @@ async def delete_group(group_id: str, current_user: CurrentUser = Depends(requir
 # ── Users ─────────────────────────────────────────────────────────────────────
 
 
-class UpdateUserBody(BaseModel):
-    role: str | None = Field(None, pattern="^(reviewer|reader)$")
-    can_manage_access: bool | None = None
-    can_edit_extraction: bool | None = None
-    can_manage_lifecycle: bool | None = None
-    can_share: bool | None = None
-    clearance: str | None = Field(None, pattern="^(public|internal|confidential|secret)$")
-
-
 class GroupMembershipBody(BaseModel):
     group_id: str
-
-
-@router.get("/users", summary="List users")
-async def list_users(current_user: CurrentUser = Depends(require_admin)):
-    """Tenant's users with role, delegated permissions, and current group
-    membership - powers the group-membership picker and the per-document
-    individual-user access grant picker."""
-    async with _engine().connect() as conn:
-        rows = await conn.execute(
-            text("""
-                SELECT u.id, u.email, u.full_name, u.role,
-                       u.can_manage_access, u.can_edit_extraction,
-                       COALESCE(ARRAY_AGG(ug.group_id) FILTER (WHERE ug.group_id IS NOT NULL), '{}') AS group_ids,
-                       u.can_manage_lifecycle, u.can_share, u.clearance
-                FROM sdai_users u
-                LEFT JOIN sdai_user_groups ug ON ug.user_id = u.id
-                WHERE u.tenant_id = CAST(:tid AS uuid)
-                GROUP BY u.id
-                ORDER BY u.email
-            """),
-            {"tid": current_user.tenant_id},
-        )
-        return [
-            {
-                "id": str(r[0]),
-                "email": r[1],
-                "full_name": r[2],
-                "role": r[3],
-                "can_manage_access": r[4],
-                "can_edit_extraction": r[5],
-                "group_ids": [str(g) for g in r[6]],
-                "can_manage_lifecycle": r[7],
-                "can_share": r[8],
-                "clearance": r[9],
-            }
-            for r in rows
-        ]
-
-
-@router.patch("/users/{user_id}", summary="Update a user's role, delegated permissions or clearance")
-async def update_user(
-    user_id: str, body: UpdateUserBody, current_user: CurrentUser = Depends(require_admin)
-):
-    """Partial update - only the fields present in the body are changed,
-    so each flag can be toggled independently of the others. `role` only
-    moves a user between reviewer and reader - admins are never demoted
-    (or created) here, so an admin can't lock the tenant out of its own
-    administration by mistake."""
-    set_parts: list[str] = []
-    params: dict = {"id": user_id, "tid": current_user.tenant_id}
-    changes = body.model_dump(exclude_none=True)
-    for field, value in changes.items():
-        set_parts.append(f"{field} = :{field}")
-        params[field] = value
-    if not set_parts:
-        raise HTTPException(
-            status_code=422, detail=t("admin.no_fields_to_update", current_user.locale)
-        )
-
-    async with _engine().begin() as conn:
-        result = await conn.execute(
-            text(
-                f"UPDATE sdai_users SET {', '.join(set_parts)}"
-                f" WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
-                + (" AND role <> 'admin'" if "role" in changes else "")
-                + " RETURNING id"
-            ),
-            params,
-        )
-        if result.one_or_none() is None:
-            raise HTTPException(
-                status_code=404, detail=t("common.user_not_found", current_user.locale)
-            )
-
-    await log_action(
-        action="user_permissions_changed",
-        user_id=current_user.id,
-        user_email=current_user.email,
-        details={"target_user_id": user_id, **changes},
-    )
-    return {"ok": True}
 
 
 @router.post("/users/{user_id}/groups", summary="Add a user to a group")
@@ -302,6 +213,7 @@ async def add_user_to_group(
         user_row = await conn.execute(
             text(
                 "SELECT 1 FROM sdai_users WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+                " AND deleted_at IS NULL"
             ),
             {"id": user_id, "tid": current_user.tenant_id},
         )
@@ -373,8 +285,8 @@ async def last_integrity_check(current_user: CurrentUser = Depends(require_admin
     async with _engine().connect() as conn:
         row = (
             await conn.execute(
-                text("""
-                    SELECT created_at, user_email, details FROM sdai_audit_log
+                text(f"""
+                    SELECT created_at, {display_email_sql()} AS user_email, details FROM sdai_audit_log
                     WHERE action = 'integrity_check_completed' AND details->>'tenant' = :slug
                     ORDER BY created_at DESC LIMIT 1
                 """),

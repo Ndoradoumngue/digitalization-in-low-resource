@@ -3,16 +3,24 @@
 Seed a user into the sdai_users table, in a given tenant.
 
 Usage:
-  python create_admin.py --email admin@example.com --password secret --full-name "Alice" --tenant default
-  python create_admin.py --email reviewer@example.com --password secret --tenant land --role reviewer
+  python create_admin.py --email admin@example.com --full-name "Alice" --tenant default
+  python create_admin.py --email reviewer@example.com --tenant land --role reviewer
+  python create_admin.py --email someone@example.com --deactivate
+
+The password is asked for (or read from SDAI_ADMIN_PASSWORD); --password
+also works but shows it to every user of the server (ps).
 
 The tenant must already exist - create it first with create_tenant.py.
 Upserts by email: running the script again updates the password, role,
-tenant, and re-activates the account.
+tenant, and re-activates the account. --deactivate blocks an account
+(sign-in refused, open sessions rejected on their next request) without
+deleting it - its name stays on everything it did.
 """
 
 import argparse
 import asyncio
+import getpass
+import json
 import os
 import sys
 
@@ -68,13 +76,50 @@ async def main(email: str, password: str, full_name: str, tenant_slug: str, role
     await engine.dispose()
 
 
+async def deactivate(email: str) -> int:
+    engine = create_async_engine(DATABASE_URL, echo=False)
+    try:
+        async with engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    text(
+                        "UPDATE sdai_users SET is_active = false WHERE email = :e"
+                        " RETURNING id, email"
+                    ),
+                    {"e": email},
+                )
+            ).one_or_none()
+            if row is None:
+                print(f"Error: no user '{email}'", file=sys.stderr)
+                return 1
+            await conn.execute(
+                text(
+                    "INSERT INTO sdai_audit_log (user_id, user_email, action, details)"
+                    " VALUES (:uid, :email, 'user_deactivated', CAST(:d AS jsonb))"
+                ),
+                {"uid": row[0], "email": row[1], "d": json.dumps({"via": "create_admin.py"})},
+            )
+    finally:
+        await engine.dispose()
+    print(f"User deactivated - {email} (run this script without --deactivate to re-activate)")
+    return 0
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Create or update an SDAI user")
     parser.add_argument("--email", required=True, help="Login email address")
-    parser.add_argument("--password", required=True, help="Initial password")
+    parser.add_argument(
+        "--password",
+        default=None,
+        help="Initial password. Omit it to read SDAI_ADMIN_PASSWORD or be prompted -"
+        " a password on the command line is visible to every user of the server (ps).",
+    )
     parser.add_argument("--full-name", default="", help="Display name (optional)")
     parser.add_argument(
-        "--tenant", required=True, help="Tenant slug the user belongs to (must already exist)"
+        "--tenant", default=None, help="Tenant slug the user belongs to (must already exist)"
+    )
+    parser.add_argument(
+        "--deactivate", action="store_true", help="Block this account instead (keeps its history)"
     )
     parser.add_argument(
         "--role",
@@ -84,6 +129,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if args.deactivate:
+        sys.exit(asyncio.run(deactivate(args.email)))
+    if not args.tenant:
+        parser.error("--tenant is required")
+    if args.password is None:
+        args.password = os.environ.get("SDAI_ADMIN_PASSWORD") or (
+            getpass.getpass("Password: ") if sys.stdin.isatty() else ""
+        )
     if len(args.password) < 8:
         print("Error: password must be at least 8 characters", file=sys.stderr)
         sys.exit(1)

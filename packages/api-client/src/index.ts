@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AdminUserSchema,
   AdminUsersResponseSchema,
   AllOcrResultsSchema,
   AllVlmResultsSchema,
@@ -152,6 +153,44 @@ function currentLocale(): string {
     return "en";
   }
 }
+
+// ── Deleted users (GED Phase 9) ───────────────────────────────────────────────
+// A deleted account's e-mail becomes "<id>@deleted.invalid" (reserved domain,
+// never a real mailbox - apps/api/users_router.py). Every value of that form
+// in any API answer is shown as "user no longer in system", in the UI
+// language, wherever the person was referenced.
+
+const DELETED_USER = /^[0-9a-f-]{36}@deleted\.invalid$/i;
+const DELETED_USER_LABEL: Record<string, string> = {
+  fr: "Utilisateur supprimé du système",
+  en: "User no longer in system",
+};
+
+export function deletedUserLabel(): string {
+  return DELETED_USER_LABEL[currentLocale()] ?? DELETED_USER_LABEL.en;
+}
+
+export function replaceDeletedUsers<T>(value: T): T {
+  if (typeof value === "string") {
+    return (DELETED_USER.test(value) ? deletedUserLabel() : value) as T;
+  }
+  if (Array.isArray(value)) return value.map(replaceDeletedUsers) as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = replaceDeletedUsers(v);
+    return out as T;
+  }
+  return value;
+}
+
+// Every request of this module goes through here, so every parsed answer
+// gets the substitution.
+const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  const res = await globalThis.fetch(input, init);
+  const json = res.json.bind(res);
+  Object.defineProperty(res, "json", { value: async () => replaceDeletedUsers(await json()) });
+  return res;
+};
 
 function withAuth(init: RequestInit = {}): RequestInit {
   return {
@@ -849,17 +888,57 @@ export async function updateUserExtractionEditor(
 }
 
 export interface UpdateUserBody {
-  role?: "reviewer" | "reader";
+  full_name?: string;
+  role?: "admin" | "reviewer" | "reader";
   can_manage_access?: boolean;
   can_edit_extraction?: boolean;
   can_manage_lifecycle?: boolean;
   can_share?: boolean;
+  can_manage_users?: boolean;
   clearance?: Confidentiality;
 }
 
-/** Partial update of a user's role, delegated flags or clearance (admin only). */
-export async function updateAdminUser(userId: string, body: UpdateUserBody): Promise<void> {
-  await sendJson(`/api/admin/users/${encodeURIComponent(userId)}`, "PATCH", body);
+export interface CreateUserBody extends UpdateUserBody {
+  email: string;
+  temporary_password: string;
+}
+
+const userPath = (userId: string) => `/api/admin/users/${encodeURIComponent(userId)}`;
+
+/** Partial update of an account (admins and user managers). */
+export async function updateAdminUser(userId: string, body: UpdateUserBody): Promise<AdminUser> {
+  return AdminUserSchema.parse(await (await sendJson(userPath(userId), "PATCH", body)).json());
+}
+
+/** New account with a temporary password the person must change. */
+export async function createAdminUser(body: CreateUserBody): Promise<AdminUser> {
+  return AdminUserSchema.parse(await (await sendJson("/api/admin/users", "POST", body)).json());
+}
+
+export async function setUserActive(userId: string, active: boolean): Promise<AdminUser> {
+  const action = active ? "activate" : "deactivate";
+  return AdminUserSchema.parse(await (await sendJson(`${userPath(userId)}/${action}`, "POST")).json());
+}
+
+export async function resetUserPassword(userId: string, temporaryPassword: string): Promise<AdminUser> {
+  return AdminUserSchema.parse(
+    await (
+      await sendJson(`${userPath(userId)}/reset-password`, "POST", { temporary_password: temporaryPassword })
+    ).json(),
+  );
+}
+
+/** Soft delete (admins only) - hidden everywhere, e-mail freed. */
+export async function deleteAdminUser(userId: string): Promise<void> {
+  await sendJson(userPath(userId), "DELETE");
+}
+
+/** Change my own password - required when must_change_password is set. */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await sendJson("/api/auth/change-password", "POST", {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
 }
 
 export async function addUserToGroup(userId: string, groupId: string): Promise<void> {

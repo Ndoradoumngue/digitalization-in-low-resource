@@ -35,9 +35,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+import asyncpg
 import bcrypt as _bcrypt
 from audit import client_ip, log_action
 from auth import (
+    ALGORITHM,
+    SECRET_KEY,
     CurrentUser,
     get_current_user,
     require_user,
@@ -47,16 +50,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from i18n import resolve_locale, t
 from jose import jwt
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from rate_limit import limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 # ── Config from environment ───────────────────────────────────────────────────
 
-SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-secret-key-change-in-production")
-ALGORITHM = "HS256"
 TOKEN_EXPIRE_H = int(os.getenv("AUTH_TOKEN_EXPIRE_HOURS", "8"))
 SECURE_COOKIES = os.getenv("AUTH_SECURE_COOKIES", "false").lower() == "true"
 
@@ -132,13 +134,30 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONR
     )
 
 
+@app.exception_handler(DBAPIError)
+async def _db_error_handler(request: Request, exc: DBAPIError) -> JSONResponse:
+    """A malformed id in the URL (not a UUID) reaches the database as a
+    bad query argument - that is a 404 for the caller, not a server error.
+    Every other database error stays a 500."""
+    cause = getattr(getattr(exc, "orig", None), "__cause__", None)
+    if isinstance(cause, asyncpg.exceptions.DataError) and "invalid UUID" in str(cause):
+        return JSONResponse(
+            status_code=404,
+            content={"detail": t("common.not_found", resolve_locale(request.headers.get("accept-language")))},
+        )
+    logger.error("Database error on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
 
-def _create_token(user_id: str, jti: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRE_H)
+def _create_token(user_id: str, jti: str, now: datetime | None = None) -> str:
+    now = now or datetime.now(timezone.utc)
+    expire = now + timedelta(hours=TOKEN_EXPIRE_H)
     return jwt.encode(
-        {"sub": user_id, "exp": expire, "jti": jti},
+        # iat: a password set or reset afterwards ends this session (auth.py)
+        {"sub": user_id, "exp": expire, "jti": jti, "iat": now.timestamp()},
         SECRET_KEY,
         algorithm=ALGORITHM,
     )
@@ -156,6 +175,8 @@ def _set_auth_cookie(response: Response, token: str) -> None:
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
+
+_DUMMY_HASH = _bcrypt.hashpw(b"timing-equalizer", _bcrypt.gensalt()).decode()
 
 
 class LoginRequest(BaseModel):
@@ -184,21 +205,23 @@ async def login(
                 "SELECT u.id, u.email, u.full_name, u.role, u.hashed_password, u.is_active,"
                 "       t.slug AS tenant_slug, t.name AS tenant_name, t.is_active AS tenant_is_active,"
                 "       u.can_manage_access, u.can_edit_extraction,"
-                "       u.can_manage_lifecycle, u.can_share, u.clearance"
+                "       u.can_manage_lifecycle, u.can_share, u.clearance,"
+                "       u.can_manage_users, u.must_change_password"
                 " FROM sdai_users u"
                 " JOIN sdai_tenants t ON t.id = u.tenant_id"
-                " WHERE u.email = :e"
+                " WHERE lower(u.email) = lower(:e) AND u.deleted_at IS NULL"
             ),
             {"e": body.email},
         )
         user = row.one_or_none()
 
-    if (
-        user is None
-        or not user[5]
-        or not user[8]
-        or not _bcrypt.checkpw(body.password.encode(), user[4].encode())
-    ):
+    # Always run one bcrypt check, so an unknown e-mail takes as long to
+    # refuse as a wrong password (no account enumeration by timing).
+    usable = user is not None and user[5] and user[8]
+    password_ok = _bcrypt.checkpw(
+        body.password.encode(), (user[4] if usable else _DUMMY_HASH).encode()
+    )
+    if not usable or not password_ok:
         raise HTTPException(status_code=401, detail=t("auth.incorrect_credentials", locale))
 
     # Until the person picks one in their preferences, e-mail
@@ -207,8 +230,8 @@ async def login(
         async with _engine().begin() as conn:
             await conn.execute(
                 text(
-                    "UPDATE sdai_users SET locale = :l"
-                    " WHERE id = :id AND locale IS NULL"
+                    "UPDATE sdai_users SET locale = COALESCE(locale, :l), last_login_at = now()"
+                    " WHERE id = :id"
                 ),
                 {"l": locale, "id": user[0]},
             )
@@ -238,6 +261,8 @@ async def login(
         "can_manage_lifecycle": user[11],
         "can_share": user[12],
         "clearance": user[13],
+        "can_manage_users": user[14],
+        "must_change_password": user[15],
         "node_id": NODE_ID,
         "node_role": NODE_ROLE,
     }
@@ -301,9 +326,73 @@ async def me(current_user: CurrentUser = Depends(get_current_user)):
         "can_manage_lifecycle": current_user.can_manage_lifecycle,
         "can_share": current_user.can_share,
         "clearance": current_user.clearance,
+        "can_manage_users": current_user.can_manage_users,
+        "must_change_password": current_user.must_change_password,
         "node_id": NODE_ID,
         "node_role": NODE_ROLE,
     }
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=200)
+    new_password: str = Field(..., max_length=200)
+
+
+@app.post("/api/auth/change-password", tags=["auth"], summary="Change my password")
+@limiter.limit("10/minute")
+async def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    response: Response,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Replace the caller's password (required after an account is created
+    or its password reset by a manager). Every other session of this person
+    ends; this one gets a fresh cookie."""
+    from ingest_router import _engine
+    from users_router import password_problem
+
+    locale = current_user.locale
+    if current_user.role == "api_key":
+        raise HTTPException(status_code=403, detail=t("auth.user_required", locale))
+    async with _engine().begin() as conn:
+        hashed = (
+            await conn.execute(
+                text("SELECT hashed_password FROM sdai_users WHERE id = CAST(:id AS uuid) FOR UPDATE"),
+                {"id": current_user.id},
+            )
+        ).scalar()
+        if not hashed or not _bcrypt.checkpw(body.current_password.encode(), hashed.encode()):
+            await log_action(
+                action="password_change_failed",
+                user_id=current_user.id,
+                user_email=current_user.email,
+                ip_address=client_ip(request),
+            )
+            raise HTTPException(status_code=403, detail=t("users.wrong_current_password", locale))
+        problem = password_problem(body.new_password, current_user.email)
+        if problem is None and _bcrypt.checkpw(body.new_password.encode(), hashed.encode()):
+            problem = "users.password_unchanged"
+        if problem:
+            raise HTTPException(status_code=422, detail=t(problem, locale))
+        new_hash = _bcrypt.hashpw(body.new_password.encode(), _bcrypt.gensalt()).decode()
+        changed_at = datetime.now(timezone.utc)
+        await conn.execute(
+            text(
+                "UPDATE sdai_users SET hashed_password = :h, must_change_password = false,"
+                " password_changed_at = :at WHERE id = CAST(:id AS uuid)"
+            ),
+            {"h": new_hash, "id": current_user.id, "at": changed_at},
+        )
+    # Same instant as password_changed_at: this session stays, older ones end.
+    _set_auth_cookie(response, _create_token(current_user.id, str(uuid.uuid4()), changed_at))
+    await log_action(
+        action="password_changed",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        ip_address=client_ip(request),
+    )
+    return {"ok": True}
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -311,6 +400,18 @@ async def me(current_user: CurrentUser = Depends(get_current_user)):
 
 def _stem(filename: str) -> str:
     return Path(filename).stem
+
+
+def _inside(directory: Path, name: str) -> Path | None:
+    """directory/name when it stays inside `directory`, else None."""
+    root = directory.resolve()
+    path = (root / name).resolve()
+    return path if path.is_relative_to(root) and path != root else None
+
+
+# Legacy benchmark images: the browser may keep them, a shared cache (the
+# nginx proxy cache) must not - it would hand them out without a session.
+_PRIVATE_CACHE = {"Cache-Control": "private, max-age=86400"}
 
 
 def _list_images(dir_path: Path) -> list[str]:
@@ -417,10 +518,10 @@ def get_all_vlm_results(current_user: CurrentUser = Depends(require_user)):
 @app.get("/images/raw/{filename}", tags=["images"], summary="Original document image")
 def serve_raw_image(filename: str, current_user: CurrentUser = Depends(require_user)):
     """Serve the original (un-preprocessed) document image from anonymized_docs/."""
-    path = DOCS_DIR / filename
-    if not path.exists():
+    path = _inside(DOCS_DIR, filename)
+    if path is None or not path.is_file():
         raise HTTPException(status_code=404, detail=t("images.raw_not_found", current_user.locale))
-    return FileResponse(path)
+    return FileResponse(path, headers=_PRIVATE_CACHE)
 
 
 @app.get("/images/preprocessed/{filename}", tags=["images"], summary="Preprocessed document image")
@@ -428,12 +529,12 @@ def serve_preprocessed_image(filename: str, current_user: CurrentUser = Depends(
     """Serve the binarised/preprocessed image used as OCR engine input."""
     stem = _stem(filename)
     ext = Path(filename).suffix
-    path = PREPROCESS_DIR / f"{stem}_preprocessed{ext}"
-    if not path.exists():
+    path = _inside(PREPROCESS_DIR, f"{stem}_preprocessed{ext}")
+    if path is None or not path.is_file():
         raise HTTPException(
             status_code=404, detail=t("images.preprocessed_not_found", current_user.locale)
         )
-    return FileResponse(path)
+    return FileResponse(path, headers=_PRIVATE_CACHE)
 
 
 # ── Ingest router ─────────────────────────────────────────────────────────────
@@ -507,6 +608,12 @@ app.include_router(review_router)
 from admin_router import router as admin_router
 
 app.include_router(admin_router)
+
+# ── User accounts (admins and delegated user managers) ────────────────────────
+
+from users_router import router as users_router
+
+app.include_router(users_router)
 
 # ── Node-to-node sync router (local/cloud) ────────────────────────────────────
 # Signed by the peer node (sync.auth), never by a user session.

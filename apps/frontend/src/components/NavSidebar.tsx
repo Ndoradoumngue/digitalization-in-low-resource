@@ -5,7 +5,7 @@ import { useDbTypes } from "../hooks/useDocumentsDb";
 import { useReviewCount } from "../hooks/useReview";
 import LanguageSwitcher from "./LanguageSwitcher";
 import GlobalSearch from "./GlobalSearch";
-import { canManageLifecycle, isReader } from "../utils/permissions";
+import { canManageLifecycle, canManageUsers, isReader } from "../utils/permissions";
 import { useEligibleDocuments, useDestructions } from "../hooks/useLifecycle";
 import { useSyncStatus } from "../hooks/useSync";
 import { alertText } from "../pages/SyncAdminPage";
@@ -196,6 +196,18 @@ export default function NavSidebar() {
             </Link>
           )}
 
+          {canManageUsers(user) && (
+            <Link
+              to="/ops/users"
+              className={navClass(pathname === "/ops/users")}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z" />
+              </svg>
+              {t("nav.users")}
+            </Link>
+          )}
+
           {user?.role === "admin" && (
             <Link
               to="/ops/sync"
@@ -245,7 +257,10 @@ export default function NavSidebar() {
         <LanguageSwitcher />
         <div className="flex items-center gap-2">
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-gray-700 truncate">{user?.full_name ?? user?.email}</p>
+            <Link to="/account/password" title={t("nav.myPassword")}
+              className="block text-xs font-medium text-gray-700 truncate hover:text-indigo-700">
+              {user?.full_name ?? user?.email}
+            </Link>
             {user?.role && (
               <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold ${user.role === "admin"
                   ? "bg-indigo-100 text-indigo-700"

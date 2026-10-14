@@ -39,5 +39,5 @@ services:
   # needs port 80) - the base file publishes 8080/8443 for on-site servers.
   frontend:
     ports: !override
-      - "80:80"
-      - "443:443"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"

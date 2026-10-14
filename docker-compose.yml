@@ -21,7 +21,8 @@
 #
 # Offline deployment (no internet on the target server):
 #   Run ./setup.sh once on an internet-connected machine, then transfer the
-#   whole directory and run ./install.sh on the offline server.
+#   whole directory and run ./install.sh on the offline server (it loads the
+#   bundled images, then scripts/first-run.sh configures and starts the node).
 
 services:
   redis:
@@ -61,8 +62,9 @@ services:
       # Offline model archive produced by setup.sh (read-only at runtime)
       - ./models:/models:ro
     ports:
-      # Expose for direct host access (curl http://localhost:11434); safe to remove
-      - "11434:11434"
+      # Host-only (curl http://localhost:11434) - the model server has no
+      # authentication, so never publish it to the LAN; safe to remove.
+      - "127.0.0.1:11434:11434"
     environment:
       # 1 concurrent VLM request at a time. Was 2 ("Stage 2 is single-worker
       # but allows slight overlap between the outgoing request and response
@@ -96,7 +98,7 @@ services:
           echo "Fix: Docker Desktop > Settings > Resources > Memory, raise to"
           echo "16 GiB+, apply, and restart Docker Desktop."
         fi
-        if [ -f /models/ollama-models.tar.gz ]; then
+        if [ -f /models/ollama-models.tar.gz ] && [ ! -d /root/.ollama/models/manifests ]; then
           echo "Restoring model from offline archive (first run only)..."
           tar xzf /models/ollama-models.tar.gz -C /root/.ollama
         fi
@@ -119,6 +121,9 @@ services:
       start_period: 120s # allow time for model extraction on first boot
 
   api:
+    # Fixed image names: the offline bundle (setup.sh) saves them and
+    # install.sh starts them, whatever the installation folder is called.
+    image: sdai/api:${SDAI_IMAGE_TAG:-latest}
     build:
       context: ./apps/api
       dockerfile: Dockerfile
@@ -127,12 +132,17 @@ services:
       - ./documents:/app/documents
       # Persistent volume for processed images and uploaded files
       - apidata:/data
+      # The organisation's signing certificate (SIGNING_P12_PATH=/secrets/...),
+      # read-only; ./secrets/ is git-ignored and outside the synced folders
+      - ./secrets:/secrets:ro
     environment:
       # In Docker, nginx proxies /api/* internally so CORS is not required.
       - CORS_ORIGINS=
       # JWT auth - run create_admin.py after first boot to seed the first user
       - AUTH_SECRET_KEY=${AUTH_SECRET_KEY}
-      - AUTH_SECURE_COOKIES=${AUTH_SECURE_COOKIES:-false}
+      - AUTH_SECURE_COOKIES=${AUTH_SECURE_COOKIES:-true}
+      # Language of answers without a usable Accept-Language (share pages, e-mails)
+      - DEFAULT_LOCALE=${DEFAULT_LANGUAGE:-en}
       # PostgreSQL (asyncpg driver)
       - DATABASE_URL=${DATABASE_URL}
       # Ollama - use the containerised service (override with host.docker.internal:11434
@@ -203,6 +213,7 @@ services:
   # pulls the peer's every SYNC_INTERVAL_SECONDS; elsewhere it only does
   # housekeeping. Idle without SYNC_NODE_TOKEN.
   sync:
+    image: sdai/api:${SDAI_IMAGE_TAG:-latest}
     build:
       context: ./apps/api
       dockerfile: Dockerfile
@@ -224,6 +235,7 @@ services:
       - SYNC_INTERVAL_SECONDS=${SYNC_INTERVAL_SECONDS:-30}
       - SYNC_MAX_KBPS=${SYNC_MAX_KBPS:-0}
       - SYNC_CHANGELOG_RETENTION_DAYS=${SYNC_CHANGELOG_RETENTION_DAYS:-30}
+      - DEFAULT_LOCALE=${DEFAULT_LANGUAGE:-en}
     depends_on:
       db:
         condition: service_healthy
@@ -239,6 +251,7 @@ services:
   #   docker compose run --rm backup now            one backup right away
   #   docker compose run --rm backup restore-test   restore drill
   backup:
+    image: sdai/backup:${SDAI_IMAGE_TAG:-latest}
     build:
       context: ./scripts/backup
     volumes:
@@ -258,26 +271,32 @@ services:
       # The NAS repository is used only when BACKUP_NAS_PATH is set.
       - BACKUP_NAS_PATH=${BACKUP_NAS_PATH:-}
       - BACKUP_TIME=${BACKUP_TIME:-02:30}
-      - TZ=${TZ:-Africa/Ndjamena}
+      - TZ=${TZ:-UTC}
     depends_on:
       db:
         condition: service_healthy
     restart: unless-stopped
 
   frontend:
+    image: sdai/frontend:${SDAI_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "8080:80"
-      - "8443:443"
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
     volumes:
       # Let's Encrypt certificates - persists across restarts and rebuilds.
-      # Empty in self_signed mode (cert is baked into the image).
       - letsencrypt_data:/etc/letsencrypt
+      # This installation's self-signed certificate (generated at first start)
+      - frontend_ssl:/etc/nginx/ssl
     environment:
       # HTTPS mode: self_signed (default) or letsencrypt
       - HTTPS_MODE=${HTTPS_MODE:-self_signed}
+      # Name the self-signed certificate is issued for (default: container host name)
+      - SELF_SIGNED_CN=${SELF_SIGNED_CN:-}
+      # Interface language until each person picks one (en|fr; empty = browser)
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-}
       # Required only when HTTPS_MODE=letsencrypt
       - LETSENCRYPT_DOMAIN=${LETSENCRYPT_DOMAIN:-}
       - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
@@ -291,3 +310,4 @@ volumes:
   ollama_data:
   redis_data:
   letsencrypt_data:
+  frontend_ssl:
