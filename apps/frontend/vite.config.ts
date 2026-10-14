@@ -9,6 +9,11 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Public share links (served by the API, no app shell)
+      '/s/': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/images': {
         target: 'http://localhost:8000',
         changeOrigin: true,

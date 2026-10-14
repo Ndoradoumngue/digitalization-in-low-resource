@@ -441,6 +441,21 @@ from versions_router import router as versions_router
 
 app.include_router(versions_router)
 
+# ── Share links (authenticated management + the public /s/ routes) ──────────
+# public_router is the only router without get_current_user - see CLAUDE.md.
+
+from share_router import public_router as share_public_router
+from share_router import router as share_router
+
+app.include_router(share_router)
+app.include_router(share_public_router)
+
+# ── Selective export (ZIP with originals, metadata and hash manifest) ───────
+
+from export_router import router as export_router
+
+app.include_router(export_router)
+
 # ── Classification router (series tree, tags, filing rules, link suggestions) ─
 
 from classification_router import router as classification_router

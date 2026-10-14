@@ -8,6 +8,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import UploadPage from "./pages/UploadPage";
 import DocumentsPage from "./pages/DocumentsPage";
+import ExportsPage from "./pages/ExportsPage";
 import DataBrowserPage from "./pages/DataBrowserPage";
 import DataBrowserDetailPage from "./pages/DataBrowserDetailPage";
 import DocumentDetailPage from "./pages/DocumentDetailPage";
@@ -48,6 +49,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <DocumentsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/exports"
+          element={
+            <ProtectedRoute>
+              <ExportsPage />
             </ProtectedRoute>
           }
         />

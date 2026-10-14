@@ -8,6 +8,9 @@ Endpoints:
   POST /api/db/documents/{tbl}/{id}/versions/{n}/restore   - make version n current again,
                                                              as a NEW version (edit)
   GET  /api/db/documents/{tbl}/{id}/versions/{n}/file      - download one version's file (download)
+  GET  /api/db/documents/{tbl}/{id}/download[?version=N]   - the original file as
+                                                             '<record id>_<name>', audited,
+                                                             409 while sync copies it (download)
   GET  /api/db/documents/{tbl}/{id}/history                - field changes + audit events (read;
                                                              viewed/downloaded events: access
                                                              managers only)
@@ -27,6 +30,7 @@ from pathlib import Path
 from audit import client_ip, log_action
 from auth import CurrentUser, require_reviewer, require_user
 from cache import invalidate_cache
+import document_files
 import documents_router
 import ingest_router
 from documents_router import (
@@ -593,11 +597,67 @@ async def download_version(
     )
 
 
+@router.get(
+    "/documents/{table_name}/{doc_id}/download",
+    summary="Download the document's original file (current or a given version)",
+)
+@limiter.limit("60/minute")
+async def download_document(
+    request: Request,
+    table_name: str,
+    doc_id: str,
+    version: int | None = Query(None, ge=1, description="Version number - default: the current one"),
+    inline: bool = Query(False, description="Open in the browser instead of downloading"),
+    current_user: CurrentUser = Depends(require_user),
+):
+    """The untouched file of the current version (version 1 = the ingested
+    original) or of `version`, named '<record id>_<original name>'. Needs
+    the download permission; always audited (document_downloaded). 409
+    when local/cloud sync has not copied the file to this node yet.
+    Confidential/secret PDFs come watermarked when
+    DOWNLOAD_WATERMARK_CONFIDENTIAL=true."""
+    locale = current_user.locale
+    async with _engine().connect() as conn:
+        tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
+        safe = _sanitize(table_name)
+        if safe not in tables_cols:
+            raise HTTPException(
+                status_code=404, detail=t("common.table_not_found", locale, table=safe)
+            )
+        await _require_document_permission(conn, safe, doc_id, current_user, "download")
+        f = await document_files.resolve(
+            conn, safe, tables_cols[safe], doc_id, current_user.tenant_id, version
+        )
+        if f is None:
+            raise HTTPException(status_code=404, detail=t("versions.not_found", locale))
+        path = await document_files.check_servable(conn, f, locale)
+
+    filename = document_files.download_name(f.record_id, f.original_filename, path.name)
+    response, watermarked = await document_files.deliver(
+        f, path, filename, inline=inline, who=current_user.email, locale=locale
+    )
+    await log_action(
+        action="document_downloaded",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        table_name=safe,
+        document_id=doc_id,
+        details={
+            "version_no": f.version_no,
+            "via": "download",
+            "file_hash": f.file_hash,
+            **({"watermarked": True} if watermarked else {}),
+        },
+        ip_address=client_ip(request),
+    )
+    return response
+
+
 # ── History ───────────────────────────────────────────────────────────────────
 
 # Who looked at or downloaded a document is access tracking, not document
 # history - only admins and access managers see those events.
-_ACCESS_TRACKING_ACTIONS = ("document_viewed", "document_downloaded")
+_ACCESS_TRACKING_ACTIONS = ("document_viewed", "document_downloaded", "share_link_accessed")
 
 
 @router.get(

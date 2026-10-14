@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useDbDocuments, useDbReviewers, useDbTypes } from "../hooks/useDocumentsDb";
 import { useSeries } from "../hooks/useSeries";
@@ -10,7 +10,8 @@ import NavSidebar from "../components/NavSidebar";
 import type { DbListParams } from "@sdai/api-client";
 import { summarizeExtra } from "../utils/format";
 import SearchSnippet from "../components/SearchSnippet";
-import type { DbDocument } from "@sdai/types";
+import type { DbDocument, ExportDocumentRef, ExportRequest } from "@sdai/types";
+import { useCreateExport } from "../hooks/useSharing";
 
 // The real document-browsing experience: categories, reviewer, keyword
 // search - no confidence/review_status/table-name plumbing shown (that's
@@ -66,6 +67,38 @@ export default function DocumentsPage() {
   };
 
   const { data, isLoading, error } = useDbDocuments(params);
+
+  // Multi-select for a selective export - kept across pages and filters
+  // until cleared, keyed "<table>/<id>".
+  const [selected, setSelected] = useState<Map<string, ExportDocumentRef>>(new Map());
+  const [exportVersions, setExportVersions] = useState<"current" | "all">("current");
+  const createExport = useCreateExport();
+  const toggleSelected = useCallback((row: DbDocument) => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      const key = `${row.table_name}/${row.id}`;
+      if (next.has(key)) next.delete(key);
+      else next.set(key, { table_name: row.table_name, id: row.id });
+      return next;
+    });
+  }, []);
+  function exportSelection(kind: "selected" | "results") {
+    const body: ExportRequest = kind === "selected"
+      ? { documents: [...selected.values()], versions: exportVersions }
+      : {
+          versions: exportVersions,
+          search: {
+            ...(q && { q }),
+            ...(category && { document_type: category }),
+            ...(reviewedBy && { reviewed_by: reviewedBy }),
+            ...(seriesId && { series: seriesId, include_subseries: includeSubseries }),
+            ...(tagId && { tag: tagId }),
+            ...(dateFrom && { date_from: dateFrom }),
+            ...(dateTo && { date_to: dateTo }),
+          },
+        };
+    createExport.mutate(body, { onSuccess: () => { if (kind === "selected") setSelected(new Map()); } });
+  }
 
   const reviewerName = useMemo(() => {
     const map = new Map<string, string>();
@@ -209,6 +242,53 @@ export default function DocumentsPage() {
           </div>
         )}
 
+        {/* Selective export: the checked documents, or every current result */}
+        {(rows.length > 0 || selected.size > 0) && (
+          <div className="bg-white border-b border-gray-200 px-6 py-2 flex flex-wrap items-center gap-3 flex-shrink-0 text-xs">
+            <span className="text-gray-600">{t("exports.selected", { count: selected.size })}</span>
+            {selected.size > 0 && (
+              <button onClick={() => setSelected(new Map())} className="text-gray-500 hover:text-gray-800 underline">
+                {t("exports.clearSelection")}
+              </button>
+            )}
+            <div className="flex-1" />
+            <label className="flex items-center gap-1 text-gray-500">
+              {t("exports.versionsLabel")}
+              <select
+                value={exportVersions}
+                onChange={(e) => setExportVersions(e.target.value as "current" | "all")}
+                className="h-7 rounded-md border border-gray-300 px-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                <option value="current">{t("exports.versions.current")}</option>
+                <option value="all">{t("exports.versions.all")}</option>
+              </select>
+            </label>
+            <button
+              onClick={() => exportSelection("selected")}
+              disabled={selected.size === 0 || createExport.isPending}
+              className="h-7 px-2.5 rounded-md font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+            >
+              {t("exports.exportSelected", { count: selected.size })}
+            </button>
+            <button
+              onClick={() => exportSelection("results")}
+              disabled={total === 0 || createExport.isPending}
+              className="h-7 px-2.5 rounded-md font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+            >
+              {t("exports.exportResults", { count: total })}
+            </button>
+            {createExport.isSuccess && (
+              <span role="status" className="w-full text-emerald-700">
+                {t("exports.started")}{" "}
+                <Link to="/exports" className="font-semibold underline">{t("exports.seeExports")}</Link>
+              </span>
+            )}
+            {createExport.isError && (
+              <span role="alert" className="w-full text-red-600">{(createExport.error as Error).message}</span>
+            )}
+          </div>
+        )}
+
         {/* Plan de classement + results */}
         <div className="flex-1 flex overflow-hidden">
         <SeriesTree
@@ -251,6 +331,15 @@ export default function DocumentsPage() {
                         {seriesName.get(row.series_id)}
                       </span>
                     )}
+                    <input
+                      type="checkbox"
+                      checked={selected.has(`${row.table_name}/${row.id}`)}
+                      onChange={() => toggleSelected(row)}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      aria-label={t("exports.selectDocument")}
+                      className="ml-auto h-4 w-4 flex-shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
+                    />
                   </div>
                   <p className="text-sm text-gray-700 line-clamp-3">
                     {summarizeExtra(row.extra_fields, 4)}

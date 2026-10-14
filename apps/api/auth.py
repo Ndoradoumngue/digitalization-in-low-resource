@@ -130,30 +130,41 @@ async def get_current_user(
             if bl.one_or_none() is not None:
                 raise HTTPException(status_code=401, detail=t("auth.token_revoked", locale))
 
-        row = await conn.execute(
-            text(
-                "SELECT u.id, u.email, u.full_name, u.role, u.is_active,"
-                "       t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,"
-                "       t.is_active AS tenant_is_active, u.can_manage_access,"
-                "       u.can_edit_extraction, u.can_manage_lifecycle, u.can_share, u.clearance"
-                " FROM sdai_users u"
-                " JOIN sdai_tenants t ON t.id = u.tenant_id"
-                " WHERE u.id = CAST(:id AS uuid)"
-            ),
-            {"id": user_id},
-        )
-        user = row.one_or_none()
+        user = await load_user(conn, user_id, locale)
 
-        if user is None or not user[4] or not user[8]:
-            raise HTTPException(
-                status_code=401, detail=t("auth.user_not_found_or_deactivated", locale)
-            )
+    if user is None:
+        raise HTTPException(status_code=401, detail=t("auth.user_not_found_or_deactivated", locale))
+    return user
 
-        group_rows = await conn.execute(
-            text("SELECT group_id FROM sdai_user_groups WHERE user_id = CAST(:id AS uuid)"),
-            {"id": user_id},
-        )
-        group_ids = [str(r[0]) for r in group_rows]
+
+async def load_user(conn, user_id: str, locale: str = "en") -> CurrentUser | None:
+    """The person `user_id` as a CurrentUser (with groups), or None when
+    they don't exist, are deactivated, or their tenant is. Also used to
+    re-check, at the moment a share link is used, that whoever created it
+    could still hand that document out."""
+    from sqlalchemy import text
+
+    row = await conn.execute(
+        text(
+            "SELECT u.id, u.email, u.full_name, u.role, u.is_active,"
+            "       t.id AS tenant_id, t.slug AS tenant_slug, t.name AS tenant_name,"
+            "       t.is_active AS tenant_is_active, u.can_manage_access,"
+            "       u.can_edit_extraction, u.can_manage_lifecycle, u.can_share, u.clearance"
+            " FROM sdai_users u"
+            " JOIN sdai_tenants t ON t.id = u.tenant_id"
+            " WHERE u.id = CAST(:id AS uuid)"
+        ),
+        {"id": user_id},
+    )
+    user = row.one_or_none()
+    if user is None or not user[4] or not user[8]:
+        return None
+
+    group_rows = await conn.execute(
+        text("SELECT group_id FROM sdai_user_groups WHERE user_id = CAST(:id AS uuid)"),
+        {"id": user_id},
+    )
+    group_ids = [str(r[0]) for r in group_rows]
 
     return CurrentUser(
         id=str(user[0]),

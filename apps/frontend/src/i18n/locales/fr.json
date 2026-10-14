@@ -33,7 +33,8 @@
     "nodeLocal": "Serveur local",
     "nodeCloud": "Serveur cloud",
     "signOut": "Se déconnecter",
-    "sync": "Synchronisation"
+    "sync": "Synchronisation",
+    "exports": "Mes exports"
   },
   "login": {
     "tagline": "Plateforme d'extraction de documents",
@@ -553,7 +554,12 @@
       "tag_deleted": "Étiquette supprimée",
       "document_tagged": "Document étiqueté",
       "document_untagged": "Étiquette retirée",
-      "filing_rule_set": "Règle de classement définie"
+      "filing_rule_set": "Règle de classement définie",
+      "document_shared": "Document partagé",
+      "share_link_revoked": "Lien de partage révoqué",
+      "share_link_accessed": "Lien de partage utilisé",
+      "documents_exported": "Documents exportés",
+      "export_downloaded": "Export téléchargé"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -908,5 +914,101 @@
     "openAtPage": "Ouvrir à la page {{page}}",
     "morePages_one": "+{{count}} autre page",
     "morePages_other": "+{{count}} autres pages"
+  },
+  "download": {
+    "original": "Télécharger l'original",
+    "originalTitle": "Le fichier intact de la version courante - chaque téléchargement est enregistré",
+    "preparing": "Préparation…",
+    "chooseVersion": "Choisir une version à télécharger",
+    "versionsHeading": "Télécharger une version",
+    "loadingVersions": "Chargement…"
+  },
+  "share": {
+    "button": "Partager",
+    "buttonTitle": "Créer un lien pour envoyer ce document à une personne extérieure",
+    "title": "Partager à l'extérieur",
+    "intro": "Toute personne qui a le lien peut télécharger ce document sans compte jusqu'à son expiration. Chaque utilisation est enregistrée.",
+    "close": "Fermer",
+    "expiry": "Valable",
+    "days_one": "{{count}} jour",
+    "days_other": "{{count}} jours",
+    "maxDownloads": "Téléchargements max.",
+    "unlimited": "Illimité",
+    "password": "Mot de passe",
+    "optional": "Facultatif (4 caractères min.)",
+    "version": "Fichier",
+    "latest": "Dernière version",
+    "pinVersion": "Version {{n}} uniquement",
+    "note": "Destinataire",
+    "notePlaceholder": "ex. Étude notariale - dossier foncier 12",
+    "audited": "Le lien n'est affiché qu'une fois - copiez-le avant de fermer.",
+    "create": "Créer le lien",
+    "creating": "Création…",
+    "createdOnce": "Lien créé. Copiez-le maintenant - il ne sera plus affiché.",
+    "link": "Lien de partage",
+    "copy": "Copier",
+    "copied": "Copié",
+    "another": "Créer un autre lien",
+    "existing": "Liens",
+    "loading": "Chargement…",
+    "none": "Aucun lien créé pour l'instant.",
+    "noNote": "Destinataire non précisé",
+    "until": "jusqu'au {{date}}",
+    "downloads_one": "{{count}} téléchargement",
+    "downloads_other": "{{count}} téléchargements",
+    "downloadsOf": "{{count}} / {{max}} téléchargements",
+    "withPassword": "mot de passe",
+    "revoke": "Révoquer",
+    "revokeConfirm": "Révoquer ce lien ? Les personnes qui l'ont ne pourront plus télécharger le document.",
+    "status": {
+      "active": "Actif",
+      "expired": "Expiré",
+      "revoked": "Révoqué",
+      "exhausted": "Épuisé"
+    }
+  },
+  "exports": {
+    "header": "Mes exports",
+    "intro": "Archives ZIP avec les originaux, leurs métadonnées et un manifeste SHA-256 pour vérifier l'intégrité. Conservées 24 heures.",
+    "loading": "Chargement…",
+    "loadError": "Impossible de charger vos exports.",
+    "none": "Aucun export pour l'instant - sélectionnez des documents dans la liste Documents puis « Exporter ».",
+    "status": {
+      "queued": "En attente",
+      "running": "En préparation…",
+      "done": "Prêt",
+      "failed": "Échec",
+      "expired": "Expiré",
+      "deleted": "Supprimé"
+    },
+    "kind": {
+      "documents": "Documents sélectionnés",
+      "series": "Série",
+      "search": "Résultats de recherche"
+    },
+    "documents_one": "{{count}} document",
+    "documents_other": "{{count}} documents",
+    "files_one": "{{count}} fichier",
+    "files_other": "{{count}} fichiers",
+    "versions": {
+      "current": "versions courantes",
+      "all": "toutes les versions"
+    },
+    "versionsLabel": "Fichiers :",
+    "availableUntil": "disponible jusqu'au {{date}}",
+    "failedReason": "échec ({{reason}})",
+    "warnings_one": "{{count}} fichier manque ou ne correspond plus à son empreinte enregistrée - voir metadata.json dans le ZIP.",
+    "warnings_other": "{{count}} fichiers manquent ou ne correspondent plus à leur empreinte enregistrée - voir metadata.json dans le ZIP.",
+    "download": "Télécharger le ZIP",
+    "delete": "Supprimer",
+    "deleteConfirm": "Supprimer dès maintenant le ZIP de cet export ?",
+    "selected_one": "{{count}} document sélectionné",
+    "selected_other": "{{count}} documents sélectionnés",
+    "clearSelection": "Effacer",
+    "exportSelected": "Exporter la sélection ({{count}})",
+    "exportResults": "Exporter tous les résultats ({{count}})",
+    "started": "Export lancé.",
+    "seeExports": "Voir mes exports",
+    "selectDocument": "Sélectionner pour l'export"
   }
 }

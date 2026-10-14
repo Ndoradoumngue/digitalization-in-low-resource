@@ -85,6 +85,15 @@ import {
   type FilingRules,
   type LinkSuggestion,
   type Tag,
+  CreateShareResponseSchema,
+  ExportJobSchema,
+  ExportJobsResponseSchema,
+  ShareListResponseSchema,
+  type CreateShareResponse,
+  type ExportJob,
+  type ExportJobsResponse,
+  type ExportRequest,
+  type ShareListResponse,
 } from "@sdai/types";
 
 // ── Core fetch helper ─────────────────────────────────────────────────────────
@@ -924,6 +933,100 @@ export function documentVersionFileUrl(
   inline = false,
 ): string {
   return `${documentPath(tableName, id)}/versions/${versionNo}/file${inline ? "?inline=true" : ""}`;
+}
+
+/** URL of the document's original file - the current version, or
+ * `versionNo`. Named "<record id>_<original name>"; every download is
+ * audited (and may be watermarked for confidential PDFs). */
+export function documentDownloadUrl(
+  tableName: string,
+  id: string,
+  versionNo?: number | null,
+  inline = false,
+): string {
+  const params = new URLSearchParams();
+  if (versionNo != null) params.set("version", String(versionNo));
+  if (inline) params.set("inline", "true");
+  const query = params.toString();
+  return `${documentPath(tableName, id)}/download${query ? `?${query}` : ""}`;
+}
+
+/** The file name a Content-Disposition header gives - the exact UTF-8
+ * filename* (RFC 5987) when present, else the plain filename. */
+export function filenameFromDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const star = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim());
+    } catch {
+      // malformed escape - fall through to the plain name
+    }
+  }
+  const plain = header.match(/filename="?([^";]+)"?/i);
+  return plain?.[1] ?? fallback;
+}
+
+/** Fetch a file (original download, export ZIP) so an error - e.g. "still
+ * being synchronised" - can be shown instead of a raw JSON page. */
+export async function downloadFile(url: string, fallbackName = "download"): Promise<ArchiveExportResult> {
+  const res = await fetch(url, withAuth({ method: "GET" }));
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error((b as { detail?: string }).detail ?? `HTTP ${res.status}`);
+  }
+  return {
+    blob: await res.blob(),
+    filename: filenameFromDisposition(res.headers.get("content-disposition"), fallbackName),
+  };
+}
+
+// ── External share links ─────────────────────────────────────────────────────
+
+export async function fetchDocumentShares(tableName: string, id: string): Promise<ShareListResponse> {
+  return fetchJson(`${documentPath(tableName, id)}/shares`, ShareListResponseSchema);
+}
+
+export interface CreateShareBody {
+  expires_in_days: number;
+  password?: string;
+  max_downloads?: number;
+  /** pin a version - omitted: always the current one */
+  version_no?: number;
+  note?: string;
+}
+
+export async function createDocumentShare(
+  tableName: string,
+  id: string,
+  body: CreateShareBody,
+): Promise<CreateShareResponse> {
+  const res = await sendJson(`${documentPath(tableName, id)}/shares`, "POST", body);
+  return jsonOrThrow(res, CreateShareResponseSchema);
+}
+
+export async function revokeDocumentShare(tableName: string, id: string, shareId: string): Promise<void> {
+  await sendJson(`${documentPath(tableName, id)}/shares/${encodeURIComponent(shareId)}`, "DELETE");
+}
+
+// ── Selective export ─────────────────────────────────────────────────────────
+
+export async function createExport(body: ExportRequest): Promise<ExportJob> {
+  const res = await sendJson("/api/db/export", "POST", body);
+  return jsonOrThrow(res, ExportJobSchema);
+}
+
+export async function fetchExportJobs(): Promise<ExportJobsResponse> {
+  return fetchJson("/api/db/export/jobs", ExportJobsResponseSchema);
+}
+
+export async function deleteExportJob(jobId: string): Promise<void> {
+  await sendJson(`/api/db/export/jobs/${encodeURIComponent(jobId)}`, "DELETE");
+}
+
+/** The finished ZIP (audited as export_downloaded). */
+export function exportJobDownloadUrl(jobId: string): string {
+  return `/api/db/export/jobs/${encodeURIComponent(jobId)}/download`;
 }
 
 export async function fetchDocumentHistory(

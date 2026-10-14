@@ -44,6 +44,11 @@ const ACTION_STYLES: Record<string, string> = {
   sync_conflict: "bg-orange-100 text-orange-800",
   sync_conflict_resolved: "bg-emerald-100 text-emerald-800",
   sync_files_retried: "bg-gray-100   text-gray-600",
+  document_shared: "bg-fuchsia-100 text-fuchsia-800",
+  share_link_revoked: "bg-gray-100   text-gray-600",
+  share_link_accessed: "bg-fuchsia-50 text-fuchsia-700",
+  documents_exported: "bg-indigo-100 text-indigo-800",
+  export_downloaded: "bg-sky-100    text-sky-800",
 };
 
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);

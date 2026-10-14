@@ -33,7 +33,8 @@
     "nodeLocal": "Local server",
     "nodeCloud": "Cloud server",
     "signOut": "Sign out",
-    "sync": "Synchronisation"
+    "sync": "Synchronisation",
+    "exports": "My exports"
   },
   "login": {
     "tagline": "Document extraction platform",
@@ -553,7 +554,12 @@
       "tag_deleted": "Tag deleted",
       "document_tagged": "Document tagged",
       "document_untagged": "Document untagged",
-      "filing_rule_set": "Filing rule set"
+      "filing_rule_set": "Filing rule set",
+      "document_shared": "Document shared",
+      "share_link_revoked": "Share link revoked",
+      "share_link_accessed": "Share link used",
+      "documents_exported": "Documents exported",
+      "export_downloaded": "Export downloaded"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -908,5 +914,101 @@
     "openAtPage": "Open at page {{page}}",
     "morePages_one": "+{{count}} more page",
     "morePages_other": "+{{count}} more pages"
+  },
+  "download": {
+    "original": "Download original",
+    "originalTitle": "The untouched file of the current version - every download is recorded",
+    "preparing": "Preparing…",
+    "chooseVersion": "Choose a version to download",
+    "versionsHeading": "Download a version",
+    "loadingVersions": "Loading…"
+  },
+  "share": {
+    "button": "Share",
+    "buttonTitle": "Create a link to send this document to someone outside",
+    "title": "Share with someone outside",
+    "intro": "Anyone with the link can download this document without an account until it expires. Every use is recorded.",
+    "close": "Close",
+    "expiry": "Valid for",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days",
+    "maxDownloads": "Maximum downloads",
+    "unlimited": "Unlimited",
+    "password": "Password",
+    "optional": "Optional (min. 4 characters)",
+    "version": "File",
+    "latest": "Latest version",
+    "pinVersion": "Version {{n}} only",
+    "note": "For",
+    "notePlaceholder": "e.g. Notary office - land file 12",
+    "audited": "The link is shown only once - copy it before closing.",
+    "create": "Create link",
+    "creating": "Creating…",
+    "createdOnce": "Link created. Copy it now - it will not be shown again.",
+    "link": "Share link",
+    "copy": "Copy",
+    "copied": "Copied",
+    "another": "Create another link",
+    "existing": "Links",
+    "loading": "Loading…",
+    "none": "No link created yet.",
+    "noNote": "No recipient noted",
+    "until": "until {{date}}",
+    "downloads_one": "{{count}} download",
+    "downloads_other": "{{count}} downloads",
+    "downloadsOf": "{{count}} / {{max}} downloads",
+    "withPassword": "password",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke this link? Anyone holding it will no longer be able to download the document.",
+    "status": {
+      "active": "Active",
+      "expired": "Expired",
+      "revoked": "Revoked",
+      "exhausted": "Used up"
+    }
+  },
+  "exports": {
+    "header": "My exports",
+    "intro": "ZIP files with the originals, their metadata and a SHA-256 manifest to check integrity. Kept 24 hours.",
+    "loading": "Loading…",
+    "loadError": "Could not load your exports.",
+    "none": "No export yet - select documents in the Documents list and choose “Export”.",
+    "status": {
+      "queued": "Waiting",
+      "running": "Building…",
+      "done": "Ready",
+      "failed": "Failed",
+      "expired": "Expired",
+      "deleted": "Deleted"
+    },
+    "kind": {
+      "documents": "Selected documents",
+      "series": "Series",
+      "search": "Search results"
+    },
+    "documents_one": "{{count}} document",
+    "documents_other": "{{count}} documents",
+    "files_one": "{{count}} file",
+    "files_other": "{{count}} files",
+    "versions": {
+      "current": "current versions",
+      "all": "all versions"
+    },
+    "versionsLabel": "Files:",
+    "availableUntil": "available until {{date}}",
+    "failedReason": "failed ({{reason}})",
+    "warnings_one": "{{count}} file is missing or no longer matches its recorded hash - see metadata.json in the ZIP.",
+    "warnings_other": "{{count}} files are missing or no longer match their recorded hash - see metadata.json in the ZIP.",
+    "download": "Download ZIP",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this export's ZIP now?",
+    "selected_one": "{{count}} document selected",
+    "selected_other": "{{count}} documents selected",
+    "clearSelection": "Clear",
+    "exportSelected": "Export selection ({{count}})",
+    "exportResults": "Export all results ({{count}})",
+    "started": "Export started.",
+    "seeExports": "See my exports",
+    "selectDocument": "Select for export"
   }
 }

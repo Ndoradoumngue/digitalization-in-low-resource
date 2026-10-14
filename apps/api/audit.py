@@ -20,6 +20,9 @@ Actions logged:
   integrity_check_completed  integrity_chain_broken
   sync_conflict      sync_conflict_resolved          (local/cloud sync, see sync.conflicts)
   sync_files_retried
+  document_shared    share_link_revoked  share_link_accessed (public share links,
+                                                     IP + event, no user)
+  documents_exported export_downloaded               (selective export jobs)
 
 Every row is chained (chain_seq / prev_hash / row_hash, one chain per
 origin_node) by the sdai_audit_chain trigger in the database itself - see

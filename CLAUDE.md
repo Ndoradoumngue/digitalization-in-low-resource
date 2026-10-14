@@ -31,7 +31,10 @@ packages/
 
 ## Critical rules
 
-- All API data routes must use `Depends(get_current_user)`.
+- All API data routes must use `Depends(get_current_user)`. The only exception is the public share-link
+  routes `GET /s/{token}` and `POST /s/{token}/download` (`share_router.public_router`): they check the
+  hashed token, expiry, revocation, download limit and the link creator's current access on every call.
+  Never add another unauthenticated route.
 - Never add `rootDir` to `packages/api-client/tsconfig.json`.
 - Never use `allow_origins=["*"]` with `allow_credentials=True`.
 - Never bake `documents/` into Docker images - always mount as a volume.

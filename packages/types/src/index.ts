@@ -11,3 +11,4 @@ export * from "./access";
 export * from "./series";
 export * from "./versions";
 export * from "./sync";
+export * from "./sharing";

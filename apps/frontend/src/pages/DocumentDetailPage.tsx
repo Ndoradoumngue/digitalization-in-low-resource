@@ -15,6 +15,10 @@ import SeriesSection from "../components/SeriesSection";
 import TagsSection from "../components/TagsSection";
 import VersionsSection from "../components/VersionsSection";
 import HistorySection from "../components/HistorySection";
+import DownloadOriginalMenu from "../components/DownloadOriginalMenu";
+import ShareButton from "../components/ShareDialog";
+import { useAuth } from "../context/AuthContext";
+import { canShare, canShareLevel } from "../utils/permissions";
 
 // The document-management record view: presents a document the way a real
 // records system would - every extracted field as a labeled entry, no QA
@@ -62,6 +66,7 @@ export default function DocumentDetailPage() {
   const idx = state.currentIndex ?? -1;
 
   const perms = useDocumentPermissions(tableName, id);
+  const { user } = useAuth();
   const { data, isLoading, error } = useDbDocumentDetail(tableName, id);
 
   const pageImagePaths = Array.isArray(data?.page_image_paths)
@@ -143,6 +148,15 @@ export default function DocumentDetailPage() {
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          {data && tableName && id && perms.canDownload && (
+            <DownloadOriginalMenu tableName={tableName} id={id} />
+          )}
+
+          {data && tableName && id && perms.canDownload && canShare(user)
+            && canShareLevel(user, asConfidentiality(data?.confidentiality)) && (
+            <ShareButton tableName={tableName} id={id} />
+          )}
 
           {data && tableName && id && perms.canDownload && (
             <ExportMenu tableName={tableName} id={id} listFields={listFields} />

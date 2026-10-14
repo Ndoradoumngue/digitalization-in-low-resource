@@ -80,6 +80,10 @@ SYNC_TABLES: tuple[SyncTable, ...] = (
     SyncTable("sdai_document_tags", order_by="created_at"),
     SyncTable("sdai_document_versions", order_by="created_at, version_no"),
     SyncTable("sdai_field_history", order_by="created_at"),
+    SyncTable("sdai_share_links", order_by="created_at"),
+    # One row per download through a share link - never updated, so two
+    # nodes counting downloads never conflict.
+    SyncTable("sdai_share_downloads", insert_only=True, order_by="downloaded_at"),
     SyncTable("sdai_audit_log", insert_only=True, order_by="origin_node, chain_seq"),
     SyncTable("sdai_token_blocklist", pk=("jti",), insert_only=True),
 )
@@ -94,7 +98,8 @@ SYNC_META_COLS = frozenset({"updated_at", "origin_node", "hlc"})
 # Node-local tables - documented here so nobody adds them to SYNC_TABLES:
 # sdai_nodes (who ran this database), sdai_record_id_counters (record ids are
 # only ever assigned on the local node, so the counter can't fork - 8.6),
-# sdai_audit_chain_heads (last head verified on THIS node), sdai_sync_*.
+# sdai_audit_chain_heads (last head verified on THIS node), sdai_sync_*,
+# sdai_export_jobs (the ZIP is on this node's disk only).
 NODE_LOCAL_TABLES = frozenset(
     {
         "sdai_nodes",
@@ -107,6 +112,7 @@ NODE_LOCAL_TABLES = frozenset(
         "sdai_sync_conflicts",
         "sdai_sync_file_queue",
         "sdai_backup_runs",
+        "sdai_export_jobs",
     }
 )
 

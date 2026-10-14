@@ -170,6 +170,62 @@ Code in `apps/api/page_text.py`, `ingest_router` (page-text worker), `documents_
   manual text, sync without the vector, backfill, accents, phrases, page numbers, ranking, permission
   leak + counts, trashed, current version only).
 
+### Download, Share Links, Selective Export (GED Phase 5)
+
+Code in `apps/api/document_files.py` (file resolution, names, watermark), `versions_router` (download),
+`share_router.py` (share links, public `/s/` routes) and `export_router.py` (export jobs); UI in
+`DownloadOriginalMenu`, `ShareDialog`, `DocumentsPage` (multi-select), `ExportsPage`.
+
+- **Original download** `GET /api/db/documents/{t}/{id}/download[?version=N&inline=true]` (permission
+  `download`): the untouched file of the current version (version 1 = the ingested original) or of version
+  N, named `<record_id>_<original name>` (ASCII fallback + RFC 5987 `filename*`). Every call is audited
+  (`document_downloaded`, `via: download`, file hash). File not copied to this node yet by sync → **409** +
+  `X-Sync-Pending: 1` (the older `/versions/{n}/file` keeps its 404 for the viewer). With
+  `DOWNLOAD_WATERMARK_CONFIDENTIAL=true`, PDFs of confidential/secret documents are stamped in memory
+  (level + who + when, pypdf) - the stored file never changes; a PDF that can't be stamped is refused (422),
+  never sent unmarked.
+- **Share links** `POST/GET /api/db/documents/{t}/{id}/shares`, `DELETE .../shares/{id}`: needs
+  `can_share` (admin always) AND `download` on the document; `secret` never shareable, `confidential` by
+  admins only. Expiry 1-30 days (default 7), optional bcrypt password (≥ 4 chars), optional max downloads
+  (≤ 1000), pinned version or always-latest, recipient note. Token = 32 random bytes, only its sha256 is
+  stored (`sdai_share_links.token_hash`); the URL (`PUBLIC_BASE_URL` + `/s/<token>`, else the request's
+  host) is returned once. Admins and access managers see/revoke every link of a document; others their own.
+- **Public routes** (the only unauthenticated data routes - CLAUDE.md): `GET /s/{token}` renders a
+  self-contained page (no app bundle, no script; fr/en from `Accept-Language`; `no-store`, `noindex`):
+  file name, expiry, size, downloads left, password field. `POST /s/{token}/download` checks the password,
+  locks the link row, counts and streams the file. Every call re-checks: link not revoked/expired/used up,
+  document live, and its **creator** still active, still `can_share`, still holding `download` and the
+  clearance (`auth.load_user` + `_document_visible`) - a link dies with its creator's access. Every failure
+  (malformed, unknown, expired, revoked, used up, access lost) is the same 404 page. Rate limits per IP:
+  30/min GET, 10/min POST. Audit `share_link_accessed` (IP, event `viewed` (5-min dedupe) / `downloaded` /
+  `password_failed`, no user), `document_shared`, `share_link_revoked`; access events are hidden from the
+  document history for non-managers. A POST-only download means link previewers never use up a download.
+- **Download counting**: each download through a link is one row of `sdai_share_downloads` (insert-only,
+  synced without a row clock, so the two nodes' counts never conflict); the count is `count(*)`.
+- **Selective export** `POST /api/db/export` {`documents[]` | `series_id` + `include_sub` | `search`
+  {q, type, series, tag, reviewer, dates...}}, `versions` current|all → 202 job. The selection is resolved
+  at creation through the list's access clause at the **download** level (undownloadable ids silently
+  dropped; nothing left = 422; > `EXPORT_MAX_DOCUMENTS` or > `EXPORT_MAX_MB` = 413) and frozen in the job. A
+  background task (`EXPORT_CONCURRENCY` at once) writes `DATA_DIR/generated/exports/<tenant>/<job>.zip`:
+  `files/` (originals), `metadata.json` (identity, series path, tags, extracted fields, each file's recorded
+  and actual sha256 + status `ok`/`unverified`/`hash_mismatch`/`missing` - no server paths), `metadata.csv`
+  (UTF-8 BOM), `manifest.sha256` (`sha256sum -c` format, every other entry) and `LISEZMOI.txt`/`README.txt`
+  (how to verify, warnings). `GET /api/db/export/jobs[/{id}[/download]]`, `DELETE .../{id}` - owner only,
+  ZIP kept `EXPORT_LINK_HOURS` (24). Audit `documents_exported` (ids + ZIP hash, when built) and
+  `export_downloaded`. `sdai_export_jobs` is node-local (never synced); interrupted jobs are failed and
+  expired ZIPs deleted at startup and on every list/create. The admin full-tenant export is unchanged.
+- **UI**: header of the document page - "Download original" (current + version menu, errors shown) and
+  "Share" (dialog: options, link shown once with copy, list with status/downloads, revoke), shown only when
+  allowed; Documents page - checkbox per card, "Export selection" / "Export all results" (current
+  filters) with current/all versions; "My exports" page (`/exports`, polls while building, download,
+  delete, warnings).
+- **Tests**: `test_share_export.py` (helpers, ZIP builder, escaping, only the known routes are
+  unauthenticated), `test_share_export_pg.py` (35: download, versions, 403/404/409, watermark; share rules,
+  token never in clear (DB, audit, changelog), landing/download, expired, revoked, password, max downloads,
+  creator losing access/deactivated, document turned secret, pinned version; export by ids/series/search,
+  leak checks, all versions, limits, missing/tampered files flagged, manifest verified, privacy, expiry,
+  recovery, never synced, admin export unchanged); permission matrix.
+
 ### Local/Cloud Sync and Backups (GED Phase 8)
 
 Two servers hold the same deployment: the **local** node (on site, GPU, works offline, drives the
@@ -376,7 +432,7 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | HLC counter wrap | Two changes of one node in the same millisecond after 100 000 others (counter wrap) could be ordered wrongly - not reachable in practice |
 | Hourly-scale clock skew | Sync requests are refused beyond ±5 min skew - both nodes must run NTP |
 | Conflicts per node | Each node keeps its own conflict list; resolving on one closes the other's copy only when the resolution reaches it (next cycle) |
-| UI not clicked through | The Synchronisation page and badges, the classification UI (series tree, tags, suggestions, filing rules) and the search UI (nav search box, snippets, page badges) were type-checked and built, not tested in a browser |
+| UI not clicked through | The Synchronisation page and badges, the classification UI (series tree, tags, suggestions, filing rules), the search UI (nav search box, snippets, page badges) and the Phase 5 UI (download menu, share dialog, multi-select export, My exports) were type-checked and built, not tested in a browser |
 | Existing documents not auto-filed | Automatic filing applies to documents filed from Phase 3 on; older documents without a series stay unfiled until assigned |
 | Link suggestions are lexical | Only exact reference strings are matched (no fuzzy match on "N° 123" vs "N°123") |
 | Series names on sync | Two series with the same name created under the same parent on both nodes while disconnected arrive as a `unique_violation` sync conflict |
@@ -384,6 +440,11 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | Page-text queue in memory | Pages queued for transcription when the API stops are not resumed automatically - run `scripts/backfill_page_text.py` (it also retries failed pages) |
 | Old versions not searchable | Only the pages the viewer shows now are searched; text of replaced versions is kept but not matched |
 | Search ranking | `ts_rank` only (no recency/popularity boost); a document whose fields AND pages match ranks by field rank × 2 + its best page |
+| Share download limit across nodes | Each node enforces `max_downloads` on the downloads it has seen; a link used on both nodes before they sync can exceed it by the downloads made in between |
+| Pinned share versions | A link pinned to a version keeps serving that version after newer ones are added (by design) - revoke it to stop it |
+| Export ZIPs stay on one node | An export job and its ZIP exist only on the node that built it; the selection is frozen at creation (access changes in the 24 h window don't shrink a finished ZIP) |
+| Export disk use | ZIPs are built on disk next to the data (`DATA_DIR/generated/exports`), up to `EXPORT_MAX_MB` each, deleted after `EXPORT_LINK_HOURS` |
+| Watermark | Standard Helvetica (WinAnsi): characters outside it print as "?"; only PDFs are stamped (images are sent as stored) |
 | Audit entries of API keys | API-key actions carry no `sdai_users` id, so the tenant-scoped audit view only shows them when they name one of the tenant's tables |
 
 ---
@@ -412,6 +473,9 @@ apps/api/
   sync/                             # local/cloud sync: capture, hlc, apply, store, conflicts, files, api, admin, worker, join
   classification_router.py          # /api/db series tree, tags, filing rules, link suggestions
   page_text.py                      # page transcription (Tesseract), manual page text, sdai_fr search config
+  document_files.py                 # a document's file (version), safe-root/sync checks, download name, PDF watermark
+  share_router.py                   # /api/db/.../shares + public /s/{token} page and download
+  export_router.py                  # /api/db/export - selective export jobs (ZIP + metadata + sha256 manifest)
   scripts/backfill_page_text.py     # transcribe pages without text (local node; resumable, throttled)
   create_admin.py                   # seed script to create/upsert a user within a tenant
   create_tenant.py                  # seed script to create/upsert a tenant (ministry)
@@ -432,6 +496,8 @@ apps/api/
     test_search.py                  # GED Phase 4 search helpers (mocked)
     test_search_pg.py               # GED Phase 4 page text, backfill, search on a real PostgreSQL (opt-in, -m pg)
     test_search_benchmark_pg.py     # GED Phase 4 10 000-page search benchmark (opt-in, -m benchmark)
+    test_share_export.py            # GED Phase 5 download/share/export helpers + unauthenticated-route guard (mocked)
+    test_share_export_pg.py         # GED Phase 5 download, share links, exports on a real PostgreSQL (opt-in, -m pg)
 
 apps/frontend/src/
   context/AuthContext.tsx           # global auth state (user, login, logout)
@@ -449,6 +515,7 @@ apps/frontend/src/
   pages/SchemaPage.tsx              # schema inspector
   pages/ReviewPage.tsx              # review queue
   pages/AuditPage.tsx               # audit log (admin only)
+  pages/ExportsPage.tsx             # "My exports": selective export jobs, ZIP download
   components/DocumentList.tsx
   components/OcrPanel.tsx
   components/VlmPanel.tsx
@@ -458,6 +525,9 @@ apps/frontend/src/
   components/HistorySection.tsx     # "History" tab: field before/after timeline + document events
   components/GlobalSearch.tsx       # nav search box (every page) → /documents?q=
   components/SearchSnippet.tsx      # highlighted search snippet (segments, rendered as text)
+  components/DownloadOriginalMenu.tsx # "Download original" + version menu (document header)
+  components/ShareDialog.tsx        # "Share": create a link (shown once), list, revoke
+  hooks/useSharing.ts               # share links, export jobs, file download mutations
   hooks/useVersions.ts              # versions/history queries, upload/restore mutations
   hooks/useDocuments.ts             # TanStack Query hooks for OCR
   hooks/useVlm.ts                   # TanStack Query hooks for VLM
@@ -481,6 +551,7 @@ packages/types/src/
   links.ts                          # DocumentLink, CreateLinkBody schemas
   access.ts                         # groups, admin users, grants (scope + permission level), integrity results
   versions.ts                       # document versions, field history, audit-chain verification
+  sharing.ts                        # share links, export jobs, ExportRequest
 
 packages/api-client/src/
   index.ts                          # all fetch functions, imageUrl helper, fetchAuditLog()

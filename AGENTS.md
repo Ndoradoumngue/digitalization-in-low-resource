@@ -30,6 +30,9 @@ sdai_digitalization/
 │   │   ├── classification_router.py  # /api/db series tree, tags, filing rules, link suggestions
 │   │   ├── page_text.py         # page transcription (Tesseract) + sdai_fr search config (GED Phase 4)
 │   │   ├── scripts/backfill_page_text.py  # transcribe pages without text (local node)
+│   │   ├── document_files.py    # a document's file + download name + PDF watermark (GED Phase 5)
+│   │   ├── share_router.py      # share links + the public /s/{token} routes (no auth - see CLAUDE.md)
+│   │   ├── export_router.py     # /api/db/export selective export jobs (ZIP + sha256 manifest)
 │   │   ├── admin_router.py      # /api/admin/* (admin-only)
 │   │   ├── sync/                # local/cloud sync (GED Phase 8)
 │   │   │   ├── capture.py       # changelog triggers, row clocks, SYNC_TABLES, seed, node-local tables
@@ -187,6 +190,7 @@ pre-commit run --all-files  # run manually
   - work that must happen once per deployment (numbering, extraction, scheduled jobs) runs on the local node only (`NODE_ROLE == "local"`; `_require_processing_node()` for routes, `_submit()` instead of `_queue.put`);
   - writes made on behalf of the peer run with `SET LOCAL sdai.applying_sync = on` (only `sync.apply` does this) - never set it elsewhere, those writes would not be synchronised.
 - **Series tree**: never write `sdai_series.path` by hand outside `classification_router` - moves go through `PATCH /api/db/series/{id}` (cycle check + subtree rewrite), and series-scope access always goes through `documents_router._series_grant_match` (subtree inheritance).
+- **Handing files out** (GED Phase 5): resolve a document's file with `document_files.resolve` (version rows - never `original_path`/`source_*` directly) and serve it through `check_servable` + `deliver` (safe roots, sync-pending answer, watermark). Never add a route without `get_current_user` besides `share_router.public_router` (`test_only_known_routes_are_unauthenticated` fails); public share checks go through `_usable_share` (creator re-checked on every use). Exports select documents with `permission="download"`, never `read`. Only the token hash is stored - never log or return a share token after creation.
 - **Full-text search**: every search expression uses the `sdai_fr` configuration (`documents_router._TSQUERY`, `_field_vector` - the field expression must stay identical to the index built by `_ensure_table`/`_backfill_fts_indexes`). Page rows are only created through `ingest_router._create_page_rows` (it queues their transcription); set a manual page's text through `_update_page_status(..., "manual", fields=...)`. Never select or write `batch_document_pages.ocr_tsv` - it is generated (and kept out of sync).
 - `ingest_router.py` owns `_engine()`. Both `auth.py` and `audit.py` import it lazily (inside function bodies) to avoid the circular import: `ingest_router → auth → ingest_router`.
 - **Deduplication**: `_compute_hash(path)` computes SHA-256 in 64 KB chunks; `_find_duplicate(hash)` queries all tables with a `content_hash` column. `_register_and_enqueue()` calls both before touching the queue. Duplicates get `status='duplicate'` in `batch_documents` and are counted in the `duplicates_skipped` field of `GET /api/ingest/status/{batch_id}`.

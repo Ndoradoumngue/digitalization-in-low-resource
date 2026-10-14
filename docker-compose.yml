@@ -150,6 +150,13 @@ services:
       - SYNC_NODE_TOKEN=${SYNC_NODE_TOKEN:-}
       - SYNC_PEER_URL=${SYNC_PEER_URL:-}
       - SYNC_ALERT_HOURS=${SYNC_ALERT_HOURS:-6}
+      # Share links, original downloads and selective exports (README, Document management)
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - DOWNLOAD_WATERMARK_CONFIDENTIAL=${DOWNLOAD_WATERMARK_CONFIDENTIAL:-false}
+      - EXPORT_MAX_DOCUMENTS=${EXPORT_MAX_DOCUMENTS:-500}
+      - EXPORT_MAX_MB=${EXPORT_MAX_MB:-2048}
+      - EXPORT_LINK_HOURS=${EXPORT_LINK_HOURS:-24}
+      - EXPORT_CONCURRENCY=${EXPORT_CONCURRENCY:-2}
       # Optional - customize the VLM extraction schema for your document
       # corpus without a rebuild. See README.md "Customizing the extraction
       # schema" and .env.example for details.

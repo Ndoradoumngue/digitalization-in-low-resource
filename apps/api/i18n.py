@@ -288,6 +288,77 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "The file of this version is no longer on disk",
         "fr": "Le fichier de cette version n'est plus sur le disque",
     },
+    # ── document_files.py (original download, GED Phase 5) ───────────────
+    "download.watermark_level_confidential": {"en": "CONFIDENTIAL", "fr": "CONFIDENTIEL"},
+    "download.watermark_level_secret": {"en": "SECRET", "fr": "SECRET"},
+    "download.watermark_footer": {
+        "en": "Copy downloaded by {who} on {when} UTC - not the archived original",
+        "fr": "Copie téléchargée par {who} le {when} UTC - ce n'est pas l'original archivé",
+    },
+    "download.watermark_failed": {
+        "en": "This PDF cannot be watermarked, so it cannot be downloaded - ask an administrator",
+        "fr": "Ce PDF ne peut pas être filigrané, il ne peut donc pas être téléchargé - contactez un administrateur",
+    },
+    # ── share_router.py (external share links, GED Phase 5) ──────────────
+    "shares.permission_required": {
+        "en": "You are not allowed to create share links",
+        "fr": "Vous n'êtes pas autorisé à créer des liens de partage",
+    },
+    "shares.forbidden_secret": {
+        "en": "Secret documents can never be shared outside",
+        "fr": "Un document secret ne peut jamais être partagé à l'extérieur",
+    },
+    "shares.forbidden_confidential": {
+        "en": "Only an administrator can share a confidential document",
+        "fr": "Seul un administrateur peut partager un document confidentiel",
+    },
+    "shares.not_found": {"en": "Share link not found", "fr": "Lien de partage introuvable"},
+    "shares.page_title": {"en": "Shared document", "fr": "Document partagé"},
+    "shares.page_intro": {
+        "en": "A document has been shared with you:",
+        "fr": "Un document a été partagé avec vous :",
+    },
+    "shares.page_expires": {"en": "Available until", "fr": "Disponible jusqu'au"},
+    "shares.page_size": {"en": "Size", "fr": "Taille"},
+    "shares.page_downloads_left": {"en": "Downloads left", "fr": "Téléchargements restants"},
+    "shares.page_password": {"en": "Password", "fr": "Mot de passe"},
+    "shares.page_download": {"en": "Download", "fr": "Télécharger"},
+    "shares.page_wrong_password": {"en": "Wrong password", "fr": "Mot de passe incorrect"},
+    "shares.page_footer": {
+        "en": "Every access to this link is recorded.",
+        "fr": "Chaque accès à ce lien est enregistré.",
+    },
+    "shares.invalid_title": {
+        "en": "This link is not available",
+        "fr": "Ce lien n'est pas disponible",
+    },
+    "shares.invalid_body": {
+        "en": "It may have expired, been revoked or used up, or be mistyped. Ask the person who sent it for a new one.",
+        "fr": "Il a peut-être expiré, été révoqué ou épuisé, ou il est mal recopié. Demandez-en un nouveau à la personne qui vous l'a envoyé.",
+    },
+    "shares.watermark_who": {"en": "share link {id}", "fr": "lien de partage {id}"},
+    # ── export_router.py (selective export, GED Phase 5) ─────────────────
+    "exports.empty": {
+        "en": "Nothing to export - none of the selected documents can be downloaded by you",
+        "fr": "Rien à exporter - aucun des documents choisis ne peut être téléchargé par vous",
+    },
+    "exports.too_many": {
+        "en": "Too many documents for one export (maximum {max}) - narrow the selection",
+        "fr": "Trop de documents pour un seul export (maximum {max}) - réduisez la sélection",
+    },
+    "exports.too_large": {
+        "en": "This export would be {size} MB - the limit is {max} MB. Narrow the selection or export the current versions only",
+        "fr": "Cet export ferait {size} Mo - la limite est de {max} Mo. Réduisez la sélection ou n'exportez que les versions courantes",
+    },
+    "exports.not_found": {"en": "Export not found", "fr": "Export introuvable"},
+    "exports.not_available": {
+        "en": "This export is not ready, has failed or has expired",
+        "fr": "Cet export n'est pas prêt, a échoué ou a expiré",
+    },
+    "exports.still_running": {
+        "en": "This export is still being built",
+        "fr": "Cet export est encore en cours de préparation",
+    },
     "common.invalid_id": {
         "en": "Invalid identifier",
         "fr": "Identifiant invalide",

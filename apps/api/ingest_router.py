@@ -697,6 +697,67 @@ CREATE TABLE IF NOT EXISTS sdai_field_history (
 CREATE INDEX IF NOT EXISTS idx_sdai_field_history_document
     ON sdai_field_history (tenant_id, table_name, document_id, created_at DESC);
 
+-- External share links (GED Phase 5, share_router.py). Only the sha256 of
+-- the random token is kept - the link itself is shown once, at creation.
+-- version_no NULL = whatever version is current when the link is used.
+-- Every download through a link is its own sdai_share_downloads row
+-- (insert-only, so the count never conflicts between nodes) - the link's
+-- download count is the number of those rows.
+CREATE TABLE IF NOT EXISTS sdai_share_links (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id     UUID        NOT NULL REFERENCES sdai_tenants(id),
+    table_name    TEXT        NOT NULL,
+    document_id   UUID        NOT NULL,
+    token_hash    TEXT        NOT NULL UNIQUE,
+    version_no    INTEGER,
+    password_hash TEXT,
+    expires_at    TIMESTAMPTZ NOT NULL,
+    max_downloads INTEGER     CHECK (max_downloads IS NULL OR max_downloads >= 1),
+    note          TEXT,
+    created_by    UUID        NOT NULL,
+    created_at    TIMESTAMPTZ DEFAULT now(),
+    revoked_at    TIMESTAMPTZ,
+    revoked_by    UUID
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_share_links_document
+    ON sdai_share_links (tenant_id, table_name, document_id);
+
+CREATE TABLE IF NOT EXISTS sdai_share_downloads (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    share_id      UUID        NOT NULL REFERENCES sdai_share_links(id),
+    version_no    INTEGER,
+    ip_address    TEXT,
+    downloaded_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_share_downloads_share ON sdai_share_downloads (share_id);
+
+-- Selective exports (GED Phase 5, export_router.py). Node-local, never
+-- synced: the ZIP lives on the disk of the node that built it, under
+-- DATA_DIR/generated/exports. documents is the selection frozen when the
+-- job was created (only what its creator could download).
+CREATE TABLE IF NOT EXISTS sdai_export_jobs (
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID        NOT NULL REFERENCES sdai_tenants(id),
+    created_by     UUID        NOT NULL,
+    status         TEXT        NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'running', 'done', 'failed', 'expired', 'deleted')),
+    selection      JSONB,
+    versions       TEXT        NOT NULL DEFAULT 'current' CHECK (versions IN ('current', 'all')),
+    documents      JSONB,
+    document_count INTEGER,
+    file_count     INTEGER,
+    total_bytes    BIGINT,
+    file_path      TEXT,
+    zip_sha256     TEXT,
+    warnings       JSONB,
+    error          TEXT,
+    created_at     TIMESTAMPTZ DEFAULT now(),
+    started_at     TIMESTAMPTZ,
+    finished_at    TIMESTAMPTZ,
+    expires_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_export_jobs_creator ON sdai_export_jobs (created_by, created_at DESC);
+
 -- Tamper-evident audit log: every row is chained to the previous one of
 -- the same origin_node (chain_seq 1, 2, 3 ... and prev_hash = the previous
 -- row_hash), row_hash being sha256 over the row's canonical JSON (see
@@ -1180,6 +1241,8 @@ _SYNCED_STATIC_TABLES = (
     "sdai_type_series_defaults",
     "sdai_document_versions",
     "sdai_field_history",
+    "sdai_share_links",
+    "sdai_share_downloads",
     "batches",
     "batch_documents",
     "batch_document_pages",
@@ -1607,6 +1670,9 @@ async def startup() -> None:
     event.listen(engine.sync_engine, "connect", _set_node_id_on_connect)
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
     await _init_db()
+    import export_router  # lazy - it imports this module
+
+    await export_router.recover_jobs()
     global _worker_tasks
     if NODE_ROLE == "cloud":
         # No GPU/Ollama on the cloud node: uploads there wait as 'pending'

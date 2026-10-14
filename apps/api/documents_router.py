@@ -749,6 +749,7 @@ def _per_table_select(
     series: str | None = None,
     include_subseries: bool = False,
     tag: str | None = None,
+    permission: str = "read",
 ) -> str | None:
     """Build the per-table SELECT fragment for the UNION.  Returns None when
     the table should be excluded (e.g. q is set but table has no text cols,
@@ -835,7 +836,7 @@ def _per_table_select(
             f" AND dt.table_name = '{table}' AND dt.document_id = \"{table}\".id"
             " AND dt.tag_id = CAST(:tag AS uuid))"
         )
-    access_clause = _access_where_clause(table, current_user)
+    access_clause = _access_where_clause(table, current_user, permission)
     if access_clause:
         where.append(access_clause)
 
@@ -860,7 +861,12 @@ async def _run_list_query(
     series: str | None = None,
     include_subseries: bool = False,
     tag: str | None = None,
+    permission: str = "read",
+    with_details: bool = True,
 ) -> tuple[list[dict], int]:
+    """One page of the documents current_user holds `permission` on
+    (read: the list/search, download: a selective export), with the total.
+    with_details=False skips the search snippets."""
     scope = (
         {only_table: tables_cols[only_table]}
         if only_table and only_table in tables_cols
@@ -882,6 +888,7 @@ async def _run_list_query(
             series=series,
             include_subseries=include_subseries,
             tag=tag,
+            permission=permission,
             current_user=current_user,
         )
         for tbl, cols in scope.items()
@@ -947,7 +954,7 @@ async def _run_list_query(
     total = int(rows[0]["total_count"]) if rows else 0
     internal = {"total_count", "_field_rank", "_page_rank", "_score"}
     results = [{k: v for k, v in dict(r).items() if k not in internal} for r in rows]
-    if q and results:
+    if q and results and with_details:
         await _attach_search_details(conn, scope, results, q)
     return results, total
 

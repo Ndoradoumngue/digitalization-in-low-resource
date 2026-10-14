@@ -25,3 +25,15 @@ export function atLeast(level: PermissionLevel | null | undefined, needed: Permi
   if (!level) return false;
   return PERMISSION_LEVELS.indexOf(level) >= PERMISSION_LEVELS.indexOf(needed);
 }
+
+/** May create external share links at all (admin, or the can_share flag). */
+export function canShare(user: User | null | undefined): boolean {
+  return user?.role === "admin" || ((user?.role === "reviewer" || user?.role === "reader") && !!user.can_share);
+}
+
+/** Secret documents are never shared, confidential ones only by admins. */
+export function canShareLevel(user: User | null | undefined, confidentiality: string | null | undefined): boolean {
+  if (confidentiality === "secret") return false;
+  if (confidentiality === "confidential") return user?.role === "admin";
+  return true;
+}

@@ -35,6 +35,9 @@ BROWSE = [
     ("GET", "/api/db/tags", None),
     ("GET", f"{DOC}/tags", None),
     ("GET", f"{DOC}/link-suggestions", None),
+    ("GET", f"{DOC}/download", None),
+    ("GET", f"{DOC}/shares", None),
+    ("GET", "/api/db/export/jobs", None),
 ]
 
 # Document actions - admin and reviewer only.

@@ -9,6 +9,16 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 5 (download, share links, selective export)
+- "Download original": the untouched file of the current or any earlier version, named after the document's record id, every download recorded; optional watermark (who, when) on PDFs of confidential/secret documents (`DOWNLOAD_WATERMARK_CONFIDENTIAL`).
+- External share links: expiry (1-30 days), optional password and download limit, a fixed version or always the latest, recipient note; the link is shown once and only its hash is stored; list and revoke from the document; outsiders get a minimal download page (`/s/...`, French/English), every use recorded with its IP. Secret documents can never be shared, confidential ones only by an administrator, and a link stops working as soon as its creator loses access.
+- Selective export for every user: tick documents (or export all current results, or a series) → a ZIP with the originals (current or all versions), `metadata.json`, `metadata.csv`, a `manifest.sha256` to check integrity and a README in French and English; only documents the user may download; missing or altered files flagged; "My exports" page, ZIP kept 24 h. Limits: `EXPORT_MAX_DOCUMENTS`, `EXPORT_MAX_MB`.
+
+### Changed - GED Phase 5
+- nginx routes `/s/` to the API on every node (`PUBLIC_BASE_URL` is used to build share links).
+- The public share-link routes are the only data routes without a signed-in user (CLAUDE.md).
+- New dependency: `pypdf` (watermark).
+
 ### Added - GED Phase 4 (full-text search in page content)
 - Every page is transcribed with Tesseract (`OCR_LANGS`, default French + English) in its own background lane, without slowing extraction; pages entered by hand are searchable by the values typed.
 - `scripts/backfill_page_text.py` transcribes pages ingested earlier (resumable, throttled, local node only).
