@@ -64,7 +64,7 @@
     "header": "Documents",
     "count_one": "{{count}} document",
     "count_other": "{{count}} documents",
-    "searchPlaceholder": "Search documents…",
+    "searchPlaceholder": "Search fields and page text…",
     "allReviewers": "All reviewers",
     "allSeries": "All series",
     "from": "From",
@@ -898,5 +898,15 @@
     "add": "Add",
     "filter": "Filter by tag",
     "all": "All tags"
+  },
+  "search": {
+    "label": "Search documents",
+    "placeholder": "Search all documents and pages…",
+    "foundOnPages_one": "Found on page",
+    "foundOnPages_other": "Found on pages",
+    "pageBadge": "p. {{page}}",
+    "openAtPage": "Open at page {{page}}",
+    "morePages_one": "+{{count}} more page",
+    "morePages_other": "+{{count}} more pages"
   }
 }

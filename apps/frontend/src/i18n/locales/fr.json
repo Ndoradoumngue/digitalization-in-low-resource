@@ -64,7 +64,7 @@
     "header": "Documents",
     "count_one": "{{count}} document",
     "count_other": "{{count}} documents",
-    "searchPlaceholder": "Rechercher des documents…",
+    "searchPlaceholder": "Rechercher dans les champs et le texte des pages…",
     "allReviewers": "Tous les réviseurs",
     "allSeries": "Toutes les séries",
     "from": "Du",
@@ -898,5 +898,15 @@
     "add": "Ajouter",
     "filter": "Filtrer par étiquette",
     "all": "Toutes les étiquettes"
+  },
+  "search": {
+    "label": "Rechercher des documents",
+    "placeholder": "Rechercher dans tous les documents et pages…",
+    "foundOnPages_one": "Trouvé en page",
+    "foundOnPages_other": "Trouvé en pages",
+    "pageBadge": "p. {{page}}",
+    "openAtPage": "Ouvrir à la page {{page}}",
+    "morePages_one": "+{{count}} autre page",
+    "morePages_other": "+{{count}} autres pages"
   }
 }

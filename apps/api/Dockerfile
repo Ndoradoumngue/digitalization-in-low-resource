@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
     tesseract-ocr \
+    tesseract-ocr-eng \
     tesseract-ocr-fra \
     tesseract-ocr-ara \
     && rm -rf /var/lib/apt/lists/*
@@ -17,7 +18,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY sync/ ./sync/
-COPY api_server.py auth.py audit.py cache.py i18n.py rate_limit.py ingest_router.py documents_router.py review_router.py admin_router.py versions_router.py classification_router.py history.py export_format.py create_admin.py create_tenant.py create_api_key.py create_prompt_preset.py ./
+COPY scripts/ ./scripts/
+COPY api_server.py auth.py audit.py cache.py i18n.py rate_limit.py ingest_router.py documents_router.py review_router.py admin_router.py versions_router.py classification_router.py history.py page_text.py export_format.py create_admin.py create_tenant.py create_api_key.py create_prompt_preset.py ./
 
 # documents/ is mounted as a volume at runtime - never baked into the image
 VOLUME ["/app/documents"]

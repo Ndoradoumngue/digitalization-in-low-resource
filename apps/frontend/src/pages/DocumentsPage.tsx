@@ -1,5 +1,5 @@
-import { useMemo, useState, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useDbDocuments, useDbReviewers, useDbTypes } from "../hooks/useDocumentsDb";
 import { useSeries } from "../hooks/useSeries";
@@ -9,6 +9,8 @@ import { seriesLabel } from "../utils/series";
 import NavSidebar from "../components/NavSidebar";
 import type { DbListParams } from "@sdai/api-client";
 import { summarizeExtra } from "../utils/format";
+import SearchSnippet from "../components/SearchSnippet";
+import type { DbDocument } from "@sdai/types";
 
 // The real document-browsing experience: categories, reviewer, keyword
 // search - no confidence/review_status/table-name plumbing shown (that's
@@ -16,6 +18,8 @@ import { summarizeExtra } from "../utils/format";
 // document detail route (/documents/:tableName/:id).
 
 const PAGE_SIZE = 24;
+// "page N" badges shown per search result before collapsing into "+N".
+const MAX_PAGE_BADGES = 6;
 
 function fmtDate(iso: string | null) {
   if (!iso) return "-";
@@ -38,8 +42,15 @@ export default function DocumentsPage() {
   const { data: tags } = useTags();
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [q, setQ] = useState("");
-  const [inputQ, setInputQ] = useState("");
+  // The search lives in the URL (?q=) so the nav's global search box, the
+  // back button and a shared link all land on the same results.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const q = searchParams.get("q") ?? "";
+  const [inputQ, setInputQ] = useState(q);
+  useEffect(() => { setInputQ(q); setPage(1); }, [q]);
+  const setQ = useCallback((value: string) => {
+    setSearchParams(value ? { q: value } : {}, { replace: true });
+  }, [setSearchParams]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const params: DbListParams = {
@@ -72,10 +83,10 @@ export default function DocumentsPage() {
     setInputQ(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      setQ(value);
+      setQ(value.trim());
       setPage(1);
     }, 300);
-  }, []);
+  }, [setQ]);
 
   function selectCategory(tableName: string) {
     setCategory((c) => (c === tableName ? "" : tableName));
@@ -83,6 +94,17 @@ export default function DocumentsPage() {
   }
 
   const rows = data?.results ?? [];
+
+  // Opens the document; `pageNo` (1-based) opens the viewer at that page.
+  function open(row: DbDocument, i: number, pageNo?: number) {
+    navigate(`/documents/${row.table_name}/${row.id}${pageNo ? `?page=${pageNo}` : ""}`, {
+      state: {
+        list: rows.map((r) => ({ tableName: r.table_name, id: r.id })),
+        currentIndex: i,
+        filters: params,
+      },
+    });
+  }
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const hasFilters = category || reviewedBy || seriesId || tagId || dateFrom || dateTo || q;
@@ -209,18 +231,13 @@ export default function DocumentsPage() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {rows.map((row, i) => (
-                <button
+                <div
                   key={`${row.table_name}-${row.id}`}
-                  onClick={() =>
-                    navigate(`/documents/${row.table_name}/${row.id}`, {
-                      state: {
-                        list: rows.map((r) => ({ tableName: r.table_name, id: r.id })),
-                        currentIndex: i,
-                        filters: params,
-                      },
-                    })
-                  }
-                  className="text-left bg-white rounded-lg border border-gray-200 p-4 hover:border-indigo-300 hover:shadow-sm transition-all flex flex-col gap-2"
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => open(row, i, defaultPage(row))}
+                  onKeyDown={(e) => { if (e.key === "Enter") open(row, i, defaultPage(row)); }}
+                  className="cursor-pointer text-left bg-white rounded-lg border border-gray-200 p-4 hover:border-indigo-300 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-all flex flex-col gap-2"
                 >
                   <div className="flex items-center gap-2">
                     <span className="inline-flex self-start items-center px-2 py-0.5 rounded text-xs font-semibold bg-indigo-100 text-indigo-800">
@@ -238,6 +255,7 @@ export default function DocumentsPage() {
                   <p className="text-sm text-gray-700 line-clamp-3">
                     {summarizeExtra(row.extra_fields, 4)}
                   </p>
+                  {row.search && <SearchHit row={row} onPage={(n) => open(row, i, n)} />}
                   <div className="mt-auto flex items-center justify-between text-xs text-gray-400 pt-1">
                     <span>
                       {row.reviewed_by
@@ -246,7 +264,7 @@ export default function DocumentsPage() {
                     </span>
                     <span>{fmtDate(row.ingested_at)}</span>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           )}
@@ -280,4 +298,46 @@ export default function DocumentsPage() {
       </div>
     </div>
   );
+}
+
+// Where a search found the document: the matching extracted fields and/or
+// the pages whose text matched (each badge opens the viewer at that page).
+function SearchHit({ row, onPage }: { row: DbDocument; onPage: (page: number) => void }) {
+  const { t } = useTranslation();
+  const search = row.search!;
+  const pageSnippet = search.pages.find((p) => p.snippet && p.snippet.length > 0);
+  const extra = search.pages.length - MAX_PAGE_BADGES;
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-gray-100 pt-2">
+      {search.snippet.length > 0 ? (
+        <SearchSnippet segments={search.snippet} className="line-clamp-3" />
+      ) : pageSnippet ? (
+        <SearchSnippet segments={pageSnippet.snippet!} className="line-clamp-3" />
+      ) : null}
+      {search.pages.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[11px] text-gray-400">{t("search.foundOnPages", { count: search.pages.length })}</span>
+          {search.pages.slice(0, MAX_PAGE_BADGES).map((p) => (
+            <button
+              key={p.page}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onPage(p.page); }}
+              onKeyDown={(e) => e.stopPropagation()}
+              title={t("search.openAtPage", { page: p.page })}
+              className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+            >
+              {t("search.pageBadge", { page: p.page })}
+            </button>
+          ))}
+          {extra > 0 && <span className="text-[11px] text-gray-400">{t("search.morePages", { count: extra })}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A result found only in its page text opens at the first matching page.
+function defaultPage(row: DbDocument): number | undefined {
+  if (!row.search || row.search.snippet.length > 0) return undefined;
+  return row.search.pages[0]?.page;
 }

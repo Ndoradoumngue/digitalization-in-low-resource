@@ -1,5 +1,30 @@
 import { z } from "zod";
 
+// A run of snippet text; `hit` marks the words that matched the search.
+// Rendered as text (never HTML) - see SearchSnippet.
+export const SnippetSegmentSchema = z.object({
+  text: z.string(),
+  hit: z.boolean(),
+});
+export type SnippetSegment = z.infer<typeof SnippetSegmentSchema>;
+
+export const SearchPageHitSchema = z.object({
+  /** 1-based page number in the document viewer */
+  page: z.number(),
+  /** only the first few matching pages get one */
+  snippet: z.array(SnippetSegmentSchema).nullable(),
+});
+export type SearchPageHit = z.infer<typeof SearchPageHitSchema>;
+
+/** Present on results of a `q` search only. */
+export const SearchDetailsSchema = z.object({
+  /** extracted fields that matched (empty when only page text did) */
+  snippet: z.array(SnippetSegmentSchema),
+  /** pages whose text matched */
+  pages: z.array(SearchPageHitSchema),
+});
+export type SearchDetails = z.infer<typeof SearchDetailsSchema>;
+
 export const DbDocumentSchema = z.object({
   id: z.string(),
   table_name: z.string(),
@@ -14,6 +39,7 @@ export const DbDocumentSchema = z.object({
   // Whatever non-system fields this document's own tenant/schema extracted -
   // opaque, since it varies per document type (see documents_router._extra_cols).
   extra_fields: z.record(z.string(), z.unknown()),
+  search: SearchDetailsSchema.optional(),
 });
 export type DbDocument = z.infer<typeof DbDocumentSchema>;
 

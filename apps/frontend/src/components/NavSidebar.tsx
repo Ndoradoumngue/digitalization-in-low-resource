@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { useDbTypes } from "../hooks/useDocumentsDb";
 import { useReviewCount } from "../hooks/useReview";
 import LanguageSwitcher from "./LanguageSwitcher";
+import GlobalSearch from "./GlobalSearch";
 import { isReader } from "../utils/permissions";
 import { useSyncStatus } from "../hooks/useSync";
 import { alertText } from "../pages/SyncAdminPage";
@@ -43,6 +44,8 @@ export default function NavSidebar() {
           </p>
         </div>
       </div>
+
+      <GlobalSearch />
 
       {/* Nav links */}
       <nav className="flex-1 overflow-y-auto px-2 py-2 flex flex-col">

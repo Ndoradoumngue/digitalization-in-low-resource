@@ -40,6 +40,7 @@ from typing import NamedTuple
 import cv2
 import httpx
 import numpy as np
+import page_text
 import pytesseract
 from audit import log_action
 from auth import (
@@ -610,6 +611,22 @@ ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS source_page_number INT
 -- but its document is sent to review instead of being auto-approved.
 ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS quality_flags JSONB;
 
+-- What is written on the page (GED full-text search, see page_text.py):
+-- Tesseract's transcription (NULL = not transcribed yet), the values typed
+-- for a page entered by hand, and their search vector. ocr_tsv is
+-- generated, so it is never synced (sync.capture strips generated columns)
+-- - each node computes it from the synced text.
+ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS ocr_text TEXT;
+ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS manual_text TEXT;
+ALTER TABLE batch_document_pages ADD COLUMN IF NOT EXISTS ocr_tsv tsvector
+    GENERATED ALWAYS AS (
+        to_tsvector('sdai_fr', COALESCE(ocr_text, '') || ' ' || COALESCE(manual_text, ''))
+    ) STORED;
+CREATE INDEX IF NOT EXISTS idx_batch_document_pages_ocr_tsv
+    ON batch_document_pages USING gin (ocr_tsv);
+CREATE INDEX IF NOT EXISTS idx_batch_document_pages_untranscribed
+    ON batch_document_pages (id) WHERE ocr_text IS NULL;
+
 -- GET /api/db/image finds which upload a requested file belongs to (to
 -- apply that document's access rules) by these paths.
 CREATE INDEX IF NOT EXISTS idx_batch_documents_image_path ON batch_documents (image_path);
@@ -874,6 +891,10 @@ async def _init_db() -> None:
         # every row with sdai_hlc_now().
         for statement in sync_capture.SYNC_DDL:
             await conn.execute(text(statement))
+        # The sdai_fr search configuration, before _INIT_DDL's generated
+        # page-text column and the FTS indexes below use it.
+        for statement in page_text.SEARCH_CONFIG_DDL:
+            await conn.execute(text(statement))
         # asyncpg's extended query protocol can't prepare multiple commands
         # in one statement, so each DDL statement is executed separately.
         for statement in _INIT_DDL.split(";"):
@@ -965,7 +986,7 @@ async def _backfill_fts_indexes(conn) -> None:
                 text(
                     f"CREATE INDEX IF NOT EXISTS idx_{table_name}_fts"
                     f' ON "{table_name}" USING gin'
-                    f"(to_tsvector('french', {coalesces}))"
+                    f"(to_tsvector('sdai_fr', {coalesces}))"
                 )
             )
 
@@ -1600,6 +1621,7 @@ async def startup() -> None:
         asyncio.create_task(_integrity_check_worker()),
         asyncio.create_task(_finalize_stranded_documents()),
         asyncio.create_task(_peer_upload_pickup_worker()),
+        asyncio.create_task(_page_text_worker()),
     ]
 
 
@@ -3051,7 +3073,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 text(
                     f"CREATE INDEX IF NOT EXISTS idx_{table_name}_fts"
                     f' ON "{table_name}" USING gin'
-                    f"(to_tsvector('french', {coalesces}))"
+                    f"(to_tsvector('sdai_fr', {coalesces}))"
                 )
             )
 
@@ -3150,7 +3172,7 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 text(
                     f"CREATE INDEX IF NOT EXISTS idx_{table_name}_fts"
                     f' ON "{table_name}" USING gin'
-                    f"(to_tsvector('french', {coalesces}))"
+                    f"(to_tsvector('sdai_fr', {coalesces}))"
                 )
             )
 
@@ -3471,7 +3493,45 @@ async def _create_page_rows(
             )
             page_ids.append(str(result.scalar()))
         await sess.commit()
+    _queue_page_text(page_ids, page_paths)
     return page_ids
+
+
+# Pages waiting for Tesseract (page_text.py). Filled by _create_page_rows,
+# drained by _page_text_worker - its own lane, so reading a page never
+# delays Stage 2. In memory only: what a restart drops stays ocr_text IS
+# NULL and is picked up by scripts/backfill_page_text.py.
+_page_text_queue: asyncio.Queue[tuple[str, Path]] = asyncio.Queue()
+
+
+def _queue_page_text(page_ids: list[str], page_paths: list[Path]) -> None:
+    if NODE_ROLE != "local" or not page_text.OCR_ENABLED:
+        return
+    for page_id, path in zip(page_ids, page_paths):
+        _page_text_queue.put_nowait((page_id, Path(path)))
+
+
+async def _transcribe_page(page_id: str, image_path: Path) -> None:
+    """Read one page with Tesseract (in a thread) and store the text. A
+    failure leaves ocr_text NULL, so the backfill can try again later."""
+    try:
+        ocr_text = await asyncio.to_thread(page_text.transcribe, image_path)
+    except Exception as exc:
+        print(f"[page_text] page {page_id}: {_exc_message(exc)}", file=sys.stderr)
+        return
+    async with _engine().begin() as conn:
+        await page_text.store(conn, page_id, ocr_text)
+
+
+async def _page_text_worker() -> None:
+    while True:
+        page_id, image_path = await _page_text_queue.get()
+        try:
+            await _transcribe_page(page_id, image_path)
+        except Exception as exc:  # the worker itself must never die
+            print(f"[page_text] page {page_id}: {_exc_message(exc)}", file=sys.stderr)
+        finally:
+            _page_text_queue.task_done()
 
 
 async def _update_page_status(
@@ -3485,14 +3545,16 @@ async def _update_page_status(
 ) -> None:
     # quality_flags is reset on every status change unless passed in, so a
     # retry that comes back clean, or a manual entry, clears old warnings.
+    # manual_text (searchable page text) only belongs to a manual entry.
     async with _session()() as sess:
         await sess.execute(
             text(
                 "UPDATE batch_document_pages SET status=:s, error_message=:em,"
-                " processing_time=:pt, fields=:f, quality_flags=:qf,"
+                " processing_time=:pt, fields=:f, quality_flags=:qf, manual_text=:mt,"
                 " updated_at=now() WHERE id=:id"
             ),
             {
+                "mt": page_text.manual_text(fields) if status == "manual" else None,
                 "s": status,
                 "em": error_message,
                 "pt": processing_time,

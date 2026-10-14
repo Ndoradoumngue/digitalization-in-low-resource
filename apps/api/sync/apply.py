@@ -83,16 +83,26 @@ async def _table_spec(conn, table: str) -> SyncTable:
 
 
 async def _columns(conn, table: str, cache: dict) -> dict[str, str]:
+    """The table's writable columns. Generated ones are left out: each
+    node computes them itself (a peer on older code may still send one -
+    it is dropped, see _generated)."""
     if table not in cache:
         rows = await conn.execute(
             text(
-                "SELECT column_name, data_type FROM information_schema.columns"
+                "SELECT column_name, data_type, is_generated <> 'NEVER'"
+                " FROM information_schema.columns"
                 " WHERE table_schema = 'public' AND table_name = :t"
             ),
             {"t": table},
         )
-        cache[table] = {r[0]: r[1] for r in rows}
+        rows = rows.all()
+        cache[table] = {r[0]: r[1] for r in rows if not r[2]}
+        cache[("generated", table)] = {r[0] for r in rows if r[2]}
     return cache[table]
+
+
+def _generated(table: str, cache: dict) -> set[str]:
+    return cache.get(("generated", table), set())
 
 
 def _pk_where(spec: SyncTable, pk: dict, alias: str = "") -> str:
@@ -302,7 +312,11 @@ async def _apply_one(conn, change: dict, cache: dict, result: ApplyResult) -> bo
     sent = change.get("row_data") or {}
     if not isinstance(sent, dict):
         raise ApplyError("bad_change", "row_data must be an object")
-    unknown = [c for c in sent if c not in cols and c not in SYNC_META_COLS]
+    unknown = [
+        c
+        for c in sent
+        if c not in cols and c not in SYNC_META_COLS and c not in _generated(table, cache)
+    ]
     if unknown and op == "update":
         # A column this node doesn't have yet (its ddl event failed or the
         # peer runs newer code) - applying the rest would lose that value.

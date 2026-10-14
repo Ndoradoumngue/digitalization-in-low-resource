@@ -272,6 +272,16 @@ CREATE OR REPLACE FUNCTION sdai_hlc_now() RETURNS TEXT AS $$
         || ':' || COALESCE(NULLIF(current_setting('sdai.node_id', true), ''), 'local')
 $$ LANGUAGE sql VOLATILE
 """,
+    # Generated columns (batch_document_pages.ocr_tsv) are computed by each
+    # node from the columns that are synced - never sent: a peer can't
+    # write them, and they can be large.
+    r"""
+CREATE OR REPLACE FUNCTION sdai_generated_cols(p_rel regclass) RETURNS text[] AS $$
+    SELECT COALESCE(array_agg(attname::text), '{}')
+    FROM pg_attribute
+    WHERE attrelid = p_rel AND attnum > 0 AND NOT attisdropped AND attgenerated <> ''
+$$ LANGUAGE sql STABLE
+""",
     # TG_ARGV[0] is 'clock' (mutable table, keep sdai_sync_row_clock) or
     # 'noclock' (append-only), the rest are the primary-key columns.
     # The stamp is the row's own hlc when the sdai_touch_row trigger just
@@ -293,10 +303,10 @@ BEGIN
         RETURN NULL;
     END IF;
     IF TG_OP <> 'DELETE' THEN
-        v_new := to_jsonb(NEW);
+        v_new := to_jsonb(NEW) - sdai_generated_cols(TG_RELID);
     END IF;
     IF TG_OP <> 'INSERT' THEN
-        v_old := to_jsonb(OLD);
+        v_old := to_jsonb(OLD) - sdai_generated_cols(TG_RELID);
     END IF;
     FOR i IN 1 .. TG_NARGS - 1 LOOP
         v_pk := v_pk || jsonb_build_object(TG_ARGV[i], COALESCE(v_new, v_old) -> TG_ARGV[i]);
@@ -358,7 +368,7 @@ BEGIN
                sdai_hlc_now(),
                COALESCE(NULLIF(current_setting('sdai.node_id', true), ''), 'local')
         FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = p_table
+        WHERE table_schema = 'public' AND table_name = p_table AND is_generated = 'NEVER'
         HAVING count(*) > 0;
 END
 $$ LANGUAGE plpgsql
@@ -408,11 +418,12 @@ async def _seed_table(conn, table: SyncTable) -> None:
     pk_expr = ", ".join(f"'{c}', to_jsonb(r) -> '{c}'" for c in table.pk)
     order = f" ORDER BY {table.order_by}" if table.order_by else ""
     params = {"t": table.name, "node": await _node(conn)}
+    row_json = f"(to_jsonb(r) - sdai_generated_cols('\"{table.name}\"'::regclass))"
     if table.insert_only:
         await conn.execute(
             text(
                 "INSERT INTO sdai_sync_changelog (table_name, pk, op, row_data, hlc, origin_node)"
-                f" SELECT :t, jsonb_build_object({pk_expr}), 'insert', to_jsonb(r), sdai_hlc_now(), :node"
+                f" SELECT :t, jsonb_build_object({pk_expr}), 'insert', {row_json}, sdai_hlc_now(), :node"
                 f' FROM (SELECT * FROM "{table.name}"{order}) r'
             ),
             params,
@@ -421,7 +432,7 @@ async def _seed_table(conn, table: SyncTable) -> None:
     await conn.execute(
         text(f"""
             WITH src AS (
-                SELECT jsonb_build_object({pk_expr}) AS pk, to_jsonb(r) AS row_data,
+                SELECT jsonb_build_object({pk_expr}) AS pk, {row_json} AS row_data,
                        sdai_hlc_now() AS fresh, row_number() OVER () AS n
                 FROM (SELECT * FROM "{table.name}"{order}) r
             ), ins AS (

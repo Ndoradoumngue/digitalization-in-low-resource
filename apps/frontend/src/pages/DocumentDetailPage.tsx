@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useDbDocumentDetail } from "../hooks/useDocumentsDb";
 import NavSidebar from "../components/NavSidebar";
@@ -69,9 +69,13 @@ export default function DocumentDetailPage() {
     : [];
   const pdfPath = data?.source_pdf_path ? String(data.source_pdf_path) : null;
 
-  const [activePage, setActivePage] = useState(0);
+  // ?page=N (1-based, from a search result's page badge) opens the
+  // viewer at that page.
+  const [searchParams] = useSearchParams();
+  const startPage = Math.max(0, (parseInt(searchParams.get("page") ?? "", 10) || 1) - 1);
+  const [activePage, setActivePage] = useState(startPage);
   const [tab, setTab] = useState<Tab>("record");
-  useEffect(() => { setActivePage(0); }, [tableName, id]);
+  useEffect(() => { setActivePage(startPage); }, [tableName, id, startPage]);
 
   // Key press for prev/next
   useEffect(() => {

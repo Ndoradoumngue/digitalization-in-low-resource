@@ -647,6 +647,94 @@ async def _file_permitted(
     return bool(permitted)
 
 
+# ── Full-text search (extracted fields + page text) ──────────────────────────
+# websearch_to_tsquery accepts what people type in a search box ("quoted
+# phrase", -excluded, or) and never fails on syntax. sdai_fr = french +
+# unaccent (page_text.SEARCH_CONFIG_DDL): "decret" finds "décret".
+_TSQUERY = "websearch_to_tsquery('sdai_fr', :q)"
+
+# Every document of the tenant with a page whose text matches, keyed by:
+# for an ingest upload, its batch_documents id (= the filed row's
+# batch_document_id); for a new file version's upload, the document it
+# re-extracted into (target_document_id = the row's id). Both are random
+# UUIDs, so one key column serves both. Uses the ocr_tsv GIN index. Only a
+# prefilter (hashed IN): no join on it - the planner can't estimate how many
+# documents a word hits, and a misjudged join over thousands of hits costs
+# seconds (see the Phase 4 benchmark).
+_PAGE_HITS_CTE = f"""
+    page_hits AS MATERIALIZED (
+        SELECT DISTINCT COALESCE(bd.target_document_id, p.batch_document_id) AS doc_key
+        FROM batch_document_pages p
+        JOIN batch_documents bd ON bd.id = p.batch_document_id
+        JOIN batches b ON b.id = bd.batch_id
+        WHERE b.tenant_id = CAST(:__access_tenant_id AS uuid)
+          AND p.ocr_tsv @@ {_TSQUERY}
+    )"""
+
+# Field-match weight over page-text matches when ranking: a word in the
+# extracted data says more about a document than one somewhere on a page.
+_FIELD_WEIGHT = 2
+
+
+def _field_vector(searchable: list[str]) -> str:
+    # Must match the index expression (_ensure_table) exactly so
+    # PostgreSQL uses the GIN index.
+    coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in searchable)
+    return f"to_tsvector('sdai_fr', {coalesces})"
+
+
+def _field_match(searchable: list[str]) -> str:
+    return f"{_field_vector(searchable)} @@ {_TSQUERY}" if searchable else "FALSE"
+
+
+def _current_pages_sql(cols: dict[str, str], doc: str) -> str:
+    """The pages a document shows now whose text matches the search, with
+    their number in the viewer - from its page_image_paths in order (after
+    a re-extraction, the new version's pages), or, for a row without that
+    list, its upload's pages. Columns: n, ocr_tsv, ocr_text, manual_text.
+    `doc` names the document row (its quoted table name, or an alias).
+    The text condition sits inside each branch so it can use the index."""
+    match = f"p.ocr_tsv @@ {_TSQUERY}"
+    by_upload = (
+        "SELECT p.page_number AS n, p.ocr_tsv, p.ocr_text, p.manual_text"
+        " FROM batch_document_pages p"
+        f" WHERE p.batch_document_id = {doc}.batch_document_id AND {match}"
+    )
+    if "page_image_paths" not in cols:
+        return by_upload
+    is_list = f"jsonb_typeof({doc}.page_image_paths) = 'array'"
+    return (
+        "SELECT CAST(e.ord AS integer) AS n, p.ocr_tsv, p.ocr_text, p.manual_text"
+        f" FROM jsonb_array_elements_text(CASE WHEN {is_list} THEN {doc}.page_image_paths"
+        " ELSE '[]'::jsonb END) WITH ORDINALITY e(path, ord)"
+        f" JOIN batch_document_pages p ON p.image_path = e.path AND {match}"
+        f" UNION ALL {by_upload} AND NOT COALESCE({is_list}, FALSE)"
+    )
+
+
+_PAGE_PREFILTER = (
+    "(batch_document_id IN (SELECT doc_key FROM page_hits)"
+    " OR id IN (SELECT doc_key FROM page_hits))"
+)
+
+
+def _page_match(table: str, cols: dict[str, str]) -> str:
+    """The row has a current page whose text matches. The page_hits key
+    test comes first and is cheap (hashed), so the exact per-page check
+    only runs for the rows that have a matching page at all."""
+    pages = _current_pages_sql(cols, f'"{table}"')
+    return f"{_PAGE_PREFILTER} AND EXISTS ({pages})"
+
+
+def _page_rank(table: str, cols: dict[str, str]) -> str:
+    """Best ts_rank among the row's matching current pages (NULL: none)."""
+    pages = _current_pages_sql(cols, f'"{table}"')
+    return (
+        f"CASE WHEN {_PAGE_PREFILTER}"
+        f" THEN (SELECT max(ts_rank(cp.ocr_tsv, {_TSQUERY})) FROM ({pages}) cp) END"
+    )
+
+
 def _per_table_select(
     table: str,
     cols: dict[str, str],
@@ -675,7 +763,8 @@ def _per_table_select(
     across tenants/document types with entirely different field sets.
     """
     searchable = _searchable_cols(cols)
-    if q and not searchable:
+    pages_linked = "batch_document_id" in cols
+    if q and not searchable and not pages_linked:
         return None
     if reviewed_by and "reviewed_by" not in cols:
         return None
@@ -711,10 +800,15 @@ def _per_table_select(
 
     where: list[str] = []
     if q:
-        # Use the GIN index created by _ensure_table for fast FTS on large tables.
-        # The expression must match the index expression exactly so PostgreSQL picks it up.
-        coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in searchable)
-        where.append(f"to_tsvector('french', {coalesces})" f" @@ plainto_tsquery('french', :q)")
+        field_match = _field_match(searchable)
+        page_match = _page_match(table, cols) if pages_linked else "FALSE"
+        where.append(f"(({field_match}) OR ({page_match}))")
+        # Internal, for ranking in _run_list_query - stripped from the results.
+        rank = f"ts_rank({_field_vector(searchable)}, {_TSQUERY})" if searchable else "0"
+        sel.append(f"CASE WHEN {field_match} THEN {rank} ELSE 0 END AS _field_rank")
+        sel.append(
+            f"{_page_rank(table, cols)} AS _page_rank" if pages_linked else "NULL::real AS _page_rank"
+        )
     if confidence:
         where.append("confidence = :confidence")
     if review_status:
@@ -803,7 +897,7 @@ async def _run_list_query(
         **_access_params(current_user),
     }
     if q:
-        params["q"] = q  # plainto_tsquery parses the raw search string
+        params["q"] = q  # websearch_to_tsquery parses the raw search string
     if confidence:
         params["confidence"] = confidence
     if review_status:
@@ -819,19 +913,131 @@ async def _run_list_query(
     if tag:
         params["tag"] = tag
 
-    sql = f"""
-        WITH combined AS (
-            {union_sql}
-        )
-        SELECT *, COUNT(*) OVER() AS total_count
-        FROM combined
-        ORDER BY ingested_at DESC NULLS LAST
-        LIMIT :page_size OFFSET :offset
-    """
+    if q:
+        # The planner can't cost the per-row page subqueries well, and the
+        # inflated estimate makes PostgreSQL JIT-compile this short query -
+        # hundreds of ms on every search for nothing. This transaction only.
+        await conn.execute(text("SET LOCAL jit = off"))
+        # Best match first: field matches weigh _FIELD_WEIGHT times the
+        # best matching page.
+        sql = f"""
+            WITH {_PAGE_HITS_CTE},
+            combined AS (
+                {union_sql}
+            )
+            SELECT c.*,
+                   c._field_rank * {_FIELD_WEIGHT} + COALESCE(c._page_rank, 0) AS _score,
+                   COUNT(*) OVER() AS total_count
+            FROM combined c
+            ORDER BY _score DESC, c.ingested_at DESC NULLS LAST, c.id
+            LIMIT :page_size OFFSET :offset
+        """
+    else:
+        sql = f"""
+            WITH combined AS (
+                {union_sql}
+            )
+            SELECT *, COUNT(*) OVER() AS total_count
+            FROM combined
+            ORDER BY ingested_at DESC NULLS LAST
+            LIMIT :page_size OFFSET :offset
+        """
     result = await conn.execute(text(sql), params)
     rows = result.mappings().all()
     total = int(rows[0]["total_count"]) if rows else 0
-    return [{k: v for k, v in dict(r).items() if k != "total_count"} for r in rows], total
+    internal = {"total_count", "_field_rank", "_page_rank", "_score"}
+    results = [{k: v for k, v in dict(r).items() if k not in internal} for r in rows]
+    if q and results:
+        await _attach_search_details(conn, scope, results, q)
+    return results, total
+
+
+# ts_headline marks matches with these (private-use characters, never in
+# real text); _segments turns them into [{text, hit}] so the client
+# renders highlights without ever interpreting document text as markup.
+_HL_START, _HL_STOP = "\ue000", "\ue001"
+_HEADLINE_OPTS = (
+    f'StartSel="{_HL_START}", StopSel="{_HL_STOP}", MaxWords=24, MinWords=8,'
+    " MaxFragments=2, FragmentDelimiter=\" … \""
+)
+# Matching pages listed per result (their numbers), and how many of them
+# get a snippet.
+_MAX_PAGES_PER_RESULT = 50
+_MAX_PAGE_SNIPPETS = 3
+
+
+def _segments(headline: str | None) -> list[dict]:
+    if not headline:
+        return []
+    out: list[dict] = []
+    for i, part in enumerate(headline.split(_HL_START)):
+        hit, _, rest = part.partition(_HL_STOP) if i else ("", "", part)
+        if hit:
+            out.append({"text": hit, "hit": True})
+        if rest:
+            out.append({"text": rest, "hit": False})
+    return out
+
+
+async def _attach_search_details(
+    conn, tables_cols: dict[str, dict[str, str]], results: list[dict], q: str
+) -> None:
+    """Snippets and matching page numbers - for the returned page of
+    results only (ts_headline is costly). Every row here already passed the
+    caller's access clause; this only reads more of the same rows. Adds
+    `search` = {"snippet": [segments] (extracted fields),
+    "pages": [{"page": n, "snippet": [segments] | None}]} to each result."""
+    by_table: dict[str, list[str]] = {}
+    for r in results:
+        r["search"] = {"snippet": [], "pages": []}
+        by_table.setdefault(r["table_name"], []).append(r["id"])
+    found: dict[tuple[str, str], dict] = {}
+    for table, ids in by_table.items():
+        cols = tables_cols.get(table)
+        if cols is None:
+            continue
+        searchable = _searchable_cols(cols)
+        if searchable:
+            coalesces = " || ' ' || ".join(f"COALESCE({c},'')" for c in searchable)
+            rows = await conn.execute(
+                text(
+                    f"SELECT id::text AS id, ts_headline('sdai_fr', {coalesces}, {_TSQUERY}, :opts) AS hl"
+                    f' FROM "{table}" WHERE id = ANY(CAST(:ids AS uuid[])) AND {_field_match(searchable)}'
+                ),
+                {"ids": ids, "q": q, "opts": _HEADLINE_OPTS},
+            )
+            for row in rows:
+                found.setdefault((table, row.id), {"snippet": [], "pages": []})["snippet"] = _segments(
+                    row.hl
+                )
+        if "batch_document_id" not in cols:
+            continue
+        rows = await conn.execute(
+            text(f"""
+                SELECT doc_id, n,
+                       CASE WHEN rn <= {_MAX_PAGE_SNIPPETS}
+                            THEN ts_headline('sdai_fr', concat_ws(' ', ocr_text, manual_text), {_TSQUERY}, :opts)
+                       END AS hl
+                FROM (
+                    SELECT d.id::text AS doc_id, cp.n, cp.ocr_text, cp.manual_text,
+                           row_number() OVER (PARTITION BY d.id ORDER BY cp.n) AS rn
+                    FROM "{table}" d
+                    CROSS JOIN LATERAL ({_current_pages_sql(cols, "d")}) cp
+                    WHERE d.id = ANY(CAST(:ids AS uuid[]))
+                ) m
+                WHERE rn <= {_MAX_PAGES_PER_RESULT}
+                ORDER BY doc_id, n
+            """),
+            {"ids": ids, "q": q, "opts": _HEADLINE_OPTS},
+        )
+        for row in rows:
+            entry = found.setdefault((table, row.doc_id), {"snippet": [], "pages": []})
+            entry["pages"].append(
+                {"page": row.n, "snippet": _segments(row.hl) if row.hl is not None else None}
+            )
+    for r in results:
+        if (r["table_name"], r["id"]) in found:
+            r["search"] = found[(r["table_name"], r["id"])]
 
 
 # ── Router ────────────────────────────────────────────────────────────────────
@@ -944,7 +1150,11 @@ async def list_documents(
     """
     Paginated document list.
     - document_type: restrict to a single table (sanitized → table name)
-    - q: full-text search (GIN index) across every TEXT field the table has
+    - q: full-text search (GIN indexes, accent-insensitive French, search-box
+      syntax: "phrase", -word, or) across every TEXT field the table has
+      AND the text of the document's current pages. Results are then
+      ranked (field matches first) and each carries `search`: highlighted
+      field snippet + the matching page numbers with snippets.
     - confidence / review_status: equality filter
     - date_from / date_to: filter on ingested_at (ISO 8601 dates)
     - reviewed_by: restrict to documents reviewed by this user id

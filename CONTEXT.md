@@ -131,6 +131,45 @@ Code in `apps/api/classification_router.py` (routes under `/api/db`), UI in `Ser
   cycles, delete-if-empty, inherited grants + leak/count checks, subtree and tag filters, tags, filing,
   suggestions), two-node `test_concurrent_series_moves_converge_without_a_cycle`, permission matrix.
 
+### Full-Text Search in Page Content (GED Phase 4)
+
+Code in `apps/api/page_text.py`, `ingest_router` (page-text worker), `documents_router` (search) and
+`apps/api/scripts/backfill_page_text.py`; UI in `GlobalSearch`, `SearchSnippet`, `DocumentsPage`.
+
+- **Search configuration `sdai_fr`**: French stemming + `unaccent` (extension created at startup), so
+  "decret" finds "décret". Used by every search query and by the per-type FTS indexes (switched from
+  `french`; `_backfill_fts_indexes` rebuilds them at startup).
+- **Page text**: `batch_document_pages.ocr_text` (Tesseract transcription of the preprocessed page;
+  NULL = not transcribed yet, '' = nothing readable), `manual_text` (values typed for a page entered by
+  hand; cleared when the page is redone) and `ocr_tsv` (generated over both, GIN index).
+- **Transcription**: every new page row (`_create_page_rows`) is queued for `_page_text_worker`, which
+  runs Tesseract in a thread one page at a time - its own lane, never delaying VLM extraction. Local node
+  only. `OCR_LANGS` (default `fra+eng`, packs must be installed), `OCR_TIMEOUT_SECONDS` (120),
+  `OCR_ENABLED` (true). A failure leaves the page NULL.
+- **Backfill**: `python scripts/backfill_page_text.py [--tenant slug] [--sleep 0.2] [--limit N] [--dry-run]`
+  on the local node (refuses on the cloud) - pages ingested before Phase 4, pages whose queue entry a
+  restart dropped, pages that failed. Idempotent, resumable (each page saved at once), throttled; exit 1
+  when some pages could not be read (listed).
+- **Search** (`GET /api/db/documents?q=`): `websearch_to_tsquery` (quoted phrase, `-word`, `or`). A document
+  matches on its extracted TEXT fields OR on the text of its **current** pages - the pages its
+  `page_image_paths` lists (after a re-extraction, the new version's), or its upload's pages for rows
+  without that list. A tenant-wide `page_hits` CTE (GIN) prefilters; the exact page check and the page
+  rank run per candidate row, inside each table's access-filtered SELECT (live filter included). Ranked:
+  2 × field rank + best page rank, then date. Snippets only for the returned page of results:
+  `search = {snippet, pages: [{page, snippet}]}`, segments `{text, hit}` (never HTML; 50 page numbers,
+  3 snippets per document). JIT is switched off for the search transaction (it cost ~1 s per query).
+- **Sync**: generated columns are never sent (`sdai_generated_cols` in the capture trigger and changelog
+  seed; ignored on apply) - each node computes `ocr_tsv` from the synced text.
+- **UI**: search box at the top of the nav on every page (`/documents?q=`), the Documents page keeps the
+  search in the URL, results show highlighted snippets and "p. N" badges that open the viewer at that
+  page (`/documents/t/id?page=N`); a match found only in page text opens at its first matching page.
+- **Benchmark** (`test_search_benchmark_pg.py`, `-m benchmark` + `TEST_DATABASE_URL`): 2 000 documents /
+  10 000 pages - rare word, common word, phrase, exclusion, all-documents field match: 60-110 ms median
+  per request on a laptop.
+- **Tests**: `test_search.py` (helpers, SQL shape), `test_search_pg.py` (config, real Tesseract read,
+  manual text, sync without the vector, backfill, accents, phrases, page numbers, ranking, permission
+  leak + counts, trashed, current version only).
+
 ### Local/Cloud Sync and Backups (GED Phase 8)
 
 Two servers hold the same deployment: the **local** node (on site, GPU, works offline, drives the
@@ -337,10 +376,14 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | HLC counter wrap | Two changes of one node in the same millisecond after 100 000 others (counter wrap) could be ordered wrongly - not reachable in practice |
 | Hourly-scale clock skew | Sync requests are refused beyond ±5 min skew - both nodes must run NTP |
 | Conflicts per node | Each node keeps its own conflict list; resolving on one closes the other's copy only when the resolution reaches it (next cycle) |
-| UI not clicked through | The Synchronisation page and badges, and the classification UI (series tree, tags, suggestions, filing rules), were type-checked and built, not tested in a browser |
+| UI not clicked through | The Synchronisation page and badges, the classification UI (series tree, tags, suggestions, filing rules) and the search UI (nav search box, snippets, page badges) were type-checked and built, not tested in a browser |
 | Existing documents not auto-filed | Automatic filing applies to documents filed from Phase 3 on; older documents without a series stay unfiled until assigned |
 | Link suggestions are lexical | Only exact reference strings are matched (no fuzzy match on "N° 123" vs "N°123") |
 | Series names on sync | Two series with the same name created under the same parent on both nodes while disconnected arrive as a `unique_violation` sync conflict |
+| Page text quality | Tesseract on the preprocessed image: handwriting, stamps and poor scans give little or noisy text; PDFs' own text layers are not used |
+| Page-text queue in memory | Pages queued for transcription when the API stops are not resumed automatically - run `scripts/backfill_page_text.py` (it also retries failed pages) |
+| Old versions not searchable | Only the pages the viewer shows now are searched; text of replaced versions is kept but not matched |
+| Search ranking | `ts_rank` only (no recency/popularity boost); a document whose fields AND pages match ranks by field rank × 2 + its best page |
 | Audit entries of API keys | API-key actions carry no `sdai_users` id, so the tenant-scoped audit view only shows them when they name one of the tenant's tables |
 
 ---
@@ -368,6 +411,8 @@ apps/api/
   history.py                        # field-history diff + insert (sdai_field_history), shared by every edit path
   sync/                             # local/cloud sync: capture, hlc, apply, store, conflicts, files, api, admin, worker, join
   classification_router.py          # /api/db series tree, tags, filing rules, link suggestions
+  page_text.py                      # page transcription (Tesseract), manual page text, sdai_fr search config
+  scripts/backfill_page_text.py     # transcribe pages without text (local node; resumable, throttled)
   create_admin.py                   # seed script to create/upsert a user within a tenant
   create_tenant.py                  # seed script to create/upsert a tenant (ministry)
   tests/
@@ -384,6 +429,9 @@ apps/api/
     test_access_pg.py               # GED Phase 1 access control against a real PostgreSQL (opt-in, -m pg)
     test_versions.py                # GED Phase 2 versioning/fixity/history helpers (mocked)
     test_versions_pg.py             # GED Phase 2 versions, history, audit chain on a real PostgreSQL (opt-in, -m pg)
+    test_search.py                  # GED Phase 4 search helpers (mocked)
+    test_search_pg.py               # GED Phase 4 page text, backfill, search on a real PostgreSQL (opt-in, -m pg)
+    test_search_benchmark_pg.py     # GED Phase 4 10 000-page search benchmark (opt-in, -m benchmark)
 
 apps/frontend/src/
   context/AuthContext.tsx           # global auth state (user, login, logout)
@@ -408,6 +456,8 @@ apps/frontend/src/
   components/DocumentLinkPicker.tsx # searchable picker for creating a new link
   components/VersionsSection.tsx    # "Versions" tab: list, open/download, restore, upload (+ re-extract)
   components/HistorySection.tsx     # "History" tab: field before/after timeline + document events
+  components/GlobalSearch.tsx       # nav search box (every page) → /documents?q=
+  components/SearchSnippet.tsx      # highlighted search snippet (segments, rendered as text)
   hooks/useVersions.ts              # versions/history queries, upload/restore mutations
   hooks/useDocuments.ts             # TanStack Query hooks for OCR
   hooks/useVlm.ts                   # TanStack Query hooks for VLM
@@ -423,7 +473,7 @@ packages/types/src/
   auth.ts                           # UserSchema (roles, flags, clearance), CONFIDENTIALITY_LEVELS
   ocr.ts                            # OcrDocument, DocumentEntry, EngineResult schemas
   vlm.ts                            # ExtractionResult discriminated union + parseVlmResult()
-  documents_db.ts                   # DbDocument (with extra_fields), DbType schemas
+  documents_db.ts                   # DbDocument (with extra_fields, search snippets/pages), DbType schemas
   ingest.ts                         # IngestResult schema
   review.ts                         # ReviewQueueItem (with extra_fields), ReviewPatch schemas
   schema.ts                         # SchemaInfo schemas

@@ -33,7 +33,7 @@ On top of the extraction pipeline, the platform is being extended into a complet
 | Multi-organisation | One installation, several ministries/departments, physically separate tables per tenant |
 | Access control | Admin, reviewer and read-only reader roles; user groups; access grants per document, per series or per document type with permission levels (read / download / edit); confidentiality levels (public → secret) checked against each user's clearance; documents private to their uploader after review; delegated permissions (access management, extraction editing, archivist, sharing) |
 | Classification | Hierarchical plan de classement (series tree with codes, grants inherited by sub-series), tags, automatic filing by document type ("À classer" otherwise), chain-of-custody links with automatic link suggestions |
-| Search | French full-text search across every extracted field, with filters (series incl. sub-series, tags, type, reviewer, dates) |
+| Search | French full-text search (accents ignored, "phrases", -exclusions) across every extracted field and the text of every page (Tesseract transcription, backfill script for older documents), with highlighted snippets and page numbers that open the viewer at the page; search box on every page; filters (series incl. sub-series, tags, type, reviewer, dates) |
 | Versioning & traceability | File versions with restore (history never rewritten), optional re-extraction of a new version, before/after history of every field change, view/download logging |
 | Integrity & audit | Original and every file version kept and SHA-256-verified (scheduled fixity check); tamper-evident audit log (hash-chained per server, append-only, verifiable on demand) |
 | Hybrid local + cloud | The local server stays primary and works offline; a cloud copy (standard VM at DigitalOcean or AWS, no GPU) is synchronized both ways automatically - field-level merge, conflicts flagged for a decision and never lost, files copied, documents uploaded remotely processed by the local GPU, restored or rebuilt servers catch up by themselves; admin Synchronisation page with alerts |
@@ -59,7 +59,6 @@ restore and rebuild procedures are in [RESTORE.md](./RESTORE.md).
 
 | Area | Planned |
 |---|---|
-| Search | Full-text search inside the OCR text of every page, with highlighted snippets |
 | Sharing & export | Traceable download of originals, expiring/password-protected share links, selective export with integrity manifest |
 | Lifecycle | Trash and restore, archiving, retention rules, legal hold, two-person approved destruction with a generated destruction certificate |
 | Collaboration | Notifications (in-app and email), check-out/check-in, comments, simple/advanced electronic signature (PAdES) |

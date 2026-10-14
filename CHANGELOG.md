@@ -9,6 +9,18 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 4 (full-text search in page content)
+- Every page is transcribed with Tesseract (`OCR_LANGS`, default French + English) in its own background lane, without slowing extraction; pages entered by hand are searchable by the values typed.
+- `scripts/backfill_page_text.py` transcribes pages ingested earlier (resumable, throttled, local node only).
+- Document search now looks in the extracted fields **and** the text of every page of the current version, ignores accents ("decret" finds "décret"), understands "phrases" and -exclusions, ranks field matches first, and returns highlighted snippets with the matching page numbers - still only over documents the user may read, trashed ones excluded.
+- Search box at the top of the navigation on every page; results show snippets and "p. N" badges that open the document viewer at that page. French and English.
+- Benchmark: 10 000 pages searched in ~60-110 ms per request.
+
+### Changed - GED Phase 4
+- Search and the per-type full-text indexes use a new `sdai_fr` configuration (French + `unaccent`, extension created at startup); indexes are rebuilt at the first start.
+- Search results are ordered by relevance instead of date when a query is given.
+- Generated columns are no longer sent by the local/cloud sync (each node computes them).
+
 ### Added - GED Phase 3 (classification)
 - Hierarchical plan de classement: series with parent, classification code and order; tree view with document counts, create / rename / move (cycles refused) / delete-if-empty; breadcrumb on the document page.
 - Series-level access grants now cover every sub-series.
