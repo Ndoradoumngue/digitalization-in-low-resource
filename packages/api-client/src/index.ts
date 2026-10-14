@@ -94,6 +94,23 @@ import {
   type ExportJobsResponse,
   type ExportRequest,
   type ShareListResponse,
+  DestructionRecordListSchema,
+  DestructionRecordSchema,
+  DocumentLifecycleSchema,
+  EligibleDocumentListSchema,
+  LegalHoldListSchema,
+  LegalHoldSchema,
+  RetentionRuleListSchema,
+  RetentionRuleSchema,
+  TrashPageSchema,
+  type DestructionRecord,
+  type DocumentLifecycle,
+  type EligibleDocument,
+  type LegalHold,
+  type LegalHoldBody,
+  type RetentionRule,
+  type RetentionRuleBody,
+  type TrashPage,
 } from "@sdai/types";
 
 // ── Core fetch helper ─────────────────────────────────────────────────────────
@@ -1189,3 +1206,102 @@ export async function fetchLinkSuggestions(tableName: string, id: string): Promi
   return fetchJson(`${docPath(tableName, id)}/link-suggestions`, LinkSuggestionListSchema);
 }
 
+
+// ── Lifecycle: archive, trash, retention, legal hold, destruction (GED Phase 6) ─
+
+export async function fetchDocumentLifecycle(tableName: string, id: string): Promise<DocumentLifecycle> {
+  return fetchJson(`${docPath(tableName, id)}/lifecycle`, DocumentLifecycleSchema);
+}
+
+export async function archiveDocument(tableName: string, id: string): Promise<void> {
+  await sendJson(`${docPath(tableName, id)}/archive`, "POST");
+}
+
+export async function trashDocument(tableName: string, id: string, reason?: string): Promise<void> {
+  await sendJson(`${docPath(tableName, id)}/trash`, "POST", { reason: reason || null });
+}
+
+export async function restoreDocument(tableName: string, id: string): Promise<void> {
+  await sendJson(`${docPath(tableName, id)}/restore`, "POST");
+}
+
+export async function extendRetention(tableName: string, id: string, until: string, reason?: string): Promise<void> {
+  await sendJson(`${docPath(tableName, id)}/retention/extend`, "POST", { until, reason: reason || null });
+}
+
+export async function fetchTrash(page = 1, pageSize = 50): Promise<TrashPage> {
+  return fetchJson(`/api/db/trash?page=${page}&page_size=${pageSize}`, TrashPageSchema);
+}
+
+export async function fetchRetentionRules(): Promise<RetentionRule[]> {
+  return fetchJson("/api/db/retention-rules", RetentionRuleListSchema);
+}
+
+export async function createRetentionRule(body: RetentionRuleBody): Promise<RetentionRule> {
+  return RetentionRuleSchema.parse(await (await sendJson("/api/db/retention-rules", "POST", body)).json());
+}
+
+export async function updateRetentionRule(
+  ruleId: string,
+  changes: Partial<Omit<RetentionRuleBody, "scope" | "series_id" | "table_name">>,
+): Promise<RetentionRule> {
+  return RetentionRuleSchema.parse(
+    await (await sendJson(`/api/db/retention-rules/${encodeURIComponent(ruleId)}`, "PATCH", changes)).json(),
+  );
+}
+
+export async function deleteRetentionRule(ruleId: string): Promise<void> {
+  await sendJson(`/api/db/retention-rules/${encodeURIComponent(ruleId)}`, "DELETE");
+}
+
+export async function runRetentionJob(): Promise<{ recomputed: number; eligible: number; purged: number }> {
+  return (await sendJson("/api/db/retention/run", "POST")).json();
+}
+
+export async function fetchLegalHolds(includeReleased = false): Promise<LegalHold[]> {
+  return fetchJson(`/api/db/legal-holds?include_released=${includeReleased}`, LegalHoldListSchema);
+}
+
+export async function createLegalHold(body: LegalHoldBody): Promise<LegalHold> {
+  return LegalHoldSchema.parse(await (await sendJson("/api/db/legal-holds", "POST", body)).json());
+}
+
+export async function releaseLegalHold(holdId: string, reason: string): Promise<void> {
+  await sendJson(`/api/db/legal-holds/${encodeURIComponent(holdId)}/release`, "POST", { reason });
+}
+
+export async function fetchEligibleDocuments(): Promise<EligibleDocument[]> {
+  return fetchJson("/api/db/destruction/eligible", EligibleDocumentListSchema);
+}
+
+export async function fetchDestructions(): Promise<DestructionRecord[]> {
+  return fetchJson("/api/db/destructions", DestructionRecordListSchema);
+}
+
+export async function fetchDestruction(recordId: string): Promise<DestructionRecord> {
+  return fetchJson(`/api/db/destructions/${encodeURIComponent(recordId)}`, DestructionRecordSchema);
+}
+
+export async function proposeDestruction(
+  documents: { table_name: string; id: string }[],
+  comment?: string,
+): Promise<{ id: string; document_count: number }> {
+  return (await sendJson("/api/db/destructions", "POST", { documents, comment: comment || null })).json();
+}
+
+export async function decideDestruction(
+  recordId: string,
+  decision: "approve" | "reject" | "cancel",
+  note?: string,
+): Promise<void> {
+  await sendJson(
+    `/api/db/destructions/${encodeURIComponent(recordId)}/${decision}`,
+    "POST",
+    decision === "cancel" ? undefined : { note: note || null },
+  );
+}
+
+/** The procès-verbal (PDF) of an executed destruction. */
+export function destructionPvUrl(recordId: string): string {
+  return `/api/db/destructions/${encodeURIComponent(recordId)}/pv`;
+}

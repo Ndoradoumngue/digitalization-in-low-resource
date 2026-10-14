@@ -18,6 +18,10 @@ import AuditPage from "./pages/AuditPage";
 import BenchmarksPage from "./pages/BenchmarksPage";
 import AccessAdminPage from "./pages/AccessAdminPage";
 import SyncAdminPage from "./pages/SyncAdminPage";
+import LifecycleRoute from "./components/auth/LifecycleRoute";
+import TrashPage from "./pages/TrashPage";
+import RetentionRulesPage from "./pages/RetentionRulesPage";
+import DestructionsPage from "./pages/DestructionsPage";
 
 export default function App() {
   return (
@@ -104,6 +108,33 @@ export default function App() {
             <AdminRoute>
               <SyncAdminPage />
             </AdminRoute>
+          }
+        />
+
+        <Route
+          path="/lifecycle/trash"
+          element={
+            <LifecycleRoute>
+              <TrashPage />
+            </LifecycleRoute>
+          }
+        />
+
+        <Route
+          path="/lifecycle/retention"
+          element={
+            <LifecycleRoute>
+              <RetentionRulesPage />
+            </LifecycleRoute>
+          }
+        />
+
+        <Route
+          path="/lifecycle/destructions"
+          element={
+            <LifecycleRoute>
+              <DestructionsPage />
+            </LifecycleRoute>
           }
         />
 

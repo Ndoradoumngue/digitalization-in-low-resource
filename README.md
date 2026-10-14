@@ -35,6 +35,7 @@ On top of the extraction pipeline, the platform is being extended into a complet
 | Classification | Hierarchical plan de classement (series tree with codes, grants inherited by sub-series), tags, automatic filing by document type ("À classer" otherwise), chain-of-custody links with automatic link suggestions |
 | Search | French full-text search (accents ignored, "phrases", -exclusions) across every extracted field and the text of every page (Tesseract transcription, backfill script for older documents), with highlighted snippets and page numbers that open the viewer at the page; search box on every page; filters (series incl. sub-series, tags, type, reviewer, dates) |
 | Sharing & export | Traceable download of originals (current or any version, optional watermark on confidential PDFs); external share links with expiry, password, download limit and revocation, re-checked against the sharer's access on every use; selective export (ticked documents, search results or a series) as a ZIP with metadata and a SHA-256 integrity manifest |
+| Lifecycle & retention | Archiving (archived documents read-only), trash with restore (30 days by default, then destroyed with a record), retention rules per series or document type (duration, start date, outcome: destroy, re-examine, keep forever) applied automatically every day, legal holds (document, series tree or search result) that block any deletion, two-person approved destruction - files removed on both servers, a tombstone kept, PDF procès-verbal d'élimination |
 | Versioning & traceability | File versions with restore (history never rewritten), optional re-extraction of a new version, before/after history of every field change, view/download logging |
 | Integrity & audit | Original and every file version kept and SHA-256-verified (scheduled fixity check); tamper-evident audit log (hash-chained per server, append-only, verifiable on demand) |
 | Hybrid local + cloud | The local server stays primary and works offline; a cloud copy (standard VM at DigitalOcean or AWS, no GPU) is synchronized both ways automatically - field-level merge, conflicts flagged for a decision and never lost, files copied, documents uploaded remotely processed by the local GPU, restored or rebuilt servers catch up by themselves; admin Synchronisation page with alerts |
@@ -52,15 +53,19 @@ a server behind the office NAT). A fresh cloud node is prepared once with `pytho
 first start. All settings are described in `.env.example` ("Local/cloud sync", "Off-site backups");
 restore and rebuild procedures are in [RESTORE.md](./RESTORE.md).
 
-### Groundwork in place
+### Lifecycle settings
 
-- Lifecycle, confidentiality, version, retention, legal-hold and check-out fields on every document; trashed and destroyed documents are already excluded from every list, search, queue and detail view.
+Archivists (admins, or reviewers given the "archivist" permission) manage the trash, retention rules,
+legal holds and destruction proposals from the "Cycle de vie" menu; a destruction always needs a second
+person - another admin - to approve it. `TRASH_RETENTION_DAYS` (default 30) and
+`RETENTION_JOB_INTERVAL_HOURS` (default 24) are in `.env.example`. The destruction report is in French,
+with an English part for organisations created with `create_tenant.py --locale en`. Destroyed files stay
+in the off-site backups until their retention expires - see [RESTORE.md](./RESTORE.md).
 
 ### Roadmap
 
 | Area | Planned |
 |---|---|
-| Lifecycle | Trash and restore, archiving, retention rules, legal hold, two-person approved destruction with a generated destruction certificate |
 | Collaboration | Notifications (in-app and email), check-out/check-in, comments, simple/advanced electronic signature (PAdES) |
 
 ---

@@ -32,6 +32,8 @@ import re
 import uuid
 from pathlib import Path
 
+import lifecycle
+import retention
 from audit import client_ip, log_action
 from auth import (
     CurrentUser,
@@ -396,6 +398,10 @@ def _access_where_clause(
             )
         )
     )"""
+    if permission == "edit" and not current_user.can_manage_document_lifecycle:
+        # Archived / destruction-eligible documents are read-only except for
+        # lifecycle managers (GED Phase 6) - every edit-level action at once.
+        access = f"{lifecycle.editable_sql(table)} AND {access}"
     return f"{live} AND {access}" if live else access
 
 
@@ -434,7 +440,25 @@ async def _require_document_permission(
     they can see it but not at that level."""
     if await _document_visible(conn, table, doc_id, current_user, permission):
         return
-    if permission != "read" and await _document_visible(conn, table, doc_id, current_user):
+    visible = None
+    if permission != "read":
+        # Readable at all? (fetches the status too: an archived document
+        # gets the more useful "read-only" answer - GED Phase 6)
+        read_clause = _access_where_clause(table, current_user)
+        where = "id = CAST(:id AS uuid)" + (
+            f" AND {read_clause}" if read_clause else ""
+        )
+        visible = (
+            await conn.execute(
+                text(f'SELECT lifecycle_status FROM "{table}" WHERE {where}'),
+                {"id": doc_id, **_access_params(current_user)},
+            )
+        ).one_or_none()
+    if visible is not None:
+        if permission == "edit" and visible[0] in lifecycle.READ_ONLY_STATUSES:
+            raise HTTPException(
+                status_code=403, detail=t("lifecycle.read_only", current_user.locale)
+            )
         raise HTTPException(
             status_code=403,
             detail=t(f"documents.permission_{permission}_required", current_user.locale),
@@ -796,6 +820,14 @@ def _per_table_select(
             else "NULL::text AS reviewed_by"
         ),
         "series_id::text AS series_id" if "series_id" in cols else "NULL::text AS series_id",
+        (
+            "COALESCE(lifecycle_status, 'active')::text AS lifecycle_status"
+            if "lifecycle_status" in cols
+            else "'active'::text AS lifecycle_status"
+        ),
+        "COALESCE(legal_hold, false) AS legal_hold"
+        if "legal_hold" in cols
+        else "false AS legal_hold",
         f"{extra_expr} AS extra_fields",
     ]
 
@@ -1420,6 +1452,11 @@ async def update_document_fields(
         changes = await _record_edit_history(
             conn, current_user, safe, doc_id, old, row, editable.keys(), "edit"
         )
+        if row is not None:
+            # A retention rule may run from an extracted date.
+            await retention.recompute_quietly(
+                conn, current_user.tenant_id, safe, doc_id
+            )
 
     if row is None:
         raise HTTPException(
@@ -1446,24 +1483,6 @@ class CreateLinkBody(BaseModel):
     to_id: str
     relation: str = Field(..., min_length=1, max_length=100)
     note: str | None = None
-
-
-async def _delete_links_for_document(conn, tenant_id: str, table_name: str, doc_id: str) -> int:
-    """Delete every link (either direction) referencing one document.
-    Called from both hard-delete paths (review_router.delete_document and
-    ingest_router._delete_document_by_batch_document_id) in the same
-    transaction as the document delete, so a link never outlives the
-    document it points at."""
-    result = await conn.execute(
-        text("""
-            DELETE FROM sdai_document_links
-            WHERE tenant_id = CAST(:tid AS uuid)
-              AND ((from_table = :t AND from_id = CAST(:id AS uuid))
-                OR (to_table   = :t AND to_id   = CAST(:id AS uuid)))
-        """),
-        {"tid": tenant_id, "t": table_name, "id": doc_id},
-    )
-    return result.rowcount
 
 
 async def _enrich_links(
@@ -1515,17 +1534,22 @@ async def _enrich_links(
             continue  # table gone (shouldn't happen given cascade-delete; degrade gracefully)
         display_col = _display_col(tables_cols[other_table])
         display_expr = f"{display_col}::text" if display_col else "NULL::text"
-        access_clause = _access_where_clause(other_table, current_user)
-        where = "id = ANY(:ids)"
-        if access_clause:
-            where += f" AND {access_clause}"
+        # Visibility ignoring the trash/destroyed filter, plus the row's
+        # lifecycle: a link to a trashed document is hidden (it comes back
+        # with a restore), a link to a destroyed one shows the tombstone.
+        access_clause = (
+            _access_where_clause(other_table, current_user, include_deleted=True)
+            or "TRUE"
+        )
         other_rows = (
             (
                 await conn.execute(
                     text(
-                        f"SELECT id::text AS id, document_type, source_image_path,"
-                        f" {display_expr} AS display"
-                        f' FROM "{other_table}" WHERE {where}'
+                        f"SELECT id::text AS id, document_type, source_image_path, record_id,"
+                        f" {display_expr} AS display, ({access_clause}) AS visible,"
+                        f" lifecycle_status = 'destroyed' AS destroyed,"
+                        f" deleted_at IS NOT NULL AS trashed"
+                        f' FROM "{other_table}" WHERE id = ANY(:ids)'
                     ),
                     {"ids": list(ids), **_access_params(current_user)},
                 )
@@ -1542,6 +1566,11 @@ async def _enrich_links(
         other_table = r["to_table"] if outgoing else r["from_table"]
         other_id = str(r["to_id"] if outgoing else r["from_id"])
         other = other_docs.get((other_table, other_id))
+        if other is not None and other["trashed"] and not other["destroyed"]:
+            continue
+        destroyed = bool(other and other["destroyed"])
+        if other is not None and not other["visible"]:
+            other = None
         # A linked document the caller can't see stays an anonymous
         # placeholder: no title, no type, no id, no note (a note is free
         # text about it) - only that some link exists and its relation.
@@ -1557,8 +1586,12 @@ async def _enrich_links(
                 "other_id": other_id if other else "",
                 "other_document_type": other["document_type"] if other else None,
                 "other_display": other["display"] if other else None,
-                "other_source_image_path": other["source_image_path"] if other else None,
+                "other_source_image_path": (
+                    other["source_image_path"] if other and not destroyed else None
+                ),
                 "other_missing": other is None,
+                "other_destroyed": destroyed and other is not None,
+                "other_record_id": other["record_id"] if other else None,
             }
         )
     return links
@@ -2317,6 +2350,11 @@ async def assign_document_series(
             ),
             {"sid": body.series_id, "id": doc_id},
         )
+        # The series decides the retention rule and series-wide legal holds.
+        await retention.recompute(
+            conn, current_user.tenant_id, tables=[safe], doc_ids=[doc_id]
+        )
+        await lifecycle.refresh_hold_flags(conn, [safe], [doc_id])
 
     await log_action(
         action="series_assigned",

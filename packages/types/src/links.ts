@@ -13,6 +13,9 @@ export const DocumentLinkSchema = z.object({
   other_display:            z.string().nullable(),
   other_source_image_path:  z.string().nullable(),
   other_missing:            z.boolean(),
+  // GED Phase 6 - the linked document was destroyed: only its tombstone remains.
+  other_destroyed:          z.boolean().optional(),
+  other_record_id:          z.string().nullable().optional(),
 });
 export type DocumentLink = z.infer<typeof DocumentLinkSchema>;
 

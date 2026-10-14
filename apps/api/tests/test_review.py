@@ -295,7 +295,7 @@ def test_flag_review_success(auth_client, mock_db, monkeypatch):
 # ── delete_document ───────────────────────────────────────────────────────────
 
 
-def test_delete_document_requires_admin(auth_client, mock_db, monkeypatch):
+def test_delete_document_requires_lifecycle_manager(auth_client, mock_db, monkeypatch):
     monkeypatch.setattr(
         review_router, "_get_tables_columns", AsyncMock(return_value=_fake_tables())
     )
@@ -303,29 +303,30 @@ def test_delete_document_requires_admin(auth_client, mock_db, monkeypatch):
     assert resp.status_code == 403
 
 
-def test_delete_document_not_found(admin_client, mock_db, monkeypatch):
+def test_delete_document_unknown_table(admin_client, mock_db, monkeypatch):
+    import lifecycle_router
+
     monkeypatch.setattr(
         review_router, "_get_tables_columns", AsyncMock(return_value=_fake_tables())
     )
-    monkeypatch.setattr(review_router, "_delete_links_for_document", AsyncMock())
-    mock_db.execute.return_value = make_result(rowcount=0)
-
-    resp = admin_client.delete("/api/review/my_table/missing-id")
+    monkeypatch.setattr(lifecycle_router, "trash_document", AsyncMock())
+    resp = admin_client.delete("/api/review/other_table/doc-1")
     assert resp.status_code == 404
-    review_router._delete_links_for_document.assert_not_awaited()
+    lifecycle_router.trash_document.assert_not_awaited()
 
 
-def test_delete_document_success_cascades_links(admin_client, mock_db, monkeypatch):
+def test_delete_document_moves_to_trash(admin_client, mock_db, monkeypatch):
+    """GED Phase 6: the old hard delete is a trash - nothing is deleted
+    and links stay (hidden with the document)."""
+    import lifecycle_router
+
     monkeypatch.setattr(
         review_router, "_get_tables_columns", AsyncMock(return_value=_fake_tables())
     )
-    monkeypatch.setattr(review_router, "_delete_links_for_document", AsyncMock())
-    mock_db.execute.side_effect = [
-        make_result(rowcount=1),  # DELETE FROM "my_table" ... RETURNING id
-        make_result(),  # log_action
-    ]
-
+    monkeypatch.setattr(lifecycle_router, "trash_document", AsyncMock())
     resp = admin_client.delete("/api/review/my_table/doc-1")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
-    review_router._delete_links_for_document.assert_awaited_once()
+    args = lifecycle_router.trash_document.await_args
+    assert args.args[1:3] == ("my_table", "doc-1")
+    assert args.kwargs["via"] == "review"

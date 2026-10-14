@@ -17,6 +17,8 @@ import VersionsSection from "../components/VersionsSection";
 import HistorySection from "../components/HistorySection";
 import DownloadOriginalMenu from "../components/DownloadOriginalMenu";
 import ShareButton from "../components/ShareDialog";
+import LifecycleBadge from "../components/LifecycleBadge";
+import LifecycleSection from "../components/LifecycleSection";
 import { useAuth } from "../context/AuthContext";
 import { canShare, canShareLevel } from "../utils/permissions";
 
@@ -48,6 +50,9 @@ const SKIP_FIELDS = new Set([
   "lifecycle_status", "confidentiality", "original_path", "original_hash",
   "current_version", "deleted_at", "deleted_by", "retention_until", "legal_hold",
   "locked_by", "locked_until", "updated_at", "origin_node", "hlc",
+  // GED Phase 6 lifecycle bookkeeping - shown in the lifecycle section
+  "deleted_reason", "archived_at", "archived_by", "retention_rule_id",
+  "retention_override", "destroyed_at", "destruction_id",
 ]);
 
 // Right-pane tabs: the record itself, its file versions, its change history.
@@ -139,6 +144,11 @@ export default function DocumentDetailPage() {
           {asConfidentiality(data?.confidentiality) && (
             <ConfidentialityBadge level={asConfidentiality(data?.confidentiality)!} />
           )}
+
+          <LifecycleBadge
+            status={typeof data?.lifecycle_status === "string" ? data.lifecycle_status : null}
+            legalHold={data?.legal_hold === true}
+          />
 
           {typeof data?.record_id === "string" && data.record_id && (
             <span className="inline-flex items-center px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs font-mono">
@@ -299,6 +309,7 @@ export default function DocumentDetailPage() {
               {tab === "record" && tableName && id && (
                 <TagsSection tableName={tableName} id={id} canEdit={perms.canAct} />
               )}
+              {tab === "record" && tableName && id && <LifecycleSection tableName={tableName} id={id} />}
               {tab === "record" && tableName && id && <AccessSection
                   tableName={tableName}
                   id={id}

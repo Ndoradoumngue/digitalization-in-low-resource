@@ -28,6 +28,7 @@ import zlib
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from rate_limit import limiter
 
+from sqlalchemy import text
 from sync import config, files
 from sync.auth import verify_node
 from sync.store import after_apply, serve_hello, serve_pull, serve_push
@@ -163,6 +164,15 @@ async def download_chunk(
     )
 
 
+async def _destroyed(path: str) -> bool:
+    async with _engine().connect() as conn:
+        found = await conn.execute(
+            text("SELECT EXISTS (SELECT 1 FROM sdai_destroyed_files WHERE path = :p)"),
+            {"p": path},
+        )
+        return bool(found.scalar())
+
+
 @router.put("/files")
 @limiter.limit(_RATE)
 async def upload_chunk(
@@ -174,6 +184,9 @@ async def upload_chunk(
     peer: str = Depends(verify_node),
 ):
     chunk = await request.body()
+    if await _destroyed(path):
+        # Destroyed here (GED Phase 6) - never recreated by a transfer.
+        raise HTTPException(status_code=403, detail="File destroyed")
     try:
         return await asyncio.to_thread(
             files.write_chunk, path, offset, size, sha256, chunk

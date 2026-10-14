@@ -222,8 +222,9 @@ async def transfer_files(engine, client: PeerClient) -> dict:
         rows = (
             await conn.execute(
                 text("""
-                    SELECT path, direction, attempts FROM sdai_sync_file_queue
+                    SELECT path, direction, attempts FROM sdai_sync_file_queue q
                     WHERE status IN ('pending', 'waiting') AND next_attempt_at <= now()
+                      AND NOT EXISTS (SELECT 1 FROM sdai_destroyed_files f WHERE f.path = q.path)
                     ORDER BY created_at, path LIMIT :n
                 """),
                 {"n": MAX_FILES_PER_CYCLE},

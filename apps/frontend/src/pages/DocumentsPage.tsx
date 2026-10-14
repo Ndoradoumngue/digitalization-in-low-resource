@@ -12,6 +12,10 @@ import { summarizeExtra } from "../utils/format";
 import SearchSnippet from "../components/SearchSnippet";
 import type { DbDocument, ExportDocumentRef, ExportRequest } from "@sdai/types";
 import { useCreateExport } from "../hooks/useSharing";
+import { useCreateLegalHold } from "../hooks/useLifecycle";
+import LifecycleBadge from "../components/LifecycleBadge";
+import { useAuth } from "../context/AuthContext";
+import { canManageLifecycle } from "../utils/permissions";
 
 // The real document-browsing experience: categories, reviewer, keyword
 // search - no confidence/review_status/table-name plumbing shown (that's
@@ -67,6 +71,7 @@ export default function DocumentsPage() {
   };
 
   const { data, isLoading, error } = useDbDocuments(params);
+  const { user } = useAuth();
 
   // Multi-select for a selective export - kept across pages and filters
   // until cleared, keyed "<table>/<id>".
@@ -82,22 +87,32 @@ export default function DocumentsPage() {
       return next;
     });
   }, []);
+  // The current search, as export and legal-hold selections take it.
+  const searchSelection = {
+    ...(q && { q }),
+    ...(category && { document_type: category }),
+    ...(reviewedBy && { reviewed_by: reviewedBy }),
+    ...(seriesId && { series: seriesId, include_subseries: includeSubseries }),
+    ...(tagId && { tag: tagId }),
+    ...(dateFrom && { date_from: dateFrom }),
+    ...(dateTo && { date_to: dateTo }),
+  };
   function exportSelection(kind: "selected" | "results") {
     const body: ExportRequest = kind === "selected"
       ? { documents: [...selected.values()], versions: exportVersions }
-      : {
-          versions: exportVersions,
-          search: {
-            ...(q && { q }),
-            ...(category && { document_type: category }),
-            ...(reviewedBy && { reviewed_by: reviewedBy }),
-            ...(seriesId && { series: seriesId, include_subseries: includeSubseries }),
-            ...(tagId && { tag: tagId }),
-            ...(dateFrom && { date_from: dateFrom }),
-            ...(dateTo && { date_to: dateTo }),
-          },
-        };
+      : { versions: exportVersions, search: searchSelection };
     createExport.mutate(body, { onSuccess: () => { if (kind === "selected") setSelected(new Map()); } });
+  }
+
+  // Legal hold on every document the current search finds (frozen list).
+  const createHold = useCreateLegalHold();
+  const [holdReason, setHoldReason] = useState<string | null>(null);
+  function holdResults() {
+    if (!holdReason || holdReason.trim().length < 3) return;
+    createHold.mutate(
+      { search: searchSelection, reason: holdReason.trim() },
+      { onSuccess: () => setHoldReason(null) },
+    );
   }
 
   const reviewerName = useMemo(() => {
@@ -277,6 +292,41 @@ export default function DocumentsPage() {
             >
               {t("exports.exportResults", { count: total })}
             </button>
+            {canManageLifecycle(user) && total > 0 && holdReason === null && (
+              <button
+                onClick={() => setHoldReason("")}
+                className="h-7 px-2.5 rounded-md font-medium border border-purple-300 text-purple-800 hover:bg-purple-50"
+              >
+                {t("legalHolds.holdResults", { count: total })}
+              </button>
+            )}
+            {holdReason !== null && (
+              <span className="w-full flex items-center gap-2">
+                <input
+                  value={holdReason}
+                  onChange={(e) => setHoldReason(e.target.value)}
+                  placeholder={t("lifecycle.reasonRequired")}
+                  className="h-7 flex-1 rounded-md border border-gray-300 px-2 text-xs"
+                  autoFocus
+                />
+                <button onClick={() => setHoldReason(null)} className="text-gray-500">{t("lifecycle.cancel")}</button>
+                <button
+                  onClick={holdResults}
+                  disabled={holdReason.trim().length < 3 || createHold.isPending}
+                  className="h-7 px-2.5 rounded-md font-semibold bg-purple-700 text-white disabled:opacity-40"
+                >
+                  {t("legalHolds.holdResults", { count: total })}
+                </button>
+              </span>
+            )}
+            {createHold.isSuccess && holdReason === null && (
+              <span role="status" className="w-full text-purple-800">
+                {t("legalHolds.created", { count: createHold.data?.document_count ?? 0 })}
+              </span>
+            )}
+            {createHold.isError && (
+              <span role="alert" className="w-full text-red-600">{(createHold.error as Error).message}</span>
+            )}
             {createExport.isSuccess && (
               <span role="status" className="w-full text-emerald-700">
                 {t("exports.started")}{" "}
@@ -326,6 +376,7 @@ export default function DocumentsPage() {
                     {row.record_id && (
                       <span className="text-[11px] font-mono text-gray-400 truncate">{row.record_id}</span>
                     )}
+                    <LifecycleBadge status={row.lifecycle_status} legalHold={row.legal_hold} />
                     {row.series_id && seriesName.get(row.series_id) && (
                       <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-100 text-teal-800 truncate">
                         {seriesName.get(row.series_id)}

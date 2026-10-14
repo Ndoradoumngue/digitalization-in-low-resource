@@ -446,6 +446,111 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Preprocessed image not found",
         "fr": "Image prétraitée introuvable",
     },
+    # ── lifecycle.py / lifecycle_router.py (GED Phase 6) ─────────────────
+    "lifecycle.illegal_transition": {
+        "en": "A document cannot go from '{frm}' to '{to}' this way",
+        "fr": "Un document ne peut pas passer de « {frm} » à « {to} » de cette façon",
+    },
+    "lifecycle.destroyed": {
+        "en": "The document has been destroyed",
+        "fr": "Le document a été éliminé",
+    },
+    "lifecycle.in_trash": {
+        "en": "The document is in the trash - restore it first",
+        "fr": "Le document est dans la corbeille - restaurez-le d'abord",
+    },
+    "lifecycle.already_in_trash": {
+        "en": "The document is already in the trash",
+        "fr": "Le document est déjà dans la corbeille",
+    },
+    "lifecycle.not_in_trash": {
+        "en": "The document is not in the trash",
+        "fr": "Le document n'est pas dans la corbeille",
+    },
+    "lifecycle.trash_expired": {
+        "en": "The document has been in the trash too long to be restored",
+        "fr": "Le document est dans la corbeille depuis trop longtemps pour être restauré",
+    },
+    "lifecycle.restore_duplicate": {
+        "en": "The same file was uploaded again since ({record}) - it cannot be restored",
+        "fr": "Le même fichier a été déposé à nouveau depuis ({record}) - impossible de le restaurer",
+    },
+    "lifecycle.legal_hold": {
+        "en": "The document is under legal hold",
+        "fr": "Le document est sous gel juridique",
+    },
+    "lifecycle.extend_past": {
+        "en": "The new retention date must be in the future",
+        "fr": "La nouvelle date de conservation doit être dans le futur",
+    },
+    "lifecycle.read_only": {
+        "en": "The document is archived - only a lifecycle manager can change it",
+        "fr": "Le document est archivé - seul un gestionnaire du cycle de vie peut le modifier",
+    },
+    "lifecycle.manager_required": {
+        "en": "Only a lifecycle manager (archivist) can do this",
+        "fr": "Seul un gestionnaire du cycle de vie (archiviste) peut faire cela",
+    },
+    "retention.date_field_required": {
+        "en": "A rule running from the document date needs the name of the date field",
+        "fr": "Une règle qui court à partir de la date du document doit nommer le champ de date",
+    },
+    "retention.rule_exists": {
+        "en": "This series or document type already has a retention rule",
+        "fr": "Cette série ou ce type de document a déjà une règle de conservation",
+    },
+    "retention.rule_not_found": {
+        "en": "Retention rule not found",
+        "fr": "Règle de conservation introuvable",
+    },
+    "legal_hold.nothing_found": {
+        "en": "The search finds no document",
+        "fr": "La recherche ne trouve aucun document",
+    },
+    "legal_hold.too_many": {
+        "en": "The search finds more than {max} documents - narrow it down",
+        "fr": "La recherche trouve plus de {max} documents - affinez-la",
+    },
+    "legal_hold.not_found": {
+        "en": "Legal hold not found or already released",
+        "fr": "Gel juridique introuvable ou déjà levé",
+    },
+    "destruction.empty": {
+        "en": "Select at least one document",
+        "fr": "Sélectionnez au moins un document",
+    },
+    "destruction.not_eligible": {
+        "en": "{record} is not eligible for destruction",
+        "fr": "{record} n'est pas éliminable",
+    },
+    "destruction.held": {
+        "en": "{record} is under legal hold",
+        "fr": "{record} est sous gel juridique",
+    },
+    "destruction.already_proposed": {
+        "en": "{record} is already in a pending destruction proposal",
+        "fr": "{record} figure déjà dans une proposition d'élimination en attente",
+    },
+    "destruction.not_found": {
+        "en": "Destruction record not found",
+        "fr": "Bordereau d'élimination introuvable",
+    },
+    "destruction.not_pending": {
+        "en": "This proposal has already been decided",
+        "fr": "Cette proposition a déjà été traitée",
+    },
+    "destruction.same_person": {
+        "en": "The person who proposed a destruction cannot approve it",
+        "fr": "La personne qui a proposé une élimination ne peut pas l'approuver",
+    },
+    "destruction.not_proposer": {
+        "en": "Only the proposer (or an admin) can withdraw this proposal",
+        "fr": "Seul l'auteur de la proposition (ou un administrateur) peut la retirer",
+    },
+    "destruction.no_pv": {
+        "en": "This destruction has not been executed - there is no report",
+        "fr": "Cette élimination n'a pas été exécutée - il n'y a pas de procès-verbal",
+    },
 }
 
 

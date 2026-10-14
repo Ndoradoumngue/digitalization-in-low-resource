@@ -1665,3 +1665,88 @@ def test_concurrent_series_moves_converge_without_a_cycle(nodes):
     assert local_tree[breaker] == (None, f"/{breaker}/")
     assert local_tree[other] == (breaker, f"/{breaker}/{other}/")
     assert local_tree[child][1] == local_tree[q][1] + f"{child}/"
+
+
+# ── GED Phase 6: destruction reaches the peer ────────────────────────────────
+
+
+def test_destruction_deletes_files_on_both_nodes(nodes, data_root, monkeypatch):
+    """A destruction on the local node: the tombstone and the list of
+    destroyed files sync to the cloud, which deletes its copies of the
+    files (the sync 'destroy' event) and never fetches them again."""
+    import destruction
+
+    local, cloud = nodes
+
+    async def no_pv(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(destruction, "write_pv", no_pv)
+    doc = _id()
+    _put(local, f"/data/uploads/{doc}/acte.pdf", b"%PDF-1.4 to destroy")
+    _put(local, f"/data/images/{doc}_p1.png", b"\x89PNG page to destroy")
+    run(
+        local.q(
+            f'INSERT INTO "{T}" (id, reference_number, amount, record_id, review_status,'
+            " original_path, page_image_paths, lifecycle_status)"
+            " VALUES (CAST(:d AS uuid), 'REF-DESTROY', '5', 'DEFAULT-1999-000777', 'approved',"
+            " :o, CAST(:p AS jsonb), 'destruction_eligible')",
+            {
+                "d": doc,
+                "o": f"/data/uploads/{doc}/acte.pdf",
+                "p": json.dumps([f"/data/images/{doc}_p1.png"]),
+            },
+        )
+    )
+    summary = run(_sync(local, cloud))
+    assert summary["files_failed"] == 0, summary
+    assert _on_disk(cloud, f"/data/uploads/{doc}/acte.pdf") == b"%PDF-1.4 to destroy"
+
+    async def destroy():
+        with local.active():
+            async with local.engine.begin() as conn:
+                from sqlalchemy import text
+
+                rid = (
+                    await conn.execute(
+                        text(
+                            "INSERT INTO sdai_destruction_records (tenant_id, kind, status,"
+                            " documents, document_count) VALUES (CAST(:t AS uuid), 'retention',"
+                            " 'approved', '[]', 1) RETURNING id::text"
+                        ),
+                        {"t": DATA["tenant"]},
+                    )
+                ).scalar()
+                snap = await destruction.snapshot(conn, DATA["tenant"], T, doc)
+                files = await destruction.execute(
+                    conn, DATA["tenant"], "default", rid, [snap], "destruction"
+                )
+            await destruction.finish(local.engine, DATA["tenant"], rid)
+            return files
+
+    files = run(destroy())
+    assert len(files) == 2
+    assert _on_disk(local, f"/data/uploads/{doc}/acte.pdf") is None
+    assert _on_disk(cloud, f"/data/images/{doc}_p1.png") is not None  # not synced yet
+    summary = run(_sync(local, cloud))
+    assert summary["push_errors"] == 0 and summary["files_failed"] == 0, summary
+    tomb = run(_doc(cloud, doc))
+    assert tomb["lifecycle_status"] == "destroyed"
+    assert (
+        tomb["record_id"] == "DEFAULT-1999-000777" and tomb["reference_number"] is None
+    )
+    for path in (f"/data/uploads/{doc}/acte.pdf", f"/data/images/{doc}_p1.png"):
+        assert _on_disk(cloud, path) is None, path
+        assert run(
+            cloud.one(
+                "SELECT 1 FROM sdai_destroyed_files_done d JOIN sdai_destroyed_files f"
+                " ON f.id = d.id WHERE f.path = :p",
+                {"p": path},
+            )
+        )
+    # Nothing tries to bring them back.
+    for node in (local, cloud):
+        assert not [path for path, _ in run(_queue(node)) if doc in path], node.name
+    again = run(_sync(local, cloud))
+    assert again["files_failed"] == 0
+    assert _on_disk(cloud, f"/data/uploads/{doc}/acte.pdf") is None

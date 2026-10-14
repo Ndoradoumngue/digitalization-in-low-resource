@@ -121,6 +121,25 @@ docker compose run --rm --entrypoint sh backup -c \
   'restic -r "${BACKUP_SFTP_TARGET:-/nas/sdai-restic}" snapshots --host "$NODE_ID"'
 ```
 
+### Destroyed documents and backups
+
+An approved destruction (or the automatic trash purge) deletes the document's files on both
+servers immediately, but **the restic snapshots taken before it still contain them** until those
+snapshots expire under the retention policy (30 daily, 12 monthly - so up to about a year). The
+procès-verbal d'élimination says so. Nothing is restored from a snapshot automatically:
+
+- Restoring a whole node from a snapshot older than a destruction brings the destroyed files and rows
+  back on that node. In a hybrid deployment the sync then receives the tombstones and the list of
+  destroyed files (`sdai_destroyed_files`) from the peer and deletes the files again; within
+  `DESTROYED_FILES_SWEEP_SECONDS` every node also removes version, page and history rows a restored
+  node may have sent back for a destroyed document. On a standalone
+  server, re-run the destruction: check the **Éliminations** page and the audit log
+  (`document_destroyed`) for what was destroyed after the snapshot date.
+- If a destruction must also reach the backups sooner (legal obligation), the only way is to forget the
+  older snapshots with `restic forget` and `restic prune` - a deliberate, recorded operation by the
+  backup administrator, outside the application.
+- The restore drill accounts for version rows removed by destructions when it compares row counts.
+
 ### Restore drill
 
 `docker compose run --rm backup restore-test` restores the latest snapshot into a scratch directory
@@ -207,4 +226,3 @@ Fastest when the local server is lost and the cloud node is up to date (no need 
 
 `python -m sync.join` refuses to run on a database that already holds users or documents - it is only
 for an empty, freshly installed node.
-

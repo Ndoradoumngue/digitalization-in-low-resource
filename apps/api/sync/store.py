@@ -324,6 +324,18 @@ async def after_apply(result: ApplyResult | None, peer: str | None = None) -> No
     audit the conflicts and failed changes."""
     if result and (result.applied or result.conflicts or result.superseded):
         await invalidate_cache(*_CACHE_NAMESPACES)
+    if result and result.applied:
+        # A destruction on the peer lists its files: delete our copies now
+        # (GED Phase 6 - the periodic sweep catches up if this fails).
+        try:
+            import destruction
+            import ingest_router
+
+            await destruction.purge_destroyed_files(ingest_router._engine())
+        except Exception as exc:
+            print(
+                f"[sync] WARNING: destroyed-files purge failed: {exc}", file=sys.stderr
+            )
     if result and (result.conflicts or result.errors):
         from sync.conflicts import audit_outcome
 

@@ -191,10 +191,12 @@ async def enqueue(conn, changes: list[dict], direction: str) -> int:
         for path in paths_in(change):
             rows[path] = change.get("table_name")
     for path, table in rows.items():
+        # A destroyed file (GED Phase 6) is never transferred again.
         await conn.execute(
             text("""
                 INSERT INTO sdai_sync_file_queue (path, direction, table_name)
-                VALUES (:p, :d, :t)
+                SELECT :p, :d, :t
+                WHERE NOT EXISTS (SELECT 1 FROM sdai_destroyed_files WHERE path = :p)
                 ON CONFLICT (path, direction) DO NOTHING
             """),
             {"p": path, "d": direction, "t": table},

@@ -50,6 +50,8 @@ from __future__ import annotations
 import re
 import uuid
 
+import lifecycle
+import retention
 from audit import client_ip, log_action
 from auth import CurrentUser, require_admin, require_reviewer, require_user
 from cache import invalidate_cache
@@ -333,6 +335,10 @@ async def update_series(
                 """),
                 {"new": new_path, "old": series["path"], "tid": current_user.tenant_id},
             )
+            # Retention rules and legal holds follow the tree.
+            await retention.recompute(conn, current_user.tenant_id)
+            tables = await _get_tables_columns(conn, current_user.tenant_slug)
+            await lifecycle.refresh_hold_flags(conn, sorted(tables))
 
     if changes:
         await log_action(

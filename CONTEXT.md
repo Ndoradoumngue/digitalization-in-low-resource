@@ -57,7 +57,7 @@ This file captures what has been built, why, and what is known to be incomplete 
 
 - `sdai_document_links` table (control-plane, not tenant-table-prefixed - `tenant_id` is a real column, like `batches`/`sdai_users`): `from_table`/`from_id` → `to_table`/`to_id`, a free-text `relation` (UI suggests "concerns"/"supersedes"/"transfers"/"amends"/"renews" but doesn't enforce a fixed vocabulary), optional `note`, `created_by`. Unique index on `(tenant_id, from_table, from_id, to_table, to_id, relation)` makes duplicate link requests idempotent (`ON CONFLICT DO NOTHING` + fallback SELECT returns the existing row rather than erroring).
 - Endpoints in `documents_router.py`: `GET/POST /api/db/documents/{table}/{id}/links`, `DELETE /api/db/links/{link_id}`. Both `from_table`/`to_table` must be in the caller's own tenant's `_get_tables_columns()` result - this app-layer check is the entire tenant-isolation boundary for this feature, since a real FK against a dynamically-named table isn't possible. `DELETE` is `get_current_user`-level (any tenant user), not admin-only - removing a link doesn't destroy extracted data.
-- Cascade-delete: hard-deleting a document (`review_router.delete_document`, admin-only; `ingest_router._delete_document_by_batch_document_id`, the re-upload/dedup-replace path) also deletes any links referencing it, via a shared `documents_router._delete_links_for_document()` helper (imported into `ingest_router.py` via a lazy import to avoid a circular dependency, same pattern already used for `auth`/`audit`'s use of `ingest_router._engine`), in the same transaction as the document delete.
+- Links are never deleted with a document (GED Phase 6 - documents are no longer hard-deleted): a link to a trashed document is hidden until it is restored, a link to a destroyed document stays and shows the tombstone (record number, type) - see "Lifecycle" below. Only `DELETE /api/db/links/{id}` removes a link.
 - Frontend: `LinksSection.tsx` (mounted on `DocumentDetailPage.tsx`, below the field list) shows "Relates to"/"Referenced by" groups; `DocumentLinkPicker.tsx` is a from-scratch searchable picker (no reusable autocomplete component existed before this) reusing the generalized-search `fetchDbDocuments({q})` call.
 - **Known gotcha already fixed once**: `_INIT_DDL` is naively split on `;` by `_init_db()` - a semicolon inside a `--` SQL *comment* (not just inside a `DO $$` block, the previously-known gotcha from the multi-tenancy migration) silently breaks this and produces a confusing SQLAlchemy/asyncpg `TypeError` on startup, not a clear SQL error. Hit and fixed during this feature's development; no semicolon characters are allowed in any comment line inside the `_INIT_DDL` string.
 
@@ -225,6 +225,103 @@ Code in `apps/api/document_files.py` (file resolution, names, watermark), `versi
   creator losing access/deactivated, document turned secret, pinned version; export by ids/series/search,
   leak checks, all versions, limits, missing/tampered files flagged, manifest verified, privacy, expiry,
   recovery, never synced, admin export unchanged); permission matrix.
+
+### Lifecycle, Trash, Retention, Legal Hold, Destruction (GED Phase 6)
+
+Code in `apps/api/lifecycle.py` (state machine - the ONLY writer of `lifecycle_status`, the trash
+columns and `archived_at`), `retention.py` (rules, dates, daily job), `destruction.py` (proposals,
+execution, file deletion on both nodes, PV), `pdf_report.py` (small PDF writer) and `lifecycle_router.py`
+(routes); UI in `LifecycleBadge`, `LifecycleSection`, `TrashPage`, `RetentionRulesPage`, `DestructionsPage`.
+"Lifecycle manager" (archivist) = admin, or reviewer with `can_manage_lifecycle`.
+
+- **States**: `active → archived` (archive, lifecycle manager with edit), `archived → destruction_eligible`
+  (retention job only), `destruction_eligible → archived` (extend: a manual date `retention_override` that
+  wins over the rules), `destruction_eligible → destroyed` (approved destruction only); a trashed document
+  past `TRASH_RETENTION_DAYS` goes to `destroyed` through the purge. Anything else is a 409
+  (`lifecycle.check_transition`). Archived / eligible documents are **read-only** except for lifecycle
+  managers: `lifecycle.editable_sql` is folded into `_access_where_clause(..., "edit")`, so every edit-level
+  action (fields, review, versions, tags, series, links, page actions, the review queue) refuses them at
+  once (403 `lifecycle.read_only`; `my_permission` drops to download). New `_GED_COLS`: `deleted_reason`,
+  `archived_at/by`, `retention_rule_id`, `retention_override`, `destroyed_at`, `destruction_id`.
+- **Trash** (replaces every hard delete): `POST .../trash {reason}` (also `DELETE /api/review/{t}/{id}`, now
+  lifecycle manager + edit), `POST .../restore` (within the retention, refused 409 when the same file was
+  uploaded again meanwhile), `GET /api/db/trash`. Links, grants, tags and versions stay, hidden with the
+  document (links to a trashed document are left out of `GET .../links`). Ingest: removing an upload trashes
+  the document it filed (`_trash_document_by_batch_document_id`, reason code `upload_removed`; an upload
+  that filed nothing is still deleted); removing a batch trashes its documents (`batch_removed`), deletes the
+  upload rows that filed nothing, and deletes the batch only when empty - else `batches.removed_at` hides it
+  from `GET /api/ingest/batches`. Refused as a whole when a document is held. `_retry_document` still
+  deletes the crashed stub it replaces (internal, no content). Audit `document_trashed` / `document_restored`.
+- **Dedup decision**: only LIVE documents are duplicates. The per-type `content_hash` unique index is partial
+  (`WHERE deleted_at IS NULL AND lifecycle_status IS DISTINCT FROM 'destroyed'`,
+  `_ensure_live_content_hash_index` replaces the old plain index once at startup) and `_find_duplicate`
+  filters the same way - the trashed row stays as the trace of the removed upload (its hashes kept), the
+  same file can be uploaded again, and restoring the trashed one is then refused (`lifecycle.live_duplicate`).
+- **Retention** (`sdai_retention_rules`): scope `series` (covers sub-series) or `doc_type`, `duration_months`,
+  `trigger_on` `document_date` (extracted field `date_field`: ISO, d/m/Y, "8 mars 2021") | `ingested_at` |
+  `reviewed_at` | `archived_at`, `final_action` `destroy` | `review` | `keep_forever`. Most specific wins
+  (`pick_rule`: nearest series up the path, then the type). Stored on the document (`retention_until`,
+  `retention_rule_id`) by `retention.recompute` - on every rule change and series move (whole tenant), on
+  series assignment, field edits, review, re-extraction and new documents (one document), and by the daily
+  job. Routes `GET/POST/PATCH/DELETE /api/db/retention-rules` (lifecycle managers), `POST /api/db/retention/run`
+  (admin, local node), `POST .../retention/extend {until}`. Audit `retention_rule_*`, `retention_extended`.
+- **Daily job** (`retention.daily_worker`, local node only, session advisory lock,
+  `RETENTION_JOB_INTERVAL_HOURS`): recompute, then archived + untrashed + unheld documents whose
+  `retention_until` has passed (and rule not keep_forever) → `destruction_eligible` (audit
+  `document_destruction_eligible`, `sdai_notifications` row `retention_eligible` for each lifecycle manager -
+  the notification UI/e-mail is Phase 7), then the trash purge. Both `destroy` and `review` outcomes make a
+  document eligible - destruction always needs a proposal + approval; `review` tells the archivist to
+  re-examine (extend or propose).
+- **Legal holds** (`sdai_legal_holds` + `sdai_legal_hold_documents`): on a document, a series (recursive, also
+  for documents filed later) or a search result (frozen list via `_run_list_query`, ≤ 5000);
+  `POST /api/db/legal-holds`, `POST .../{id}/release {reason}`, `GET /api/db/legal-holds`. The active holds
+  are the only authority (`lifecycle.held_sql`), checked in SQL at the moment of trash, purge, proposal,
+  approval and the move to eligible; the document's `legal_hold` column is a display copy
+  (`refresh_hold_flags` after holds change, series moves and assignments). Audit `legal_hold_set/released`.
+- **Destruction** (`sdai_destruction_records`): a lifecycle manager proposes eligible, unheld documents not in
+  another pending proposal (`POST /api/db/destructions`) - the record freezes record_id, type, series, dates
+  and every file hash; admins are notified. An admin **other than the proposer** approves (also a DB CHECK)
+  → in one transaction every document becomes a tombstone (`lifecycle.tombstone`: extracted fields and file
+  references nulled, record_id / type / series / dates / hashes kept, status `destroyed`), its versions,
+  field history, tags and document grants are deleted, share links revoked, page rows deleted, upload paths
+  nulled; every file it used goes into `sdai_destroyed_files` (except files another live document still
+  uses). One document that can't be destroyed (hold placed meanwhile...) → 409, nothing destroyed. After the
+  commit the files are deleted on this node and the PV is written. Reject (admin) / cancel (proposer) change
+  nothing. Links stay and show the tombstone (`other_destroyed`, `other_record_id`). Audit
+  `destruction_proposed/approved/rejected/cancelled`, `document_destroyed`.
+- **Trash purge**: `destruction.purge_trash` (daily job) - trashed > `TRASH_RETENTION_DAYS`, unheld, up to
+  `TRASH_PURGE_BATCH` per run, one record `kind='trash_purge'`, `status='approved'` without people, comment
+  "purge corbeille", same execution path.
+- **PV** (procès-verbal d'élimination): `pdf_report.py` writes the PDF directly (A4, Helvetica WinAnsi,
+  wrapped tables, page numbers - no layout library in the image) into
+  `DATA_DIR/generated/destruction/<tenant>/ELIM-<year>-<id8>.pdf`, French, plus an English part when
+  `sdai_tenants.locale` starts with `en` (`create_tenant.py --locale en`); identity, people, dates, reason,
+  documents with fingerprints grouped per file, files deleted, the restic warning, signature lines.
+  `GET /api/db/destructions/{id}/pv` (regenerated if missing on this node). The record's `file_path` syncs
+  the PV to the peer like any file.
+- **Both nodes** (sync 'destroy' event): `sdai_destroyed_files` is synced insert-only; `purge_destroyed_files`
+  deletes the listed files still on disk (only inside the sync file roots), drops them from the file queue
+  and records them in node-local `sdai_destroyed_files_done` - run after the destruction, after applying a
+  peer's changes (`sync.store.after_apply`) and every `DESTROYED_FILES_SWEEP_SECONDS` on every node
+  (`destroyed_files_worker`, which also runs `heal_tombstones`: version/page/history/tag/grant rows a node
+  restored from an old backup sends back for a destroyed document are deleted). A destroyed path is never
+  queued (`files.enqueue`), transferred (worker) or received (`PUT /api/sync/files` → 403) again.
+- **UI**: lifecycle badges (archived, à éliminer, éliminé, gel juridique) in the document header and cards;
+  "Cycle de vie" panel on the record tab (status, retention date + rule, holds, actions the backend allows -
+  archive, trash with reason, keep longer, place/release hold); sidebar group "Cycle de vie" for lifecycle
+  managers with a badge (eligible not yet proposed + proposals awaiting another admin): **Éliminations**
+  (`/lifecycle/destructions`: select + propose, records with approve/reject/withdraw, documents and hashes,
+  PV download), **Règles de conservation** (`/lifecycle/retention`: rules, run now, legal holds panel),
+  **Corbeille** (`/lifecycle/trash`); Documents page "Legal hold on the N results". fr/en. Clicked through
+  in Chrome against a test database (archive, hold, propose, approve, PV download).
+- **Tests**: `test_lifecycle.py` (route guards for every lifecycle route, transition table, read-only rule,
+  edit clause, hold SQL, dates, rule precedence, PV content fr/en, report pagination),
+  `test_lifecycle_pg.py` (20 against PostgreSQL: transitions, read-only, trash/restore/links, old delete
+  routes, dedup after trash, trash expiry, precedence + recompute, document date, daily job + notifications +
+  extend, holds (series recursive, document, search), two-person destruction + tombstone + files + PV fr/en,
+  hold after proposal, shared file kept, trash purge, destroyed files not re-queued, tombstone healing),
+  two-node `test_destruction_deletes_files_on_both_nodes`, vitest `lifecycle.test.ts` (payloads captured
+  from the API). Upgrade from the Phase 5 schema checked (index replaced, columns/tables added, idempotent).
 
 ### Local/Cloud Sync and Backups (GED Phase 8)
 
@@ -418,21 +515,26 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | Audit log user filter in UI | Backend supports `user_id` filter but UI exposes only `action` and date range |
 | Tenant deactivate/delete flow | `sdai_tenants.is_active` exists but nothing sets it to `false` - retiring a tenant currently means a manual SQL `UPDATE` |
 | Index names on long table names | `idx_<table>_<col>` can exceed Postgres's 63-char limit and get truncated - on a very long `t_<tenant>_<type>` name two GED indexes may collide and one is silently skipped (same pre-existing pattern as `series_id`/`uploaded_by` indexes) |
-| Trashed rows still count as duplicates | `_find_duplicate` and the admin full export don't apply the live filter yet - decided in GED Phase 6 |
+| Admin full export includes trash and tombstones | The admin full-tenant export (`/api/admin/export`) is a complete copy: trashed documents and destroyed tombstones are included with their lifecycle columns (deliberate - it is the backup-style export); selective exports only take live documents |
 | Batch list / status visible tenant-wide | `GET /api/ingest/batches` and `/status/{batch_id}` still show every contributor of the tenant all batches (counts, filenames, document types) - the pipeline is shared by design; page contents, images and actions do follow the filed document's access |
 | API keys can no longer steer page extraction | Since GED Phase 1 an API key reaches only upload, presets, batches, status and page listing - retry/reload/skip/cancel/pause/resume need a reviewer |
 | Version files outside the viewer | A new version without re-extraction is stored and downloadable from the Versions tab, but the page viewer keeps showing the pages of the last extracted file |
 | Re-extraction keeps the document type | A version whose extraction detects another document type stays in its table; the detected type is only noted in the `document_reextracted` audit entry |
-| Hard deletes vs. versions/history | Admin hard delete and re-upload replace leave `sdai_document_versions` / `sdai_field_history` rows (and files) behind - GED Phase 6 replaces hard deletes with trash/destruction |
+| Destroyed files in backups | Restic snapshots taken before a destruction keep the files until they expire (≈ 1 year); stated in the PV and RESTORE.md - forgetting snapshots is a manual restic operation |
+| Audit details after destruction | The append-only audit log keeps what it recorded before (e.g. `document_fields_edited` changes with old/new values); a destruction cannot erase it (it would break the hash chain) |
+| Retention on active documents | Retention only ends for archived documents: a document never archived is never proposed for destruction, whatever its rule |
+| Document-date rules | `trigger_on=document_date` needs a parseable extracted date (ISO, d/m/Y, "8 mars 2021"); documents without one get no retention date (never eligible) - shown as "No retention" |
+| Notifications | Retention and destruction notifications are stored (`sdai_notifications`, `GET /api/db/notifications`) but there is no notification UI or e-mail yet - Phase 7; archivists see the sidebar badge |
+| Legal holds on search results | A search hold freezes the documents found at that moment; documents matching the same search later are not held (use a series hold for that) |
 | Audit chain vs. a DB superuser | The chain shows edits, deletions and truncation, but someone able to rewrite both the log and `sdai_audit_chain_heads` could recompute it undetected - the replicated copy on the other node (GED Phase 8) is the external witness |
 | Sync topology | Exactly one peer per node (`SYNC_PEER_URL`), no relaying - a third node would need its own pairing; the local node must be able to reach the cloud (not the reverse) |
-| Sync and file deletion | Deleting a row deletes it on the peer, but files are never deleted by sync (nor anywhere yet - GED Phase 6) |
+| Sync and file deletion | Files are only ever deleted by a destruction (both nodes, `sdai_destroyed_files`); deleting any other row never deletes files |
 | Unique keys created on both sides | Two different rows with the same natural key created offline on both nodes (e.g. the same e-mail for two new users) can't both exist: the second arrives as a `unique_violation` conflict to settle by hand |
 | Cache invalidation across processes | The sync worker clears the API's caches through Redis; without Redis (in-memory cache) cached counts/schema on the API side refresh only when they expire |
 | HLC counter wrap | Two changes of one node in the same millisecond after 100 000 others (counter wrap) could be ordered wrongly - not reachable in practice |
 | Hourly-scale clock skew | Sync requests are refused beyond ±5 min skew - both nodes must run NTP |
 | Conflicts per node | Each node keeps its own conflict list; resolving on one closes the other's copy only when the resolution reaches it (next cycle) |
-| UI not clicked through | The Synchronisation page and badges, the classification UI (series tree, tags, suggestions, filing rules), the search UI (nav search box, snippets, page badges) and the Phase 5 UI (download menu, share dialog, multi-select export, My exports) were type-checked and built, not tested in a browser |
+| UI not clicked through | The Synchronisation page and badges, the classification UI (series tree, tags, suggestions, filing rules), the search UI (nav search box, snippets, page badges) and the Phase 5 UI (download menu, share dialog, multi-select export, My exports) were type-checked and built, not tested in a browser (the Phase 6 lifecycle UI was clicked through in Chrome) |
 | Existing documents not auto-filed | Automatic filing applies to documents filed from Phase 3 on; older documents without a series stay unfiled until assigned |
 | Link suggestions are lexical | Only exact reference strings are matched (no fuzzy match on "N° 123" vs "N°123") |
 | Series names on sync | Two series with the same name created under the same parent on both nodes while disconnected arrive as a `unique_violation` sync conflict |
@@ -476,6 +578,11 @@ apps/api/
   document_files.py                 # a document's file (version), safe-root/sync checks, download name, PDF watermark
   share_router.py                   # /api/db/.../shares + public /s/{token} page and download
   export_router.py                  # /api/db/export - selective export jobs (ZIP + metadata + sha256 manifest)
+  lifecycle.py                      # state machine - the only writer of lifecycle_status / trash / archived_at; legal-hold SQL
+  lifecycle_router.py               # /api/db archive, trash, restore, retention rules, legal holds, destructions, notifications
+  retention.py                      # retention rules (precedence, dates, recompute) + daily job (local node)
+  destruction.py                    # proposals, two-person approval, tombstones, file deletion on both nodes, PV
+  pdf_report.py                     # small text PDF writer (destruction PV)
   scripts/backfill_page_text.py     # transcribe pages without text (local node; resumable, throttled)
   create_admin.py                   # seed script to create/upsert a user within a tenant
   create_tenant.py                  # seed script to create/upsert a tenant (ministry)
@@ -498,6 +605,8 @@ apps/api/
     test_search_benchmark_pg.py     # GED Phase 4 10 000-page search benchmark (opt-in, -m benchmark)
     test_share_export.py            # GED Phase 5 download/share/export helpers + unauthenticated-route guard (mocked)
     test_share_export_pg.py         # GED Phase 5 download, share links, exports on a real PostgreSQL (opt-in, -m pg)
+    test_lifecycle.py               # GED Phase 6 route guards, transitions, retention helpers, PV (mocked)
+    test_lifecycle_pg.py            # GED Phase 6 trash, retention, holds, destruction on a real PostgreSQL (opt-in, -m pg)
 
 apps/frontend/src/
   context/AuthContext.tsx           # global auth state (user, login, logout)
@@ -516,6 +625,12 @@ apps/frontend/src/
   pages/ReviewPage.tsx              # review queue
   pages/AuditPage.tsx               # audit log (admin only)
   pages/ExportsPage.tsx             # "My exports": selective export jobs, ZIP download
+  pages/TrashPage.tsx               # "Corbeille": trashed documents, restore (lifecycle managers)
+  pages/RetentionRulesPage.tsx      # "Règles de conservation" + legal holds panel
+  pages/DestructionsPage.tsx        # "Éliminations": eligible documents, proposals, approval, PV download
+  components/LifecycleBadge.tsx     # archived / to be destroyed / destroyed / legal hold badges
+  components/LifecycleSection.tsx   # document "Lifecycle" panel: status, retention, holds, actions
+  components/auth/LifecycleRoute.tsx # keeps non-archivists off the lifecycle pages
   components/DocumentList.tsx
   components/OcrPanel.tsx
   components/VlmPanel.tsx
@@ -528,6 +643,8 @@ apps/frontend/src/
   components/DownloadOriginalMenu.tsx # "Download original" + version menu (document header)
   components/ShareDialog.tsx        # "Share": create a link (shown once), list, revoke
   hooks/useSharing.ts               # share links, export jobs, file download mutations
+  hooks/useLifecycle.ts             # lifecycle, trash, retention rules, legal holds, destructions
+  utils/lifecycle.ts                # date formatting for lifecycle views
   hooks/useVersions.ts              # versions/history queries, upload/restore mutations
   hooks/useDocuments.ts             # TanStack Query hooks for OCR
   hooks/useVlm.ts                   # TanStack Query hooks for VLM
@@ -552,6 +669,7 @@ packages/types/src/
   access.ts                         # groups, admin users, grants (scope + permission level), integrity results
   versions.ts                       # document versions, field history, audit-chain verification
   sharing.ts                        # share links, export jobs, ExportRequest
+  lifecycle.ts                      # lifecycle status, retention rules, legal holds, trash, destruction records
 
 packages/api-client/src/
   index.ts                          # all fetch functions, imageUrl helper, fetchAuditLog()

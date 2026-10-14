@@ -572,14 +572,16 @@ def test_failed_edit_writes_no_history(as_user, pg):
 
 
 def test_review_approve_with_edits_records_history(as_user, pg):
-    resp = as_user(EDITOR()).patch(
-        f"/api/review/{T}/{D['archived']}",
-        json={"action": "approve", "fields": {"amount": "20", "items": "x, y"}},
-    )
+    body = {"action": "approve", "fields": {"amount": "20", "items": "x, y"}}
+    # Archived documents are read-only except for lifecycle managers (GED Phase 6).
+    resp = as_user(EDITOR()).patch(f"/api/review/{T}/{D['archived']}", json=body)
+    assert resp.status_code == 403
+    assert _history(pg, "archived") == []
+    resp = as_user(ADMIN()).patch(f"/api/review/{T}/{D['archived']}", json=body)
     assert resp.status_code == 200, resp.text
     rows = _history(pg, "archived")
-    assert ("amount", "10", "20", "review", U["editor"]) in rows
-    assert ("items", None, ["x", "y"], "review", U["editor"]) in rows
+    assert ("amount", "10", "20", "review", U["admin"]) in rows
+    assert ("items", None, ["x", "y"], "review", U["admin"]) in rows
 
 
 def test_review_approve_without_edits_records_nothing(as_user, pg):

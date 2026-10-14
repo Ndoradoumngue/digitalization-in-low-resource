@@ -71,6 +71,10 @@ SYNC_TABLES: tuple[SyncTable, ...] = (
     SyncTable("sdai_series", order_by="length(path) - length(replace(path, '/', '')), created_at"),
     SyncTable("sdai_tags", order_by="created_at"),
     SyncTable("sdai_type_series_defaults", order_by="created_at"),
+    # Lifecycle (GED Phase 6): rules and holds point at series.
+    SyncTable("sdai_retention_rules", order_by="created_at"),
+    SyncTable("sdai_legal_holds", order_by="created_at"),
+    SyncTable("sdai_legal_hold_documents"),
     SyncTable("sdai_document_access", order_by="granted_at"),
     SyncTable("batches", order_by="created_at"),
     SyncTable("batch_documents", order_by="ingested_at"),
@@ -84,6 +88,11 @@ SYNC_TABLES: tuple[SyncTable, ...] = (
     # One row per download through a share link - never updated, so two
     # nodes counting downloads never conflict.
     SyncTable("sdai_share_downloads", insert_only=True, order_by="downloaded_at"),
+    SyncTable("sdai_destruction_records", order_by="proposed_at"),
+    # Every file a destruction deleted - the peer deletes its copy when the
+    # row arrives (the sync 'destroy' event, destruction.purge_destroyed_files).
+    SyncTable("sdai_destroyed_files", insert_only=True, order_by="destroyed_at"),
+    SyncTable("sdai_notifications", order_by="created_at"),
     SyncTable("sdai_audit_log", insert_only=True, order_by="origin_node, chain_seq"),
     SyncTable("sdai_token_blocklist", pk=("jti",), insert_only=True),
 )
@@ -99,7 +108,8 @@ SYNC_META_COLS = frozenset({"updated_at", "origin_node", "hlc"})
 # sdai_nodes (who ran this database), sdai_record_id_counters (record ids are
 # only ever assigned on the local node, so the counter can't fork - 8.6),
 # sdai_audit_chain_heads (last head verified on THIS node), sdai_sync_*,
-# sdai_export_jobs (the ZIP is on this node's disk only).
+# sdai_export_jobs (the ZIP is on this node's disk only),
+# sdai_destroyed_files_done (which destroyed files THIS node has deleted).
 NODE_LOCAL_TABLES = frozenset(
     {
         "sdai_nodes",
@@ -113,6 +123,7 @@ NODE_LOCAL_TABLES = frozenset(
         "sdai_sync_file_queue",
         "sdai_backup_runs",
         "sdai_export_jobs",
+        "sdai_destroyed_files_done",
     }
 )
 

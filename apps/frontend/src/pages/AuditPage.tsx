@@ -49,6 +49,23 @@ const ACTION_STYLES: Record<string, string> = {
   share_link_accessed: "bg-fuchsia-50 text-fuchsia-700",
   documents_exported: "bg-indigo-100 text-indigo-800",
   export_downloaded: "bg-sky-100    text-sky-800",
+  document_trashed: "bg-red-100    text-red-700",
+  document_restored: "bg-emerald-100 text-emerald-800",
+  document_archived: "bg-sky-100    text-sky-800",
+  retention_extended: "bg-sky-100    text-sky-800",
+  retention_rule_created: "bg-teal-100   text-teal-800",
+  retention_rule_updated: "bg-teal-100   text-teal-800",
+  retention_rule_deleted: "bg-gray-100   text-gray-600",
+  retention_job_run: "bg-gray-100   text-gray-600",
+  document_destruction_eligible: "bg-orange-100 text-orange-800",
+  legal_hold_set: "bg-purple-100 text-purple-800",
+  legal_hold_released: "bg-purple-50  text-purple-700",
+  destruction_proposed: "bg-orange-100 text-orange-800",
+  destruction_approved: "bg-gray-800   text-white",
+  destruction_rejected: "bg-gray-100   text-gray-600",
+  destruction_cancelled: "bg-gray-100   text-gray-600",
+  document_destroyed: "bg-gray-800   text-white",
+  destruction_pv_downloaded: "bg-sky-100    text-sky-800",
 };
 
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);

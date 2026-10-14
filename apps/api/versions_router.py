@@ -32,6 +32,7 @@ from auth import CurrentUser, require_reviewer, require_user
 from cache import invalidate_cache
 import document_files
 import documents_router
+import lifecycle
 import ingest_router
 from documents_router import (
     _get_tables_columns,
@@ -98,8 +99,8 @@ async def _lock_for_change(
 ) -> int:
     """Row-lock the document for a version change and return the next
     version number. Refuses while someone else holds the check-out lock
-    (409) or when the document is archived, unless the caller manages
-    lifecycle (403)."""
+    (409) or when the document is archived / destruction-eligible, unless
+    the caller manages lifecycle (403)."""
     row = (
         (
             await conn.execute(
@@ -126,9 +127,8 @@ async def _lock_for_change(
         raise HTTPException(
             status_code=409, detail=t("versions.document_locked", current_user.locale)
         )
-    if (
-        row["lifecycle_status"] == "archived"
-        and not current_user.can_manage_document_lifecycle
+    if not lifecycle.can_edit_status(
+        row["lifecycle_status"], current_user.can_manage_document_lifecycle
     ):
         raise HTTPException(
             status_code=403, detail=t("versions.document_archived", current_user.locale)

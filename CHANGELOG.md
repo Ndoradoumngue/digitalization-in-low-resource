@@ -9,6 +9,21 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 6 (lifecycle, trash, retention, legal hold, destruction)
+- Document lifecycle: active → archived → to be destroyed → destroyed, enforced in one place (`lifecycle.py`). Archiving is done by an archivist (admin, or reviewer with the "archivist" permission); archived documents are read-only for everyone else.
+- Trash: deleting a document (review page, upload / batch removal) now moves it to the trash - hidden everywhere, links kept, restorable for `TRASH_RETENTION_DAYS` (30) from the "Corbeille" page. After that the daily job destroys it with an automatically approved destruction record ("purge corbeille").
+- Retention rules per series (covering sub-series) or per document type: duration in months from the document date (an extracted date field), filing, review or archiving date; outcome destroy, re-examine or keep forever. The most specific rule wins (nearest series, then type). Retention dates are recomputed when rules, series, filing or dates change; a daily job (local server) marks archived documents whose retention ended "to be destroyed" and notifies the archivists. An archivist can keep a document longer.
+- Legal holds on a document, a series (and everything below it, including documents filed later) or the results of a search: held documents cannot be trashed, purged or destroyed until the hold is released (with a reason).
+- Two-person destruction: an archivist proposes, another administrator approves (also enforced by the database). Approval destroys every listed document at once - files (all versions, page images, originals) deleted on both servers, extracted data, versions, history, tags and grants removed - and keeps a tombstone (record number, type, dates, SHA-256 fingerprints); links show the tombstone. A procès-verbal d'élimination (PDF, French + English for English-speaking organisations) is generated, mentioning that off-site backups keep the files until their retention expires.
+- UI (fr/en): lifecycle badges on documents and in the list, lifecycle panel on the document (status, retention date and rule, holds, actions), "Corbeille", "Règles de conservation" (with legal holds) and "Éliminations" (to destroy, proposals, approval, PV download) pages, legal hold on search results, sidebar badge for archivists.
+- Audit: `document_archived`, `document_trashed`, `document_restored`, `retention_rule_*`, `retention_extended`, `document_destruction_eligible`, `legal_hold_set` / `_released`, `destruction_proposed` / `_approved` / `_rejected` / `_cancelled`, `document_destroyed`, `destruction_pv_downloaded`.
+
+### Changed - GED Phase 6
+- No document is hard-deleted any more: the admin delete of a document and the ingest "remove upload" / "remove batch" routes trash instead (a batch with filed documents is hidden, not deleted); the review delete route now needs the archivist permission.
+- Duplicate detection only considers live documents: the per-type `content_hash` unique index becomes partial (rebuilt once at startup), so a trashed or destroyed document never blocks uploading the same file again; restoring is refused while a live copy exists.
+- The sync never transfers a destroyed file again and deletes the peer's copy (`sdai_destroyed_files`).
+- New settings: `TRASH_RETENTION_DAYS`, `RETENTION_JOB_INTERVAL_HOURS`, `TRASH_PURGE_BATCH`, `DESTROYED_FILES_SWEEP_SECONDS`; optional organisation language (`sdai_tenants.locale`) for the PV.
+
 ### Added - GED Phase 5 (download, share links, selective export)
 - "Download original": the untouched file of the current or any earlier version, named after the document's record id, every download recorded; optional watermark (who, when) on PDFs of confidential/secret documents (`DOWNLOAD_WATERMARK_CONFIDENTIAL`).
 - External share links: expiry (1-30 days), optional password and download limit, a fixed version or always the latest, recipient note; the link is shown once and only its hash is stored; list and revoke from the document; outsiders get a minimal download page (`/s/...`, French/English), every use recorded with its IP. Secret documents can never be shared, confidential ones only by an administrator, and a link stops working as soon as its creator loses access.

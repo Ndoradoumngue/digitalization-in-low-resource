@@ -5,7 +5,8 @@ import { useDbTypes } from "../hooks/useDocumentsDb";
 import { useReviewCount } from "../hooks/useReview";
 import LanguageSwitcher from "./LanguageSwitcher";
 import GlobalSearch from "./GlobalSearch";
-import { isReader } from "../utils/permissions";
+import { canManageLifecycle, isReader } from "../utils/permissions";
+import { useEligibleDocuments, useDestructions } from "../hooks/useLifecycle";
 import { useSyncStatus } from "../hooks/useSync";
 import { alertText } from "../pages/SyncAdminPage";
 
@@ -29,6 +30,15 @@ export default function NavSidebar() {
   const { data: syncStatus } = useSyncStatus(user?.role === "admin");
   const syncAlerts = syncStatus?.alerts ?? [];
   const urgentSync = syncAlerts.filter((a) => URGENT_SYNC_ALERTS.has(a.kind));
+  // Archivist badge: documents whose retention ended and are not proposed
+  // yet, plus (for admins) proposals waiting for someone else's approval.
+  const archivist = canManageLifecycle(user);
+  const { data: eligible } = useEligibleDocuments(archivist);
+  const { data: destructions } = useDestructions(archivist);
+  const toPropose = (eligible ?? []).filter((d) => !d.pending_destruction_id && !d.legal_hold).length;
+  const toApprove = user?.role === "admin"
+    ? (destructions ?? []).filter((r) => r.status === "proposed" && r.proposed_by_id !== user.id).length
+    : 0;
 
   return (
     <aside className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col overflow-hidden h-screen">
@@ -94,6 +104,37 @@ export default function NavSidebar() {
               </span>
             )}
           </Link>
+          )}
+
+          {archivist && (
+            <>
+              <p className="px-3 pt-3 pb-1 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+                {t("nav.lifecycle")}
+              </p>
+              <Link to="/lifecycle/destructions" className={navClass(pathname === "/lifecycle/destructions")}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m6 4.125 2.25 2.25m0 0 2.25 2.25M12 13.875l2.25-2.25M12 13.875l-2.25 2.25M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" />
+                </svg>
+                {t("nav.destructions")}
+                {toPropose + toApprove > 0 && (
+                  <span className="ml-auto inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold bg-orange-500 text-white">
+                    {toPropose + toApprove}
+                  </span>
+                )}
+              </Link>
+              <Link to="/lifecycle/retention" className={navClass(pathname === "/lifecycle/retention")}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+                {t("nav.retention")}
+              </Link>
+              <Link to="/lifecycle/trash" className={navClass(pathname === "/lifecycle/trash")}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                </svg>
+                {t("nav.trash")}
+              </Link>
+            </>
           )}
 
           <Link

@@ -37,3 +37,9 @@ export function canShareLevel(user: User | null | undefined, confidentiality: st
   if (confidentiality === "confidential") return user?.role === "admin";
   return true;
 }
+
+/** Archivist actions (archive, trash, restore, retention, legal holds,
+ * destruction proposals) - admin, or a reviewer with can_manage_lifecycle. */
+export function canManageLifecycle(user: User | null | undefined): boolean {
+  return user?.role === "admin" || (user?.role === "reviewer" && !!user.can_manage_lifecycle);
+}

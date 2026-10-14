@@ -22,6 +22,13 @@ def client(dirs, monkeypatch, tmp_path):
     root = tmp_path / "synced"
     root.mkdir()
     monkeypatch.setattr(sync_config, "file_roots", lambda: [root.resolve()])
+    # No database here: nothing was destroyed (GED Phase 6 check).
+    import sync.api
+
+    async def _never(path):
+        return False
+
+    monkeypatch.setattr(sync.api, "_destroyed", _never)
     with TestClient(api_server.app) as c:
         c.root = root.resolve()
         yield c

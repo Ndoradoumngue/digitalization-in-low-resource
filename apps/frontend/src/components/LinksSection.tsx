@@ -27,26 +27,37 @@ function LinkRow({
   const navigate = useNavigate();
   const { t } = useTranslation();
   const title = link.other_display ?? link.other_document_type ?? t("links.untitledDocument");
+  // A destroyed document keeps its tombstone (record number, type) - the
+  // link stays as the trace, but there is nothing left to open.
+  const destroyed = !!link.other_destroyed;
+  const inert = link.other_missing || destroyed;
 
   return (
     <div className="flex items-center justify-between gap-2 py-2 border-b border-gray-100 last:border-0">
       <button
         onClick={() =>
-          !link.other_missing && navigate(`${basePath}/${link.other_table}/${link.other_id}`)
+          !inert && navigate(`${basePath}/${link.other_table}/${link.other_id}`)
         }
-        disabled={link.other_missing}
-        className={`flex-1 min-w-0 text-left ${
-          link.other_missing ? "cursor-default" : "hover:underline"
-        }`}
+        disabled={inert}
+        className={`flex-1 min-w-0 text-left ${inert ? "cursor-default" : "hover:underline"}`}
       >
         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-800 mr-2">
           {link.relation}
         </span>
-        <span className={`text-sm truncate ${link.other_missing ? "text-gray-400 italic" : "text-gray-800"}`}>
-          {link.other_missing ? t("links.documentUnavailable") : title}
+        <span className={`text-sm truncate ${inert ? "text-gray-400 italic" : "text-gray-800"}`}>
+          {link.other_missing
+            ? t("links.documentUnavailable")
+            : destroyed
+              ? link.other_record_id ?? t("links.untitledDocument")
+              : title}
         </span>
         {link.other_document_type && !link.other_missing && (
           <span className="text-xs text-gray-400 ml-2">{link.other_document_type}</span>
+        )}
+        {destroyed && !link.other_missing && (
+          <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-800 text-white">
+            {t("lifecycle.status.destroyed")}
+          </span>
         )}
       </button>
       {canEdit && (

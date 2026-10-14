@@ -300,6 +300,15 @@ def mock_db(monkeypatch):
     fake_engine.begin.return_value = begin_ctx
 
     monkeypatch.setattr(ingest_router, "engine", fake_engine)
+    # Retention dates and hold flags (GED Phase 6) are recomputed alongside
+    # many document changes - covered by the real-PostgreSQL tests; stubbed
+    # here so mocked call sequences only see the change under test.
+    import lifecycle
+    import retention
+
+    monkeypatch.setattr(retention, "recompute_quietly", AsyncMock())
+    monkeypatch.setattr(retention, "recompute", AsyncMock(return_value=0))
+    monkeypatch.setattr(lifecycle, "refresh_hold_flags", AsyncMock(return_value=0))
     return conn
 
 

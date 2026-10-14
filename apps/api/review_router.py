@@ -11,14 +11,14 @@ Endpoints:
   DELETE /api/review/{table}/{id}       - permanently remove a document (admin only)
 """
 
+import retention
 from audit import client_ip, log_action
-from auth import CurrentUser, require_admin, require_reviewer, require_user
+from auth import CurrentUser, require_reviewer, require_user
 from cache import _path_key_builder, invalidate_cache
 from documents_router import (
     _access_params,
     _access_where_clause,
     _build_field_set_clause,
-    _delete_links_for_document,
     _record_edit_history,
     _require_document_permission,
     _row_for_update,
@@ -308,6 +308,11 @@ async def patch_review(
             if old is not None
             else {}
         )
+        if row is not None:
+            # reviewed_at (and maybe an extracted date) changed.
+            await retention.recompute_quietly(
+                conn, current_user.tenant_id, safe, doc_id
+            )
         await conn.commit()
 
     if row is None:
@@ -440,42 +445,26 @@ async def delete_document(
     request: Request,
     table_name: str,
     doc_id: str,
-    current_user: CurrentUser = Depends(require_admin),
+    current_user: CurrentUser = Depends(require_reviewer),
 ):
-    """Permanently remove a document. Admin only - this is irreversible,
-    unlike reject/flag which just change review_status. Also removes any
-    chain-of-custody links referencing this document, in the same
-    transaction, so nothing is left pointing at a gone row."""
-    safe = _sanitize(table_name)
+    """Move a document to the trash (GED Phase 6 - it used to be a hard
+    delete). Lifecycle managers only, with edit on the document; refused
+    under legal hold. Its links, grants, tags and versions stay, hidden
+    with it, so a restore brings everything back - after
+    TRASH_RETENTION_DAYS the purge destroys it with a destruction record."""
+    import lifecycle_router  # lazy - it imports documents_router like this module
 
+    safe = _sanitize(table_name)
+    lifecycle_router.require_lifecycle_manager(current_user)
     async with _engine().connect() as conn:
         tables_cols = await _get_tables_columns(conn, current_user.tenant_slug)
-        if safe not in tables_cols:
-            raise HTTPException(
-                status_code=404, detail=t("common.table_not_found", current_user.locale, table=safe)
-            )
-
-        result = await conn.execute(
-            text(f'DELETE FROM "{safe}" WHERE id = CAST(:doc_id AS uuid) RETURNING id'),
-            {"doc_id": doc_id},
-        )
-        if result.rowcount > 0:
-            await _delete_links_for_document(conn, current_user.tenant_id, safe, doc_id)
-        await conn.commit()
-
-    if result.rowcount == 0:
+    if safe not in tables_cols:
         raise HTTPException(
-            status_code=404, detail=t("common.document_not_found", current_user.locale)
+            status_code=404,
+            detail=t("common.table_not_found", current_user.locale, table=safe),
         )
-
-    await log_action(
-        action="document_deleted",
-        user_id=current_user.id,
-        user_email=current_user.email,
-        table_name=safe,
-        document_id=doc_id,
-        ip_address=client_ip(request),
+    await lifecycle_router.trash_document(
+        request, safe, doc_id, current_user, via="review"
     )
     await invalidate_cache("review")
-
     return {"ok": True}

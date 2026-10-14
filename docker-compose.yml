@@ -157,6 +157,11 @@ services:
       - EXPORT_MAX_MB=${EXPORT_MAX_MB:-2048}
       - EXPORT_LINK_HOURS=${EXPORT_LINK_HOURS:-24}
       - EXPORT_CONCURRENCY=${EXPORT_CONCURRENCY:-2}
+      # Lifecycle - trash purge, retention job, destroyed-file sweep (README, Document management)
+      - TRASH_RETENTION_DAYS=${TRASH_RETENTION_DAYS:-30}
+      - RETENTION_JOB_INTERVAL_HOURS=${RETENTION_JOB_INTERVAL_HOURS:-24}
+      - TRASH_PURGE_BATCH=${TRASH_PURGE_BATCH:-500}
+      - DESTROYED_FILES_SWEEP_SECONDS=${DESTROYED_FILES_SWEEP_SECONDS:-600}
       # Optional - customize the VLM extraction schema for your document
       # corpus without a rebuild. See README.md "Customizing the extraction
       # schema" and .env.example for details.

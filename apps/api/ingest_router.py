@@ -42,6 +42,7 @@ import httpx
 import numpy as np
 import page_text
 import pytesseract
+import retention
 from audit import log_action
 from auth import (
     CurrentUser,
@@ -758,6 +759,135 @@ CREATE TABLE IF NOT EXISTS sdai_export_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_sdai_export_jobs_creator ON sdai_export_jobs (created_by, created_at DESC);
 
+-- Lifecycle (GED Phase 6, lifecycle.py / retention.py / destruction.py).
+-- The tenant's language decides whether the destruction report (PV) gets
+-- an English part after the French one (NULL = French only).
+ALTER TABLE sdai_tenants ADD COLUMN IF NOT EXISTS locale TEXT;
+
+-- A batch whose documents were all moved to the trash is hidden from the
+-- upload list instead of being deleted (its documents can come back).
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ;
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS removed_by UUID;
+
+-- Retention rules: the most specific wins - a series rule (the nearest
+-- series up the tree) before a document-type rule. trigger_on names the
+-- date the duration runs from (document_date = the extracted field
+-- date_field). The resulting date is stored on the document
+-- (retention_until, retention_rule_id) by retention.recompute.
+CREATE TABLE IF NOT EXISTS sdai_retention_rules (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       UUID        NOT NULL REFERENCES sdai_tenants(id),
+    name            TEXT        NOT NULL,
+    scope           TEXT        NOT NULL CHECK (scope IN ('series', 'doc_type')),
+    series_id       UUID        REFERENCES sdai_series(id),
+    table_name      TEXT,
+    duration_months INTEGER     NOT NULL CHECK (duration_months >= 0 AND duration_months <= 1200),
+    trigger_on      TEXT        NOT NULL DEFAULT 'ingested_at'
+        CHECK (trigger_on IN ('document_date', 'ingested_at', 'reviewed_at', 'archived_at')),
+    date_field      TEXT,
+    final_action    TEXT        NOT NULL DEFAULT 'destroy'
+        CHECK (final_action IN ('destroy', 'keep_forever', 'review')),
+    created_by      UUID,
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    CHECK ((scope = 'series' AND series_id IS NOT NULL AND table_name IS NULL)
+        OR (scope = 'doc_type' AND table_name IS NOT NULL AND series_id IS NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sdai_retention_rules_series
+    ON sdai_retention_rules (tenant_id, series_id) WHERE scope = 'series';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_sdai_retention_rules_doc_type
+    ON sdai_retention_rules (tenant_id, table_name) WHERE scope = 'doc_type';
+
+-- Legal holds: scope 'documents' (one or more named documents - a single
+-- document or a frozen search result) or 'series' (the series and every
+-- series below it, including documents filed there later). Active until
+-- released. A hold blocks trash, purge and destruction (lifecycle.held_sql).
+CREATE TABLE IF NOT EXISTS sdai_legal_holds (
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID        NOT NULL REFERENCES sdai_tenants(id),
+    scope          TEXT        NOT NULL CHECK (scope IN ('documents', 'series')),
+    origin         TEXT        NOT NULL DEFAULT 'document'
+        CHECK (origin IN ('document', 'series', 'search')),
+    series_id      UUID        REFERENCES sdai_series(id),
+    query          JSONB,
+    reason         TEXT        NOT NULL,
+    created_by     UUID,
+    created_at     TIMESTAMPTZ DEFAULT now(),
+    released_at    TIMESTAMPTZ,
+    released_by    UUID,
+    release_reason TEXT,
+    CHECK (scope <> 'series' OR series_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_legal_holds_active
+    ON sdai_legal_holds (tenant_id) WHERE released_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS sdai_legal_hold_documents (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    hold_id     UUID NOT NULL REFERENCES sdai_legal_holds(id),
+    table_name  TEXT NOT NULL,
+    document_id UUID NOT NULL,
+    UNIQUE (hold_id, table_name, document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_legal_hold_documents_doc
+    ON sdai_legal_hold_documents (table_name, document_id);
+
+-- Destruction records (one per proposal, or per automatic trash purge).
+-- documents = the frozen list with what stays known after destruction
+-- (record_id, type, dates, every file hash). Two different people: the
+-- CHECK refuses an approver who is the proposer (a purge has neither).
+-- file_path = the generated report (PV), synced to the peer like any file.
+CREATE TABLE IF NOT EXISTS sdai_destruction_records (
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID        NOT NULL REFERENCES sdai_tenants(id),
+    kind           TEXT        NOT NULL DEFAULT 'retention' CHECK (kind IN ('retention', 'trash_purge')),
+    status         TEXT        NOT NULL DEFAULT 'proposed'
+        CHECK (status IN ('proposed', 'approved', 'rejected', 'cancelled')),
+    comment        TEXT,
+    documents      JSONB       NOT NULL,
+    document_count INTEGER     NOT NULL,
+    proposed_by    UUID,
+    proposed_at    TIMESTAMPTZ DEFAULT now(),
+    decided_by     UUID,
+    decided_at     TIMESTAMPTZ,
+    decision_note  TEXT,
+    executed_at    TIMESTAMPTZ,
+    file_path      TEXT,
+    file_hash      TEXT,
+    CHECK (decided_by IS NULL OR proposed_by IS NULL OR decided_by <> proposed_by)
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_destruction_records_tenant
+    ON sdai_destruction_records (tenant_id, proposed_at DESC);
+
+-- Every file a destruction deleted - insert-only and synced, so the peer
+-- deletes its copy too (the sync 'destroy' event) and never transfers it
+-- again. Which rows this node has processed is node-local.
+CREATE TABLE IF NOT EXISTS sdai_destroyed_files (
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id      UUID        NOT NULL REFERENCES sdai_tenants(id),
+    destruction_id UUID        NOT NULL,
+    path           TEXT        NOT NULL,
+    sha256         TEXT,
+    destroyed_at   TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_destroyed_files_path ON sdai_destroyed_files (path);
+CREATE TABLE IF NOT EXISTS sdai_destroyed_files_done (
+    id      UUID        PRIMARY KEY,
+    done_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- In-app notifications (retention ends, destruction to approve). Read by
+-- the user's own list - the e-mail outbox and the full UI come in Phase 7.
+CREATE TABLE IF NOT EXISTS sdai_notifications (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID        NOT NULL REFERENCES sdai_tenants(id),
+    user_id    UUID        NOT NULL,
+    kind       TEXT        NOT NULL,
+    payload    JSONB,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    read_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_notifications_user
+    ON sdai_notifications (user_id, created_at DESC);
+
 -- Tamper-evident audit log: every row is chained to the previous one of
 -- the same origin_node (chain_seq 1, 2, 3 ... and prev_hash = the previous
 -- row_hash), row_hash being sha256 over the row's canonical JSON (see
@@ -1243,17 +1373,58 @@ _SYNCED_STATIC_TABLES = (
     "sdai_field_history",
     "sdai_share_links",
     "sdai_share_downloads",
+    "sdai_retention_rules",
+    "sdai_legal_holds",
+    "sdai_legal_hold_documents",
+    "sdai_destruction_records",
+    "sdai_destroyed_files",
+    "sdai_notifications",
     "batches",
     "batch_documents",
     "batch_document_pages",
 )
 
 
+# Dedup is over LIVE documents only (GED Phase 6): a trashed document keeps
+# its content_hash (a restore checks no live copy appeared meanwhile, see
+# lifecycle.restore) and a destroyed tombstone keeps it as evidence, but
+# neither blocks uploading the same file again.
+_LIVE_HASH_PREDICATE = (
+    "deleted_at IS NULL AND lifecycle_status IS DISTINCT FROM 'destroyed'"
+)
+
+
+async def _ensure_live_content_hash_index(conn, table_name: str) -> None:
+    """The unique content_hash index, partial on live rows. Tables created
+    before GED Phase 6 have a plain unique index under the same name - it
+    is replaced once. Idempotent."""
+    index = f"idx_{table_name}_content_hash"
+    indexdef = (
+        await conn.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = :i"
+            ),
+            {"i": index[:63]},
+        )
+    ).scalar()
+    if indexdef is not None and " WHERE " in indexdef:
+        return
+    if indexdef is not None:
+        await conn.execute(text(f'DROP INDEX IF EXISTS "{index[:63]}"'))
+    await conn.execute(
+        text(
+            f'CREATE UNIQUE INDEX IF NOT EXISTS "{index[:63]}"'
+            f' ON "{table_name}" (content_hash) WHERE {_LIVE_HASH_PREDICATE}'
+        )
+    )
+
+
 async def _ensure_ged_indexes_and_trigger(conn, table_name: str) -> None:
     """Indexes on the GED columns every list/retention query filters on,
-    plus the sdai_touch_row and sync capture triggers. Idempotent - shared
-    by _ensure_table (new and altered tables) and _backfill_ged_columns
-    (existing ones)."""
+    the live-only content_hash unique index, plus the sdai_touch_row and
+    sync capture triggers. Idempotent - shared by _ensure_table (new and
+    altered tables) and _backfill_ged_columns (existing ones)."""
+    await _ensure_live_content_hash_index(conn, table_name)
     for col in _GED_INDEXED_COLS:
         await conn.execute(
             text(f'CREATE INDEX IF NOT EXISTS idx_{table_name}_{col} ON "{table_name}" ({col})')
@@ -1674,13 +1845,19 @@ async def startup() -> None:
 
     await export_router.recover_jobs()
     global _worker_tasks
+    import destruction  # lazy - it imports lifecycle, which imports this module
+    import retention
+
+    # Every node deletes the files a destruction listed (its own or the peer's).
+    _worker_tasks = [asyncio.create_task(destruction.destroyed_files_worker())]
     if NODE_ROLE == "cloud":
         # No GPU/Ollama on the cloud node: uploads there wait as 'pending'
         # rows until the local node processes them (_peer_upload_pickup_worker
-        # over there), and once-per-deployment jobs run on the local node.
-        _worker_tasks = []
+        # over there), and once-per-deployment jobs (retention, trash purge)
+        # run on the local node.
         return
-    _worker_tasks = [
+    _worker_tasks += [
+        asyncio.create_task(retention.daily_worker()),
         asyncio.create_task(_stage1_worker()),
         asyncio.create_task(_stage2_worker()),
         asyncio.create_task(_stage3_worker()),
@@ -2673,7 +2850,9 @@ async def _find_duplicate(content_hash: str, tenant_slug: str) -> dict | None:
     """Return {table_name, id} for the first doc with this hash *belonging
     to this tenant*, or None. Scoped per-tenant rather than globally: two
     ministries independently uploading a byte-identical shared form
-    template are not duplicates of each other."""
+    template are not duplicates of each other. Only live documents count
+    (GED Phase 6): a file whose document is in the trash or destroyed can
+    be uploaded again - see _LIVE_HASH_PREDICATE."""
     prefix = f"t_{tenant_slug}_"
     async with _engine().connect() as conn:
         tables_result = await conn.execute(
@@ -2692,6 +2871,7 @@ async def _find_duplicate(content_hash: str, tenant_slug: str) -> dict | None:
                 text(
                     f'SELECT id FROM "{table_name}"'
                     f" WHERE content_hash = :h AND review_status != 'manual_entry'"
+                    f" AND {_LIVE_HASH_PREDICATE}"
                     f" LIMIT 1"
                 ),
                 {"h": content_hash},
@@ -2917,51 +3097,73 @@ async def _integrity_check_worker() -> None:
         await asyncio.sleep(INTEGRITY_CHECK_INTERVAL_HOURS * 3600)
 
 
-async def _delete_document_by_batch_document_id(
-    batch_document_id: str, tenant_id: str, tenant_slug: str
-) -> bool:
-    """Find and delete the extracted document row for one upload - found
-    via its batch_document_id, regardless of which document_type table it
-    landed in - so the same file can be re-uploaded without tripping the
-    content-hash duplicate check. Returns True if a row was found and
-    deleted. Does not touch batch/page history (batch_documents,
-    batch_document_pages), only the per-type table's stored extraction.
-    Scoped to the caller's tenant as defense-in-depth (UUIDs won't collide
-    across tenants, but this avoids touching other tenants' tables at all).
-    Also removes any chain-of-custody links referencing the deleted
-    document, in the same transaction."""
-    # Lazy import: documents_router already imports from this module at
-    # module level, so importing it back at module level here would be
-    # circular - same pattern already used for auth.get_current_user's and
-    # audit.log_action's use of ingest_router._engine.
-    from documents_router import _delete_links_for_document
-
-    prefix = f"t_{tenant_slug}_"
-    async with _engine().connect() as conn:
-        tables_result = await conn.execute(
-            text(
-                "SELECT table_name FROM information_schema.columns"
-                " WHERE column_name = 'batch_document_id' AND table_schema = 'public'"
-                "   AND starts_with(table_name, :prefix)"
-            ),
-            {"prefix": prefix},
-        )
-        tables = [row[0] for row in tables_result]
-
-    for table_name in tables:
-        async with _engine().begin() as conn:
-            result = await conn.execute(
+async def _filed_documents_of_upload(
+    conn, batch_document_id: str, tenant_slug: str
+) -> list[dict]:
+    """Every document (live, trashed or destroyed) one upload produced -
+    found via its batch_document_id, whatever document_type table it
+    landed in. Scoped to the tenant's tables as defense-in-depth."""
+    tables = (
+        (
+            await conn.execute(
                 text(
-                    f'DELETE FROM "{table_name}"'
-                    f" WHERE batch_document_id = CAST(:bd AS uuid) RETURNING id"
+                    "SELECT table_name FROM information_schema.columns"
+                    " WHERE column_name = 'batch_document_id' AND table_schema = 'public'"
+                    "   AND starts_with(table_name, :prefix)"
                 ),
-                {"bd": batch_document_id},
+                {"prefix": f"t_{tenant_slug}_"},
             )
-            deleted_id = result.scalar()
-            if deleted_id is not None:
-                await _delete_links_for_document(conn, tenant_id, table_name, str(deleted_id))
-                return True
-    return False
+        )
+        .scalars()
+        .all()
+    )
+    found = []
+    for table_name in sorted(tables):
+        rows = await conn.execute(
+            text(
+                f"SELECT id::text, deleted_at IS NULL AND lifecycle_status IS DISTINCT FROM"
+                f" 'destroyed' AS live FROM \"{table_name}\""
+                f" WHERE batch_document_id = CAST(:bd AS uuid)"
+            ),
+            {"bd": batch_document_id},
+        )
+        found += [{"table_name": table_name, "id": r[0], "live": r[1]} for r in rows]
+    return found
+
+
+async def _trash_document_by_batch_document_id(
+    batch_document_id: str, tenant_slug: str, user, reason: str | None
+) -> str:
+    """Move the document one upload produced to the trash (GED Phase 6 -
+    this used to hard-delete it, so the same file could be uploaded again).
+    The trashed row stays as the trace of the removed upload, restorable
+    until the purge; the content_hash dedup only considers live documents
+    (_LIVE_HASH_PREDICATE), so the same file can still be uploaded again.
+    Batch/page history is left in place.
+
+    Returns 'trashed', 'none' (the upload filed nothing - still in the
+    pipeline) or 'gone' (its document is already trashed or destroyed).
+    Raises lifecycle.LifecycleError under legal hold."""
+    import lifecycle
+
+    async with _engine().begin() as conn:
+        docs = await _filed_documents_of_upload(conn, batch_document_id, tenant_slug)
+        live = [d for d in docs if d["live"]]
+        if not live:
+            return "gone" if docs else "none"
+        for d in live:
+            old = await lifecycle.trash(conn, d["table_name"], d["id"], user.id, reason)
+            d["record_id"] = old["record_id"]
+    for d in live:
+        await log_action(
+            action="document_trashed",
+            user_id=user.id,
+            user_email=user.email,
+            table_name=d["table_name"],
+            document_id=d["id"],
+            details={"reason": reason, "via": "ingest", "record_id": d["record_id"]},
+        )
+    return "trashed"
 
 
 # ── Schema inference + storage ────────────────────────────────────────────────
@@ -2999,7 +3201,9 @@ def _pg_type(key: str, value) -> str:
 # at CREATE time by _ensure_table and to pre-existing tables by
 # _backfill_ged_columns. Most are inert until a later GED phase uses them:
 #   lifecycle_status / deleted_at / deleted_by / retention_until /
-#   legal_hold - archiving, trash, retention (every user-facing query
+#   legal_hold (+ deleted_reason, archived_at/by, retention_rule_id,
+#   retention_override, destroyed_at, destruction_id - GED Phase 6,
+#   changed only through lifecycle.py) - archiving, trash, retention (every user-facing query
 #   already hides trashed and destroyed rows, see
 #   documents_router._live_where_clause), confidentiality - access
 #   control, original_path / original_hash - the untouched uploaded file
@@ -3018,6 +3222,13 @@ _GED_COLS: tuple[tuple[str, str], ...] = (
     ("retention_until", "DATE"),
     ("legal_hold", "BOOLEAN DEFAULT false"),
     ("locked_by", "UUID"),
+    ("deleted_reason", "TEXT"),
+    ("archived_at", "TIMESTAMPTZ"),
+    ("archived_by", "UUID"),
+    ("retention_rule_id", "UUID"),
+    ("retention_override", "DATE"),
+    ("destroyed_at", "TIMESTAMPTZ"),
+    ("destruction_id", "UUID"),
     ("locked_until", "TIMESTAMPTZ"),
     ("updated_at", "TIMESTAMPTZ DEFAULT now()"),
     ("origin_node", "TEXT"),
@@ -3098,12 +3309,6 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
                 )
             )
 
-        await conn.execute(
-            text(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_content_hash"
-                f' ON "{table_name}" (content_hash)'
-            )
-        )
         await conn.execute(
             text(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_record_id"
@@ -3190,12 +3395,6 @@ async def _ensure_table(conn, table_name: str, fields: dict) -> str:
             )
             altered = True
 
-    await conn.execute(
-        text(
-            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_content_hash"
-            f' ON "{table_name}" (content_hash)'
-        )
-    )
     await conn.execute(
         text(
             f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table_name}_record_id"
@@ -3449,6 +3648,7 @@ async def _store_extraction(
         await _insert_first_version(
             conn, tenant_id, table_name, "id = CAST(:__doc AS uuid)", {"__doc": doc_id}
         )
+        await retention.recompute_quietly(conn, tenant_id, table_name, doc_id)
 
         # High-confidence documents skip review_required and land here
         # already auto_approved - see the module note above
@@ -4123,6 +4323,9 @@ async def _apply_reextraction(
             source="reextract",
             version_no=target.version_no,
         )
+        await retention.recompute_quietly(
+            conn, tenant_id, table_name, target.document_id
+        )
 
     detected = fields.get("document_type")
     await log_action(
@@ -4633,6 +4836,7 @@ async def _merge_page_into_document(batch_document_id: str) -> None:
             source="reextract",
             version_no=new.get("current_version"),
         )
+        await retention.recompute_quietly(conn, tenant_id, table_name, str(row[0]))
 
     await invalidate_cache("review")
 
@@ -5426,7 +5630,7 @@ async def list_batches(
                     COUNT(*) FILTER (WHERE bd.status = 'duplicate')                 AS duplicates_skipped
                 FROM batches b
                 LEFT JOIN batch_documents bd ON bd.batch_id = b.id
-                WHERE b.tenant_id = CAST(:tenant_id AS uuid)
+                WHERE b.tenant_id = CAST(:tenant_id AS uuid) AND b.removed_at IS NULL
                 GROUP BY b.id, b.source_type, b.created_at
                 ORDER BY b.created_at DESC
                 LIMIT :limit
@@ -5452,46 +5656,78 @@ async def list_batches(
     ]
 
 
-async def _delete_batch(batch_id: str, tenant_id: str, tenant_slug: str) -> bool:
-    """Permanently remove an upload batch and everything it produced.
-    Cancels any in-flight page work for its documents first (same as a
-    single-document cancel-and-delete), deletes any of those documents'
-    finished per-type-table extractions (and their links), then the
-    batch_documents/batch_document_pages tracking rows - explicit, since
-    batch_documents merely REFERENCES batches, no ON DELETE CASCADE - and
-    finally the batch row itself. Returns whether a batch was actually
-    found (and owned by this tenant) to remove."""
+async def _delete_batch(batch_id: str, user) -> bool:
+    """Remove an upload batch (GED Phase 6: nothing it filed is deleted any
+    more). Cancels in-flight page work for its uploads, moves every live
+    document it produced to the trash, deletes the tracking rows of
+    uploads that filed nothing (pages cascade). The batch row itself is
+    deleted when nothing is left, else hidden from the upload list
+    (removed_at) - its trashed documents still point at it. Refused as a
+    whole (lifecycle.LifecycleError) when one of its documents is under
+    legal hold. Returns whether the batch was found in the user's tenant."""
+    import lifecycle
+
     async with _engine().connect() as conn:
         owner_check = await conn.execute(
             text(
                 "SELECT 1 FROM batches WHERE id = CAST(:id AS uuid) AND tenant_id = CAST(:tid AS uuid)"
             ),
-            {"id": batch_id, "tid": tenant_id},
+            {"id": batch_id, "tid": user.tenant_id},
         )
         if owner_check.one_or_none() is None:
             return False
-
-    async with _session()() as sess:
-        rows = await sess.execute(
-            text("SELECT id FROM batch_documents WHERE batch_id = CAST(:bid AS uuid)"),
-            {"bid": batch_id},
+        doc_ids = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT id::text FROM batch_documents WHERE batch_id = CAST(:bid AS uuid)"
+                    ),
+                    {"bid": batch_id},
+                )
+            )
+            .scalars()
+            .all()
         )
-        doc_ids = [str(r[0]) for r in rows]
+        filed = {
+            d: await _filed_documents_of_upload(conn, d, user.tenant_slug)
+            for d in doc_ids
+        }
+        for docs in filed.values():
+            for d in docs:
+                row = await lifecycle.load(conn, d["table_name"], d["id"])
+                if d["live"] and row is not None and row["held"]:
+                    raise lifecycle.LifecycleError(409, "lifecycle.legal_hold")
 
     for doc_id in doc_ids:
         await _cancel_document_page_tasks(doc_id)
-        await _delete_document_by_batch_document_id(doc_id, tenant_id, tenant_slug)
+        if filed[doc_id]:
+            await _trash_document_by_batch_document_id(
+                doc_id, user.tenant_slug, user, "batch_removed"
+            )
 
+    unfiled = [d for d in doc_ids if not filed[d]]
     async with _engine().begin() as conn:
-        await conn.execute(
-            text("DELETE FROM batch_documents WHERE batch_id = CAST(:bid AS uuid)"),
-            {"bid": batch_id},
-        )
-        result = await conn.execute(
-            text("DELETE FROM batches WHERE id = CAST(:id AS uuid) RETURNING id"),
-            {"id": batch_id},
-        )
-        return result.scalar() is not None
+        if unfiled:
+            await conn.execute(
+                text(
+                    "DELETE FROM batch_documents WHERE id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": unfiled},
+            )
+        if len(unfiled) == len(doc_ids):
+            await conn.execute(
+                text("DELETE FROM batches WHERE id = CAST(:id AS uuid)"),
+                {"id": batch_id},
+            )
+        else:
+            await conn.execute(
+                text(
+                    "UPDATE batches SET removed_at = now(), removed_by = CAST(:u AS uuid)"
+                    " WHERE id = CAST(:id AS uuid)"
+                ),
+                {"id": batch_id, "u": user.id if user.role != "api_key" else None},
+            )
+    return True
 
 
 @router.delete("/batches/{batch_id}")
@@ -5501,16 +5737,23 @@ async def delete_batch(
     batch_id: str,
     current_user: CurrentUser = Depends(require_admin),
 ):
-    """Permanently remove an upload batch and everything it produced -
-    documents still mid-pipeline are cancelled, documents that already
-    finished extraction are deleted too. Admin only: unlike a single
-    document's "Cancel & remove", this can discard multiple already-
+    """Remove an upload batch - documents still mid-pipeline are cancelled,
+    documents that already finished extraction go to the trash (restorable
+    until the purge). Admin only: this can discard multiple already-
     extracted, reviewed records at once, not just bookkeeping."""
-    deleted = await _delete_batch(batch_id, current_user.tenant_id, current_user.tenant_slug)
+    import lifecycle
+
+    try:
+        deleted = await _delete_batch(batch_id, current_user)
+    except lifecycle.LifecycleError as exc:
+        raise HTTPException(
+            status_code=exc.status, detail=t(exc.key, current_user.locale, **exc.params)
+        ) from None
     if not deleted:
         raise HTTPException(
             status_code=404, detail=t("common.batch_not_found", current_user.locale)
         )
+    await invalidate_cache("review", "types")
     return {"ok": True}
 
 
@@ -5774,21 +6017,20 @@ async def delete_ingested_document(
     batch_document_id: str,
     current_user: CurrentUser = Depends(require_admin),
 ):
-    """Cancel and remove one upload, whatever stage it's in. Admin only,
-    since this is irreversible.
+    """Cancel and remove one upload, whatever stage it's in. Admin only.
 
     Two cases:
-    - Already finished (a row exists in some per-type table): delete that
-      row, exactly as before - the same file can then be re-uploaded
-      without tripping the content-hash duplicate check. Batch/page
-      history is left in place.
+    - Already finished (a row exists in some per-type table): that document
+      goes to the trash (GED Phase 6 - it used to be deleted). The same
+      file can still be re-uploaded: dedup only considers live documents.
+      Batch/page history is left in place. Refused under legal hold.
     - Still mid-pipeline (no per-type row yet - pending, processing, or
-      stuck retrying): there was previously no way to remove this at all,
-      since the per-type-table delete simply found nothing and 404'd.
-      Cancels any in-flight VLM call for this document's pages first
-      (_cancel_document_page_tasks), then deletes the batch_documents row
-      directly - batch_document_pages cascades with it (ON DELETE
-      CASCADE)."""
+      stuck retrying): cancels any in-flight VLM call for this document's
+      pages first (_cancel_document_page_tasks), then deletes the
+      batch_documents row directly - batch_document_pages cascades with it
+      (ON DELETE CASCADE). Nothing was filed, so nothing is lost."""
+    import lifecycle
+
     tenant = await _resolve_tenant_for_batch_document(batch_document_id)
     if tenant is None or tenant[0] != current_user.tenant_id:
         raise HTTPException(
@@ -5799,8 +6041,16 @@ async def delete_ingested_document(
 
     await _cancel_document_page_tasks(batch_document_id)
 
-    deleted = await _delete_document_by_batch_document_id(batch_document_id, tenant_id, tenant_slug)
-    if not deleted:
+    try:
+        outcome = await _trash_document_by_batch_document_id(
+            batch_document_id, tenant_slug, current_user, "upload_removed"
+        )
+    except lifecycle.LifecycleError as exc:
+        raise HTTPException(
+            status_code=exc.status, detail=t(exc.key, current_user.locale, **exc.params)
+        ) from None
+    deleted = outcome == "trashed"
+    if outcome == "none":
         async with _engine().begin() as conn:
             result = await conn.execute(
                 text("DELETE FROM batch_documents WHERE id = CAST(:id AS uuid) RETURNING id"),
@@ -5813,4 +6063,5 @@ async def delete_ingested_document(
             status_code=404,
             detail=t("ingest.no_extracted_document", current_user.locale),
         )
+    await invalidate_cache("review", "types")
     return {"ok": True}

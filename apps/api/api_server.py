@@ -462,6 +462,12 @@ from classification_router import router as classification_router
 
 app.include_router(classification_router)
 
+# ── Lifecycle router (archive, trash, retention, legal hold, destruction) ─────
+
+from lifecycle_router import router as lifecycle_router
+
+app.include_router(lifecycle_router)
+
 # ── Review queue router ───────────────────────────────────────────────────────
 
 from review_router import router as review_router

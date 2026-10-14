@@ -36,6 +36,9 @@ export const DbDocumentSchema = z.object({
   source_image_path: z.string().nullable(),
   reviewed_by: z.string().nullable(),
   series_id: z.string().nullable(),
+  // GED Phase 6 - archived / destruction_eligible documents are read-only.
+  lifecycle_status: z.string().optional(),
+  legal_hold: z.boolean().optional(),
   // Whatever non-system fields this document's own tenant/schema extracted -
   // opaque, since it varies per document type (see documents_router._extra_cols).
   extra_fields: z.record(z.string(), z.unknown()),

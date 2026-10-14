@@ -9,6 +9,8 @@ Usage:
   python create_tenant.py --slug oil --name "Ministry of Oil" \
       --list-fields entries,quality_issues --page-timeout-seconds 180 --split-page-columns
 
+  python create_tenant.py --slug aid --name "Aid Agency" --locale en
+
 Upserts by slug: running again updates the tenant's name/config and
 re-activates it. The prompt file itself is placed by ops directly on the
 documents/ volume mount (per README) - no rebuild needed to onboard a
@@ -39,6 +41,7 @@ async def main(
     list_fields: str | None,
     page_timeout_seconds: float | None,
     split_page_columns: bool | None,
+    locale: str | None = None,
 ) -> None:
     engine = create_async_engine(DATABASE_URL, echo=False)
 
@@ -46,15 +49,18 @@ async def main(
         result = await conn.execute(
             text("""
                 INSERT INTO sdai_tenants
-                    (slug, name, prompt_file, list_fields, page_timeout_seconds, split_page_columns)
+                    (slug, name, prompt_file, list_fields, page_timeout_seconds, split_page_columns,
+                     locale)
                 VALUES
-                    (:slug, :name, :prompt_file, :list_fields, :page_timeout_seconds, :split_page_columns)
+                    (:slug, :name, :prompt_file, :list_fields, :page_timeout_seconds, :split_page_columns,
+                     :locale)
                 ON CONFLICT (slug) DO UPDATE
                     SET name                 = :name,
                         prompt_file          = :prompt_file,
                         list_fields          = :list_fields,
                         page_timeout_seconds = :page_timeout_seconds,
                         split_page_columns   = :split_page_columns,
+                        locale               = :locale,
                         is_active            = true
                 RETURNING id, slug, name
             """),
@@ -65,6 +71,7 @@ async def main(
                 "list_fields": list_fields,
                 "page_timeout_seconds": page_timeout_seconds,
                 "split_page_columns": split_page_columns,
+                "locale": locale,
             },
         )
         row = result.one()
@@ -106,6 +113,13 @@ if __name__ == "__main__":
         default=None,
         help="Enable two-column page splitting for this tenant. Omit to fall back to the deployment-wide default.",
     )
+    parser.add_argument(
+        "--locale",
+        choices=["fr", "en"],
+        default=None,
+        help="The organisation's language: 'en' adds an English part to destruction reports"
+        " (procès-verbal d'élimination). Omit for French only.",
+    )
     args = parser.parse_args()
 
     if not _SLUG_RE.match(args.slug):
@@ -131,5 +145,6 @@ if __name__ == "__main__":
             args.list_fields,
             args.page_timeout_seconds,
             args.split_page_columns,
+            args.locale,
         )
     )

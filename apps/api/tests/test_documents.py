@@ -605,6 +605,10 @@ def test_get_document_links_returns_enriched(auth_client, mock_db, monkeypatch):
         "document_type": "titre_foncier",
         "source_image_path": "/img.png",
         "display": "REF-99",
+        "record_id": "ADM-1",
+        "visible": True,
+        "destroyed": False,
+        "trashed": False,
     }
     mock_db.execute.side_effect = [
         make_result(one_or_none=(1,)),  # _document_visible(my_table, doc-1)
