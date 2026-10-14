@@ -1,5 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  discardEmails,
+  fetchEmailOutbox,
+  retryEmails,
   fetchSyncConflicts,
   fetchSyncProblemFiles,
   fetchSyncStatus,
@@ -52,6 +55,23 @@ export function useRetrySyncFiles() {
     mutationFn: retrySyncFiles,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["sync-files"] });
+      queryClient.invalidateQueries({ queryKey: ["sync-status"] });
+    },
+  });
+}
+
+/** This server's e-mail outbox (GED Phase 7) - failed and retrying e-mails. */
+export function useEmailOutbox() {
+  return useQuery({ queryKey: ["email-outbox"], queryFn: () => fetchEmailOutbox(), refetchInterval: 60_000 });
+}
+
+export function useEmailOutboxAction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, ids }: { kind: "retry" | "discard"; ids?: string[] }): Promise<unknown> =>
+      kind === "retry" ? retryEmails(ids) : discardEmails(ids),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["email-outbox"] });
       queryClient.invalidateQueries({ queryKey: ["sync-status"] });
     },
   });

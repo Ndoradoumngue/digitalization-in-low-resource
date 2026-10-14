@@ -323,6 +323,82 @@ execution, file deletion on both nodes, PV), `pdf_report.py` (small PDF writer) 
   two-node `test_destruction_deletes_files_on_both_nodes`, vitest `lifecycle.test.ts` (payloads captured
   from the API). Upgrade from the Phase 5 schema checked (index replaced, columns/tables added, idempotent).
 
+### Notifications, Check-out, Comments, Electronic Signature (GED Phase 7)
+
+Code in `apps/api/notifications.py` (notify helper, recipients, e-mail outbox + sender, digest, ops
+alerts), `notifications_router.py`, `locks.py` + `checkout_router.py`, `comments_router.py`,
+`signatures.py` (pyHanko PAdES signing/verification, image → PDF) + `signature_router.py`,
+`scripts/generate_signing_cert.py`; UI in `NotificationBell`, `NotificationsPage`, `CheckoutControl`,
+`CommentsSection`, `SignaturesSection` (document tabs "Commentaires" / "Signatures", `?tab=`).
+
+- **Notifications** (`sdai_notifications`, synced; + `table_name`, `document_id`): `notifications.notify(conn,
+  tenant, users, kind, payload, table_name=, document_id=, coalesce=, exclude=)` runs in the caller's
+  transaction under a savepoint and never raises. Kinds: `review_pending` (after `_store_extraction` when not
+  auto-approved, to admins/reviewers who can edit it, coalesced into one unread "N to review"),
+  `document_shared` (document grant → the person / group members who can read it), `mention`,
+  `comment_reply`, `retention_eligible`, `destruction_proposed`, `sync_down` / `backup_failed` (each node
+  checks its own state every `OPS_ALERT_CHECK_SECONDS`, notifies all admins once per occurrence -
+  `sdai_ops_alerts` node-local), `signature_requested` / `_completed` / `_declined`, `lock_released`.
+  Recipients are always re-checked with `_document_visible`; the list endpoint re-checks access too and
+  strips the document reference + payload of notifications about documents no longer readable.
+  Routes: `GET /api/db/notifications`, `/unread-count`, `POST .../{id}/read`, `/read-all`,
+  `GET|PUT /api/db/notification-preferences` (`sdai_users.email_notifications` immediate/digest/off,
+  `sdai_users.locale` - set at first login when empty).
+- **E-mail** (`sdai_email_outbox`, **node-local** - the node that queued an e-mail sends it): queued only
+  when `SMTP_HOST` + `SMTP_FROM` are set, one row per `dedupe_key` (`n:<notification>`,
+  `digest:<user>:<date>`), subject/body from fixed fr/en sentences (`email.*` in i18n.py) + a link on
+  `PUBLIC_BASE_URL`, never document content. `email_worker` (every node) claims due rows with SKIP LOCKED,
+  sends over SMTP (`SMTP_SECURITY` starttls/ssl/none), retries with backoff (1 min … 6 h) up to
+  `EMAIL_MAX_ATTEMPTS`, reclaims rows stuck in 'sending' after 10 min (at-least-once; Message-ID = outbox
+  id). `digest_worker` (local node) after `EMAIL_DIGEST_HOUR`: unread notifications of the last 24 h.
+  Admins see this node's failed / retrying e-mails on the Synchronisation page ("E-mails envoyés par ce
+  serveur": `GET /api/admin/emails`, `POST /api/admin/emails/retry|discard {ids?}`, tenant-scoped, audited
+  `emails_retried` / `emails_discarded`) and a sync-status alert `emails_failed`.
+- **Check-out** (`locked_by` / `locked_until` on every per-type table): `locks.unlocked_sql` is folded into
+  the `edit` level of `_access_where_clause` **for admins too**, so every write path refuses a document
+  checked out by someone else; `_require_document_permission` answers **423** "Verrouillé par X" (page
+  actions answer 404 through their guard). Locked documents leave the others' review queue. Routes
+  `GET .../lock`, `POST .../checkout {hours}` (edit; default `CHECKOUT_DEFAULT_HOURS`=8, max
+  `CHECKOUT_MAX_HOURS`=72; the holder re-checks out to extend), `POST .../checkin` (multipart, holder;
+  optional file → next version via `versions_router.add_uploaded_version`, comment, reextract),
+  `POST .../unlock` (admin, notifies the holder). Expired locks are free at once; `locks.expiry_worker`
+  (local node, `LOCK_SWEEP_SECONDS`) clears them. Archived documents can only be checked out by lifecycle
+  managers (edit level). Across nodes the lock is a synced column - advisory while they are disconnected.
+  Audit `document_checked_out`, `document_checked_in` (`details.reason`: checkin / forced / expired).
+- **Comments** (`sdai_comments`, synced, no FK on `parent_id` - the peer applies deletes row by row):
+  read access to read; reviewer role + read access to post (also on checked-out / archived documents);
+  author edits; author or admin deletes (soft). `mentions` = user ids, filtered to people who can read the
+  document (`/comments/mentionable?q=`); replies notify the parent's author. Audit `comment_added` /
+  `_edited` / `_deleted` (ids, lengths, mentions - never the text).
+- **Electronic signature** - simple / advanced, PAdES-B-B, never "qualified":
+  `sdai_signature_requests` (ordered `signers` JSONB, status pending/completed/declined/cancelled, one
+  pending request per document) and `sdai_signatures` (evidence: version signed and produced, field name,
+  signer, title, reason, time, IP, certificate subject + SHA-256 fingerprint, hashes before/after), both
+  synced. Requesting needs edit; signers must be able to read. Signing (`POST
+  /api/db/signature-requests/{id}/sign {password, reason?}`, next signer only): bcrypt re-check of the
+  password (failures audited `signature_password_failed`), then under the version row lock
+  (`_lock_for_change`: check-out 409, archived 403) the current version is signed with the organisation
+  certificate (`SIGNING_P12_PATH` / `SIGNING_P12_PASSWORD`, cached by path + mtime) as an incremental update
+  with a visible stamp (bottom-left of the last page, stacked) → a new version `v<N>_<name>_signe.pdf`; an
+  image version is first converted (img2pdf, PDF/A-2b via `ocrmypdf --skip-text` when installed - in the API
+  image) as a version of its own. 503 when no certificate. `GET .../signatures?version=` verifies every
+  embedded signature (intact, trusted against the org certificate + `SIGNING_TRUST_ROOTS`, coverage) and
+  matches it with the evidence + the audit events. Decline / cancel close the request. Audit
+  `signature_requested`, `document_signed`, `signature_declined`, `signature_request_cancelled`.
+- **Destruction** also deletes the document's comments, notifications, signature requests and evidence
+  (execute + `heal_tombstones`).
+- **Tests**: `test_collab.py` (mocked helpers: e-mail content, backoff, links, lock SQL, file types),
+  `test_collab_pg.py` (37 against PostgreSQL: notify/coalesce/savepoint, outbox idempotency + sender
+  retries/give-up/stale claims, digest, notification API + leak, preferences, share/review notifications,
+  ops alerts; lock on every write path for admins and archivists, check-in with version, extend, rights,
+  forced unlock, expiry, review queue; comments rights/leaks/mentions/replies/edit/delete/destruction;
+  signing status, request rules, ordered signing with a generated certificate → new versions validating with
+  pyHanko, image conversion, tampering detected, lock/lifecycle rules, reader signer, decline, cancel,
+  destruction), two-node `test_collaboration_rows_sync_but_the_outbox_stays`, vitest
+  `collaboration.test.ts`. Upgrade from the Phase 6 schema checked (tables, columns, sync triggers, outbox
+  untouched, idempotent). UI clicked through in headless Chromium (request, comment with mention, check-out,
+  lock seen by another user, notifications, check-in, sign, verification).
+
 ### Local/Cloud Sync and Backups (GED Phase 8)
 
 Two servers hold the same deployment: the **local** node (on site, GPU, works offline, drives the
@@ -510,7 +586,6 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | VLM model selector | Not built - only `vlm_qwen25_results.json` is wired to the VLM tab |
 | Field correction UI | Not built - document detail view is read-only |
 | Mobile / responsive layout | Not tested - designed for desktop |
-| Email notifications | Not built - review queue is pull-only |
 | Bulk review actions | Not built - documents are approved/rejected one at a time |
 | Audit log user filter in UI | Backend supports `user_id` filter but UI exposes only `action` and date range |
 | Tenant deactivate/delete flow | `sdai_tenants.is_active` exists but nothing sets it to `false` - retiring a tenant currently means a manual SQL `UPDATE` |
@@ -524,7 +599,13 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | Audit details after destruction | The append-only audit log keeps what it recorded before (e.g. `document_fields_edited` changes with old/new values); a destruction cannot erase it (it would break the hash chain) |
 | Retention on active documents | Retention only ends for archived documents: a document never archived is never proposed for destruction, whatever its rule |
 | Document-date rules | `trigger_on=document_date` needs a parseable extracted date (ISO, d/m/Y, "8 mars 2021"); documents without one get no retention date (never eligible) - shown as "No retention" |
-| Notifications | Retention and destruction notifications are stored (`sdai_notifications`, `GET /api/db/notifications`) but there is no notification UI or e-mail yet - Phase 7; archivists see the sidebar badge |
+| E-mail delivery | At-least-once: a crash between the SMTP answer and the status update resends the e-mail (same Message-ID). Each server's outbox is only visible on that server's Synchronisation page |
+| Digest timing | Daily digests are built by the local node after `EMAIL_DIGEST_HOUR` (server time) - none while the local node is down |
+| Review notifications | One coalesced notification per reviewer ("N documents to review"); with immediate e-mail the reviewer gets one e-mail until they read it |
+| Check-out across nodes | While the nodes can't reach each other, the same document can be checked out on both sides; edits then meet the sync conflict rules |
+| Signature certificate | One organisation certificate per node (not per tenant or per signer); a self-signed one shows as "validity unknown" in PDF readers outside SDAI. No timestamp authority (PAdES-B-B, no B-T/LTV) - the time is the server's |
+| PDF/A conversion | Only with `ocrmypdf` installed (it is in the API image); otherwise image originals are converted to plain PDF before signing |
+| Signed PDFs not displayed | The viewer still shows the page images of the last extracted file; the signed PDF is in the Versions tab / download menu |
 | Legal holds on search results | A search hold freezes the documents found at that moment; documents matching the same search later are not held (use a series hold for that) |
 | Audit chain vs. a DB superuser | The chain shows edits, deletions and truncation, but someone able to rewrite both the log and `sdai_audit_chain_heads` could recompute it undetected - the replicated copy on the other node (GED Phase 8) is the external witness |
 | Sync topology | Exactly one peer per node (`SYNC_PEER_URL`), no relaying - a third node would need its own pairing; the local node must be able to reach the cloud (not the reverse) |
@@ -534,7 +615,7 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | HLC counter wrap | Two changes of one node in the same millisecond after 100 000 others (counter wrap) could be ordered wrongly - not reachable in practice |
 | Hourly-scale clock skew | Sync requests are refused beyond ±5 min skew - both nodes must run NTP |
 | Conflicts per node | Each node keeps its own conflict list; resolving on one closes the other's copy only when the resolution reaches it (next cycle) |
-| UI not clicked through | The Synchronisation page and badges, the classification UI (series tree, tags, suggestions, filing rules), the search UI (nav search box, snippets, page badges) and the Phase 5 UI (download menu, share dialog, multi-select export, My exports) were type-checked and built, not tested in a browser (the Phase 6 lifecycle UI was clicked through in Chrome) |
+| UI not clicked through | The Synchronisation page and badges, the classification UI (series tree, tags, suggestions, filing rules), the search UI (nav search box, snippets, page badges) and the Phase 5 UI (download menu, share dialog, multi-select export, My exports) were type-checked and built, not tested in a browser (the Phase 6 lifecycle UI and the Phase 7 collaboration UI were clicked through) |
 | Existing documents not auto-filed | Automatic filing applies to documents filed from Phase 3 on; older documents without a series stay unfiled until assigned |
 | Link suggestions are lexical | Only exact reference strings are matched (no fuzzy match on "N° 123" vs "N°123") |
 | Series names on sync | Two series with the same name created under the same parent on both nodes while disconnected arrive as a `unique_violation` sync conflict |
@@ -579,10 +660,18 @@ apps/api/
   share_router.py                   # /api/db/.../shares + public /s/{token} page and download
   export_router.py                  # /api/db/export - selective export jobs (ZIP + metadata + sha256 manifest)
   lifecycle.py                      # state machine - the only writer of lifecycle_status / trash / archived_at; legal-hold SQL
-  lifecycle_router.py               # /api/db archive, trash, restore, retention rules, legal holds, destructions, notifications
+  lifecycle_router.py               # /api/db archive, trash, restore, retention rules, legal holds, destructions
   retention.py                      # retention rules (precedence, dates, recompute) + daily job (local node)
   destruction.py                    # proposals, two-person approval, tombstones, file deletion on both nodes, PV
   pdf_report.py                     # small text PDF writer (destruction PV)
+  notifications.py                  # notify() + recipients, e-mail outbox + sender, daily digest, ops alerts (GED Phase 7)
+  notifications_router.py           # /api/db/notifications, unread count, read, preferences
+  locks.py                          # check-out lock SQL (folded into the edit level), checkout/release, expiry sweep
+  checkout_router.py                # /api/db/.../lock, checkout, checkin (+ new version), unlock (admin)
+  comments_router.py                # /api/db/.../comments (threads, @mentions) + /api/db/comments/{id}
+  signatures.py                     # PAdES signing/verification (pyHanko), organisation certificate, image → PDF/A
+  signature_router.py               # signature requests, sign (password), decline, cancel, verification + evidence
+  scripts/generate_signing_cert.py  # self-signed organisation certificate (.p12) for tests / first install
   scripts/backfill_page_text.py     # transcribe pages without text (local node; resumable, throttled)
   create_admin.py                   # seed script to create/upsert a user within a tenant
   create_tenant.py                  # seed script to create/upsert a tenant (ministry)
@@ -607,6 +696,8 @@ apps/api/
     test_share_export_pg.py         # GED Phase 5 download, share links, exports on a real PostgreSQL (opt-in, -m pg)
     test_lifecycle.py               # GED Phase 6 route guards, transitions, retention helpers, PV (mocked)
     test_lifecycle_pg.py            # GED Phase 6 trash, retention, holds, destruction on a real PostgreSQL (opt-in, -m pg)
+    test_collab.py                  # GED Phase 7 helpers: e-mail content, backoff, lock SQL, signature file types (mocked)
+    test_collab_pg.py               # GED Phase 7 notifications, outbox, check-out, comments, signatures (opt-in, -m pg)
 
 apps/frontend/src/
   context/AuthContext.tsx           # global auth state (user, login, logout)
@@ -620,7 +711,14 @@ apps/frontend/src/
   pages/DashboardPage.tsx           # main app shell - sidebar + tab switcher + panels
   pages/UploadPage.tsx              # file upload UI
   pages/DocumentsPage.tsx           # database document browser
-  pages/DocumentDetailPage.tsx      # single document - tabs Record / Versions / History
+  pages/DocumentDetailPage.tsx      # single document - tabs Record / Versions / History / Comments / Signatures (?tab=)
+  pages/NotificationsPage.tsx       # notifications list, documents to sign, e-mail preferences
+  components/NotificationBell.tsx   # sidebar bell with unread count (polls every minute)
+  components/CheckoutControl.tsx    # header lock badge, Extraire / Réintégrer / forced unlock
+  components/CommentsSection.tsx    # "Comments" tab: threads, @mention autocomplete, edit/delete
+  components/SignaturesSection.tsx  # "Signatures" tab: requests, sign / decline / cancel, verification + evidence
+  hooks/useCollaboration.ts         # notifications, lock, comments, signatures queries + mutations
+  utils/notifications.ts            # notification text per kind + tab-aware links
   pages/SchemaPage.tsx              # schema inspector
   pages/ReviewPage.tsx              # review queue
   pages/AuditPage.tsx               # audit log (admin only)
@@ -670,6 +768,7 @@ packages/types/src/
   versions.ts                       # document versions, field history, audit-chain verification
   sharing.ts                        # share links, export jobs, ExportRequest
   lifecycle.ts                      # lifecycle status, retention rules, legal holds, trash, destruction records
+  collaboration.ts                  # notifications, preferences, lock, comments, signature requests / verification
 
 packages/api-client/src/
   index.ts                          # all fetch functions, imageUrl helper, fetchAuditLog()
@@ -689,6 +788,5 @@ install.sh                          # offline server: install from bundle + dock
 2. **VLM model switcher** - allow selecting between multiple `vlm_*_results.json` files via a dropdown.
 3. **Bulk review** - select multiple documents in `ReviewPage` and approve/reject in batch.
 4. **Field correction** - allow users to edit extracted fields in `DocumentDetailPage` and save to the database.
-5. **Email notifications** - notify reviewers when new documents are ingested and pending review.
-6. **Auto-suggest document links** - when a VLM-extracted field (e.g. `reference_number`) matches an existing record, suggest a link during review instead of requiring the reviewer to search for it manually via `DocumentLinkPicker`.
-7. **Tenant deactivate/delete flow** - see Known Limitations.
+5. **Auto-suggest document links** - when a VLM-extracted field (e.g. `reference_number`) matches an existing record, suggest a link during review instead of requiring the reviewer to search for it manually via `DocumentLinkPicker`.
+6. **Tenant deactivate/delete flow** - see Known Limitations.

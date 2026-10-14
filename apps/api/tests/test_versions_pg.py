@@ -381,7 +381,8 @@ def test_upload_rejects_bad_content(as_user):
 
 
 def test_locked_by_someone_else_refused(as_user):
-    assert _upload(as_user(EDITOR()), "locked").status_code == 409
+    # Checked out by someone else: 423 "checked out by X" (GED Phase 7).
+    assert _upload(as_user(EDITOR()), "locked").status_code == 423
     # The lock holder itself may.
     assert _upload(as_user(ADMIN()), "locked").status_code == 200
 

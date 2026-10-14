@@ -13,3 +13,4 @@ export * from "./versions";
 export * from "./sync";
 export * from "./sharing";
 export * from "./lifecycle";
+export * from "./collaboration";

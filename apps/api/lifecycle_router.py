@@ -20,7 +20,6 @@ may ask, translates refusals and writes the audit trail.
   POST   /api/db/destructions/{id}/approve|reject   admin, never the proposer
   POST   /api/db/destructions/{id}/cancel       the proposer withdraws it
   GET    /api/db/destructions/{id}/pv           the procès-verbal (PDF)
-  GET    /api/db/notifications, POST .../{id}/read   the caller's notifications
 
 A "lifecycle manager" is an admin or a reviewer delegated can_manage_lifecycle
 (CurrentUser.can_manage_document_lifecycle). Archive and trash also need the
@@ -42,6 +41,7 @@ from typing import Literal
 
 import destruction
 import lifecycle
+import notifications
 import retention
 from audit import client_ip, log_action
 from auth import CurrentUser, require_admin, require_reviewer, require_user
@@ -1214,7 +1214,7 @@ async def propose_destruction(
             .scalars()
             .all()
         )
-        await retention.notify(
+        await notifications.notify(
             conn,
             current_user.tenant_id,
             list(admins),
@@ -1393,57 +1393,3 @@ async def download_pv(
         media_type="application/pdf",
         filename=f"{destruction.record_number(r['id'], r['proposed_at'])}.pdf",
     )
-
-
-# ── Notifications (minimal - Phase 7 adds the UI and e-mail) ──────────────────
-
-
-@router.get("/notifications", summary="My notifications")
-async def list_notifications(
-    unread_only: bool = False, current_user: CurrentUser = Depends(require_user)
-):
-    async with _engine().connect() as conn:
-        rows = (
-            (
-                await conn.execute(
-                    text(f"""
-                    SELECT id::text AS id, kind, payload, created_at, read_at
-                    FROM sdai_notifications
-                    WHERE user_id = CAST(:u AS uuid) AND tenant_id = CAST(:tid AS uuid)
-                    {"AND read_at IS NULL" if unread_only else ""}
-                    ORDER BY created_at DESC LIMIT 100
-                """),
-                    {"u": current_user.id, "tid": current_user.tenant_id},
-                )
-            )
-            .mappings()
-            .all()
-        )
-    return [
-        {
-            **dict(r),
-            "payload": json.loads(r["payload"])
-            if isinstance(r["payload"], str)
-            else r["payload"],
-            "created_at": _iso(r["created_at"]),
-            "read_at": _iso(r["read_at"]),
-        }
-        for r in rows
-    ]
-
-
-@router.post(
-    "/notifications/{notification_id}/read", summary="Mark a notification read"
-)
-async def read_notification(
-    notification_id: uuid.UUID, current_user: CurrentUser = Depends(require_user)
-):
-    async with _engine().begin() as conn:
-        await conn.execute(
-            text("""
-                UPDATE sdai_notifications SET read_at = now()
-                WHERE id = CAST(:id AS uuid) AND user_id = CAST(:u AS uuid) AND read_at IS NULL
-            """),
-            {"id": str(notification_id), "u": current_user.id},
-        )
-    return {"ok": True}

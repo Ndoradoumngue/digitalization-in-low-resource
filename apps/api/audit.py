@@ -23,6 +23,12 @@ Actions logged:
   document_shared    share_link_revoked  share_link_accessed (public share links,
                                                      IP + event, no user)
   documents_exported export_downloaded               (selective export jobs)
+  document_checked_out  document_checked_in          (check-out; details.reason
+                                                     checkin / forced / expired)
+  comment_added  comment_edited  comment_deleted     (ids and lengths, never the text)
+  signature_requested  document_signed  signature_declined
+  signature_request_cancelled  signature_password_failed
+  notification_preferences_changed  emails_retried  emails_discarded
 
 Every row is chained (chain_seq / prev_hash / row_hash, one chain per
 origin_node) by the sdai_audit_chain trigger in the database itself - see

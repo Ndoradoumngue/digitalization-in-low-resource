@@ -4,6 +4,8 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import NavSidebar from "../components/NavSidebar";
 import {
+  useEmailOutbox,
+  useEmailOutboxAction,
   useResolveSyncConflict,
   useRetrySyncFiles,
   useSyncConflicts,
@@ -210,6 +212,77 @@ function FilesPanel({ status }: { status: SyncStatus }) {
   );
 }
 
+// ── E-mails (GED Phase 7) ─────────────────────────────────────────────────────
+
+function EmailsPanel() {
+  const { t } = useTranslation();
+  const { data } = useEmailOutbox();
+  const action = useEmailOutboxAction();
+  if (!data) return null;
+  const failed = data.items.filter((e) => e.status === "failed");
+  return (
+    <Panel title={t("sync.emails.heading")}>
+      {!data.email_enabled && <p className="mb-3 text-xs text-amber-700">{t("sync.emails.disabled")}</p>}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <Stat label={t("sync.emails.pending")} value={data.counts.pending + data.counts.sending} tone={data.counts.pending ? "amber" : "gray"} />
+        <Stat label={t("sync.emails.failed")} value={data.counts.failed} tone={data.counts.failed ? "red" : "gray"} />
+        <Stat label={t("sync.emails.sent")} value={data.counts.sent} tone="green" />
+      </div>
+      <p className="mt-2 text-[11px] text-gray-500">{t("sync.emails.hint")}</p>
+      {failed.length > 0 && (
+        <div className="mt-3 flex items-center gap-3">
+          <button
+            onClick={() => action.mutate({ kind: "retry" })}
+            disabled={action.isPending}
+            className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-40"
+          >
+            {t("sync.emails.retryAll")}
+          </button>
+          <button
+            onClick={() => action.mutate({ kind: "discard" })}
+            disabled={action.isPending}
+            className="text-xs text-red-600 hover:underline disabled:opacity-40"
+          >
+            {t("sync.emails.discardAll")}
+          </button>
+        </div>
+      )}
+      {data.items.length > 0 && (
+        <ul className="mt-3 divide-y divide-gray-100 max-h-80 overflow-y-auto">
+          {data.items.map((e) => (
+            <li key={e.id} className="py-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className={`px-1.5 py-0.5 rounded font-semibold ${e.status === "failed" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>
+                  {t(`sync.emails.status.${e.status}`)}
+                </span>
+                <span className="font-medium text-gray-800">{e.to_email}</span>
+                <span className="text-gray-500 truncate">{e.subject}</span>
+                <span className="flex-1" />
+                <span className="text-gray-400">{when(e.created_at, "-")}</span>
+                {e.status === "failed" && (
+                  <button
+                    onClick={() => action.mutate({ kind: "retry", ids: [e.id] })}
+                    disabled={action.isPending}
+                    className="text-indigo-600 hover:underline"
+                  >
+                    {t("sync.emails.retry")}
+                  </button>
+                )}
+              </div>
+              {e.last_error && (
+                <p className="mt-0.5 text-gray-500 font-mono break-all">
+                  {t("sync.emails.attempts", { count: e.attempts })} · {e.last_error}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {data.items.length === 0 && <p className="mt-3 text-xs text-gray-400">{t("sync.emails.none")}</p>}
+    </Panel>
+  );
+}
+
 // ── Conflicts ─────────────────────────────────────────────────────────────────
 
 function ConflictRow({ c }: { c: SyncConflict }) {
@@ -404,6 +477,7 @@ export default function SyncAdminPage() {
               <FilesPanel status={status} />
               <ConflictsPanel />
               <BackupsPanel backups={status.backups} lastSuccess={status.last_backup_success} />
+              <EmailsPanel />
             </>
           )}
         </div>

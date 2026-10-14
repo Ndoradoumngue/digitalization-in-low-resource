@@ -66,6 +66,19 @@ const ACTION_STYLES: Record<string, string> = {
   destruction_cancelled: "bg-gray-100   text-gray-600",
   document_destroyed: "bg-gray-800   text-white",
   destruction_pv_downloaded: "bg-sky-100    text-sky-800",
+  document_checked_out: "bg-sky-100    text-sky-800",
+  document_checked_in: "bg-sky-50     text-sky-700",
+  comment_added: "bg-gray-100   text-gray-700",
+  comment_edited: "bg-gray-100   text-gray-600",
+  comment_deleted: "bg-gray-100   text-gray-600",
+  signature_requested: "bg-indigo-100 text-indigo-800",
+  document_signed: "bg-green-100  text-green-800",
+  signature_declined: "bg-red-100    text-red-700",
+  signature_request_cancelled: "bg-gray-100   text-gray-600",
+  signature_password_failed: "bg-red-100    text-red-700",
+  notification_preferences_changed: "bg-gray-100   text-gray-600",
+  emails_retried: "bg-gray-100   text-gray-600",
+  emails_discarded: "bg-gray-100   text-gray-600",
 };
 
 const ALL_ACTIONS = Object.keys(ACTION_STYLES);

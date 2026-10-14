@@ -315,7 +315,7 @@ def test_edit_on_read_only_document_is_403(
     _tables(monkeypatch, documents_router)
     mock_db.execute.side_effect = [
         make_result(one_or_none=None),  # edit-level check fails
-        make_result(one_or_none=(1,)),  # ...but the document is visible
+        make_result(one_or_none=("active", False)),  # ...but it is visible (not locked)
     ]
     resp = extraction_editor_client.patch(
         f"{DOC.replace('t_default_invoice', T)}/fields", json={"fields": {"a": "b"}}

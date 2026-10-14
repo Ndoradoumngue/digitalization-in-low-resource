@@ -1750,3 +1750,71 @@ def test_destruction_deletes_files_on_both_nodes(nodes, data_root, monkeypatch):
     again = run(_sync(local, cloud))
     assert again["files_failed"] == 0
     assert _on_disk(cloud, f"/data/uploads/{doc}/acte.pdf") is None
+
+
+def test_collaboration_rows_sync_but_the_outbox_stays(nodes):
+    """GED Phase 7: comments, notifications, signature requests/evidence
+    and the check-out lock replicate; the e-mail outbox is node-local (the
+    node that queued an e-mail sends it - never both)."""
+    local, cloud = nodes
+    doc, user, tenant = DATA["doc"], DATA["user"], DATA["tenant"]
+    comment, request = _id(), _id()
+    run(
+        cloud.q(
+            "INSERT INTO sdai_comments (id, tenant_id, table_name, document_id, author_id, body)"
+            " VALUES (CAST(:c AS uuid), CAST(:t AS uuid), :tb, CAST(:d AS uuid), CAST(:u AS uuid),"
+            " 'vu sur le cloud')",
+            {"c": comment, "t": tenant, "tb": T, "d": doc, "u": user},
+        )
+    )
+    run(
+        cloud.q(
+            "INSERT INTO sdai_comments (tenant_id, table_name, document_id, parent_id, author_id, body)"
+            " VALUES (CAST(:t AS uuid), :tb, CAST(:d AS uuid), CAST(:c AS uuid), CAST(:u AS uuid),"
+            " 'réponse')",
+            {"c": comment, "t": tenant, "tb": T, "d": doc, "u": user},
+        )
+    )
+    run(
+        cloud.q(
+            "INSERT INTO sdai_notifications (tenant_id, user_id, kind, table_name, document_id)"
+            " VALUES (CAST(:t AS uuid), CAST(:u AS uuid), 'mention', :tb, CAST(:d AS uuid))",
+            {"t": tenant, "u": user, "tb": T, "d": doc},
+        )
+    )
+    run(
+        cloud.q(
+            "INSERT INTO sdai_signature_requests (id, tenant_id, table_name, document_id, reason, signers)"
+            " VALUES (CAST(:r AS uuid), CAST(:t AS uuid), :tb, CAST(:d AS uuid), 'Visa',"
+            " CAST(:s AS jsonb))",
+            {"r": request, "t": tenant, "tb": T, "d": doc,
+             "s": json.dumps([{"user_id": user, "status": "pending"}])},
+        )
+    )
+    run(
+        cloud.q(
+            "INSERT INTO sdai_email_outbox (to_email, kind, dedupe_key, subject, body)"
+            " VALUES ('x@example.com', 'mention', 'n:cloud-only', 's', 'b')"
+        )
+    )
+    run(
+        local.q(
+            f'UPDATE "{T}" SET locked_by = CAST(:u AS uuid), locked_until = now() + interval \'1 hour\''
+            " WHERE id = CAST(:d AS uuid)",
+            {"u": user, "d": doc},
+        )
+    )
+    summary = run(_sync(local, cloud))
+    assert summary["errors"] == 0 and summary["push_errors"] == 0
+    bodies = run(local.q("SELECT body FROM sdai_comments WHERE document_id = CAST(:d AS uuid) ORDER BY created_at", {"d": doc}))
+    assert [b["body"] for b in bodies] == ["vu sur le cloud", "réponse"]
+    assert run(local.one("SELECT kind FROM sdai_notifications WHERE kind = 'mention'"))
+    assert run(local.one("SELECT reason FROM sdai_signature_requests WHERE id = CAST(:r AS uuid)", {"r": request}))
+    assert run(local.q("SELECT 1 FROM sdai_email_outbox")) == []
+    assert str(run(_doc(cloud, doc))["locked_by"]) == user
+    # Deleting a whole thread (as a destruction does) replays on the peer.
+    run(cloud.q("DELETE FROM sdai_comments WHERE document_id = CAST(:d AS uuid)", {"d": doc}))
+    run(local.q(f'UPDATE "{T}" SET locked_by = NULL, locked_until = NULL WHERE id = CAST(:d AS uuid)', {"d": doc}))
+    summary = run(_sync(local, cloud))
+    assert summary["errors"] == 0 and summary["push_errors"] == 0
+    assert run(local.q("SELECT 1 FROM sdai_comments WHERE document_id = CAST(:d AS uuid)", {"d": doc})) == []

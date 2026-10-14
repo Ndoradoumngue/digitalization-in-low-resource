@@ -111,6 +111,29 @@ import {
   type RetentionRule,
   type RetentionRuleBody,
   type TrashPage,
+  CommentListSchema,
+  CommentSchema,
+  DocumentLockSchema,
+  MentionableUserListSchema,
+  NotificationListSchema,
+  OutboxResponseSchema,
+  type OutboxResponse,
+  NotificationPreferencesSchema,
+  SignatureRequestListSchema,
+  SignatureRequestSchema,
+  SignatureVerificationSchema,
+  SigningStatusSchema,
+  UnreadCountSchema,
+  type Comment,
+  type DocumentLock,
+  type EmailPreference,
+  type MentionableUser,
+  type Notification,
+  type NotificationPreferences,
+  type SignatureRequest,
+  type SignatureRequestBody,
+  type SignatureVerification,
+  type SigningStatus,
 } from "@sdai/types";
 
 // ── Core fetch helper ─────────────────────────────────────────────────────────
@@ -1304,4 +1327,162 @@ export async function decideDestruction(
 /** The procès-verbal (PDF) of an executed destruction. */
 export function destructionPvUrl(recordId: string): string {
   return `/api/db/destructions/${encodeURIComponent(recordId)}/pv`;
+}
+
+
+// ── Collaboration: notifications, check-out, comments, signatures (GED Phase 7) ─
+
+export async function fetchNotifications(opts: { unreadOnly?: boolean; limit?: number } = {}): Promise<Notification[]> {
+  const params = new URLSearchParams();
+  if (opts.unreadOnly) params.set("unread_only", "true");
+  if (opts.limit) params.set("limit", String(opts.limit));
+  return fetchJson(`/api/db/notifications?${params}`, NotificationListSchema);
+}
+
+export async function fetchUnreadNotificationCount(): Promise<number> {
+  return (await fetchJson("/api/db/notifications/unread-count", UnreadCountSchema)).count;
+}
+
+export async function markNotificationRead(id: string): Promise<void> {
+  await sendJson(`/api/db/notifications/${encodeURIComponent(id)}/read`, "POST");
+}
+
+export async function markAllNotificationsRead(): Promise<void> {
+  await sendJson("/api/db/notifications/read-all", "POST");
+}
+
+export async function fetchNotificationPreferences(): Promise<NotificationPreferences> {
+  return fetchJson("/api/db/notification-preferences", NotificationPreferencesSchema);
+}
+
+export async function updateNotificationPreferences(changes: {
+  email_notifications?: EmailPreference;
+  locale?: "fr" | "en";
+}): Promise<NotificationPreferences> {
+  return NotificationPreferencesSchema.parse(
+    await (await sendJson("/api/db/notification-preferences", "PUT", changes)).json(),
+  );
+}
+
+export async function fetchDocumentLock(tableName: string, id: string): Promise<DocumentLock> {
+  return fetchJson(`${docPath(tableName, id)}/lock`, DocumentLockSchema);
+}
+
+export async function checkoutDocument(tableName: string, id: string, hours?: number): Promise<DocumentLock> {
+  return DocumentLockSchema.parse(
+    await (await sendJson(`${docPath(tableName, id)}/checkout`, "POST", { hours: hours ?? null })).json(),
+  );
+}
+
+/** Check a document back in - with a file, it becomes the next version. */
+export async function checkinDocument(
+  tableName: string,
+  id: string,
+  opts: { file?: File | null; comment?: string; reextract?: boolean } = {},
+): Promise<DocumentLock> {
+  const fd = new FormData();
+  if (opts.file) fd.append("file", opts.file);
+  if (opts.comment) fd.append("comment", opts.comment);
+  fd.append("reextract", String(!!opts.reextract));
+  const res = await fetch(`${docPath(tableName, id)}/checkin`, withAuth({ method: "POST", body: fd }));
+  return jsonOrThrow(res, DocumentLockSchema);
+}
+
+export async function forceUnlockDocument(tableName: string, id: string): Promise<DocumentLock> {
+  return DocumentLockSchema.parse(await (await sendJson(`${docPath(tableName, id)}/unlock`, "POST")).json());
+}
+
+export async function fetchComments(tableName: string, id: string): Promise<Comment[]> {
+  return fetchJson(`${docPath(tableName, id)}/comments`, CommentListSchema);
+}
+
+export async function fetchMentionable(tableName: string, id: string, q = ""): Promise<MentionableUser[]> {
+  return fetchJson(
+    `${docPath(tableName, id)}/comments/mentionable?q=${encodeURIComponent(q)}`,
+    MentionableUserListSchema,
+  );
+}
+
+export async function addComment(
+  tableName: string,
+  id: string,
+  body: { body: string; parent_id?: string | null; mentions?: string[] },
+): Promise<Comment> {
+  return CommentSchema.parse(await (await sendJson(`${docPath(tableName, id)}/comments`, "POST", body)).json());
+}
+
+export async function editComment(commentId: string, body: { body: string; mentions?: string[] }): Promise<Comment> {
+  return CommentSchema.parse(
+    await (await sendJson(`/api/db/comments/${encodeURIComponent(commentId)}`, "PATCH", body)).json(),
+  );
+}
+
+export async function deleteComment(commentId: string): Promise<void> {
+  await sendJson(`/api/db/comments/${encodeURIComponent(commentId)}`, "DELETE");
+}
+
+export async function fetchSigningStatus(): Promise<SigningStatus> {
+  return fetchJson("/api/db/signing/status", SigningStatusSchema);
+}
+
+export async function fetchMyPendingSignatures(): Promise<SignatureRequest[]> {
+  return fetchJson("/api/db/signature-requests/pending", SignatureRequestListSchema);
+}
+
+export async function fetchSignatureRequests(tableName: string, id: string): Promise<SignatureRequest[]> {
+  return fetchJson(`${docPath(tableName, id)}/signature-requests`, SignatureRequestListSchema);
+}
+
+export async function createSignatureRequest(
+  tableName: string,
+  id: string,
+  body: SignatureRequestBody,
+): Promise<SignatureRequest> {
+  return SignatureRequestSchema.parse(
+    await (await sendJson(`${docPath(tableName, id)}/signature-requests`, "POST", body)).json(),
+  );
+}
+
+export async function signDocument(requestId: string, password: string, reason?: string): Promise<void> {
+  await sendJson(`/api/db/signature-requests/${encodeURIComponent(requestId)}/sign`, "POST", {
+    password,
+    reason: reason || null,
+  });
+}
+
+export async function declineSignature(requestId: string, note?: string): Promise<void> {
+  await sendJson(`/api/db/signature-requests/${encodeURIComponent(requestId)}/decline`, "POST", {
+    note: note || null,
+  });
+}
+
+export async function cancelSignatureRequest(requestId: string, note?: string): Promise<void> {
+  await sendJson(`/api/db/signature-requests/${encodeURIComponent(requestId)}/cancel`, "POST", {
+    note: note || null,
+  });
+}
+
+export async function fetchSignatureVerification(
+  tableName: string,
+  id: string,
+  version?: number,
+): Promise<SignatureVerification> {
+  return fetchJson(
+    `${docPath(tableName, id)}/signatures${version ? `?version=${version}` : ""}`,
+    SignatureVerificationSchema,
+  );
+}
+
+/** E-mails queued on THIS server (admin) - `problems` = failed + retrying. */
+export async function fetchEmailOutbox(status = "problems"): Promise<OutboxResponse> {
+  return fetchJson(`/api/admin/emails?status=${encodeURIComponent(status)}`, OutboxResponseSchema);
+}
+
+/** Failed e-mails: send again or drop (all when no ids). */
+export async function retryEmails(ids?: string[]): Promise<{ retried: number }> {
+  return (await sendJson("/api/admin/emails/retry", "POST", { ids: ids ?? null })).json();
+}
+
+export async function discardEmails(ids?: string[]): Promise<{ discarded: number }> {
+  return (await sendJson("/api/admin/emails/discard", "POST", { ids: ids ?? null })).json();
 }

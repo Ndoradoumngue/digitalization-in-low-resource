@@ -551,6 +551,206 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "This destruction has not been executed - there is no report",
         "fr": "Cette élimination n'a pas été exécutée - il n'y a pas de procès-verbal",
     },
+    # ── locks.py / checkout_router.py ────────────────────────────────────
+    "locks.locked_by": {
+        "en": 'Checked out by {name} - read-only until it is checked back in',
+        "fr": "Verrouillé par {name} - en lecture seule jusqu'à sa réintégration",
+    },
+    "locks.not_holder": {
+        "en": 'You have not checked this document out',
+        "fr": "Vous n'avez pas extrait ce document",
+    },
+    "locks.not_locked": {
+        "en": 'This document is not checked out',
+        "fr": "Ce document n'est pas extrait",
+    },
+    # ── comments_router.py ───────────────────────────────────────────────
+    "comments.not_found": {
+        "en": 'Comment not found',
+        "fr": 'Commentaire introuvable',
+    },
+    "comments.empty": {
+        "en": 'A comment cannot be empty',
+        "fr": 'Un commentaire ne peut pas être vide',
+    },
+    "comments.bad_parent": {
+        "en": 'The comment you reply to does not belong to this document',
+        "fr": "Le commentaire auquel vous répondez n'appartient pas à ce document",
+    },
+    "comments.not_author": {
+        "en": 'Only the author can change this comment',
+        "fr": "Seul l'auteur peut modifier ce commentaire",
+    },
+    # ── signature_router.py ──────────────────────────────────────────────
+    "signatures.request_not_found": {
+        "en": 'Signature request not found',
+        "fr": 'Demande de signature introuvable',
+    },
+    "signatures.bad_signers": {
+        "en": 'Every signer must be a different person who can read this document',
+        "fr": 'Chaque signataire doit être une personne différente ayant accès à ce document',
+    },
+    "signatures.already_pending": {
+        "en": 'A signature request is already in progress on this document',
+        "fr": 'Une demande de signature est déjà en cours sur ce document',
+    },
+    "signatures.request_closed": {
+        "en": 'This signature request is closed',
+        "fr": 'Cette demande de signature est close',
+    },
+    "signatures.not_your_turn": {
+        "en": 'It is not your turn to sign this document',
+        "fr": "Ce n'est pas à vous de signer ce document maintenant",
+    },
+    "signatures.wrong_password": {
+        "en": 'Incorrect password - the document was not signed',
+        "fr": "Mot de passe incorrect - le document n'a pas été signé",
+    },
+    "signatures.not_configured": {
+        "en": 'Electronic signature is not set up on this server (organisation certificate missing)',
+        "fr": "La signature électronique n'est pas configurée sur ce serveur (certificat de l'organisation absent)",
+    },
+    "signatures.unsupported_file": {
+        "en": 'Only PDF and image documents can be signed',
+        "fr": 'Seuls les documents PDF et images peuvent être signés',
+    },
+    "signatures.cannot_sign": {
+        "en": 'This file cannot be signed (protected or damaged PDF)',
+        "fr": 'Ce fichier ne peut pas être signé (PDF protégé ou endommagé)',
+    },
+    "signatures.converted_pdfa": {
+        "en": 'Version {n} converted to PDF/A for signature',
+        "fr": 'Version {n} convertie en PDF/A pour signature',
+    },
+    "signatures.converted_pdf": {
+        "en": 'Version {n} converted to PDF for signature',
+        "fr": 'Version {n} convertie en PDF pour signature',
+    },
+    "signatures.signed_version": {
+        "en": 'Electronically signed by {name}',
+        "fr": 'Signé électroniquement par {name}',
+    },
+    "signatures.not_requester": {
+        "en": 'Only the person who asked for the signatures (or an admin) can cancel',
+        "fr": "Seul l'auteur de la demande (ou un administrateur) peut l'annuler",
+    },
+    # ── notifications.py (e-mails - never any document content) ─────────
+    "email.greeting": {
+        "en": 'Hello,',
+        "fr": 'Bonjour,',
+    },
+    "email.open": {
+        "en": 'Open: {url}',
+        "fr": 'Ouvrir : {url}',
+    },
+    "email.footer": {
+        "en": 'You receive this e-mail because of your notification preferences in SDAI. Change them here: {url}',
+        "fr": 'Vous recevez cet e-mail en raison de vos préférences de notification dans SDAI. Pour les modifier : {url}',
+    },
+    "email.digest_intro": {
+        "en": 'Here is what happened in SDAI during the last 24 hours (unread notifications):',
+        "fr": "Voici ce qui s'est passé dans SDAI au cours des dernières 24 heures (notifications non lues) :",
+    },
+    "email.subject.digest": {
+        "en": 'Your daily summary',
+        "fr": 'Votre résumé quotidien',
+    },
+    "email.subject.review_pending": {
+        "en": 'Documents to review',
+        "fr": 'Documents à valider',
+    },
+    "email.body.review_pending": {
+        "en": 'New documents are waiting for your review.',
+        "fr": 'De nouveaux documents attendent votre validation.',
+    },
+    "email.subject.document_shared": {
+        "en": 'A document was shared with you',
+        "fr": 'Un document a été partagé avec vous',
+    },
+    "email.body.document_shared": {
+        "en": 'A document was shared with you.',
+        "fr": 'Un document a été partagé avec vous.',
+    },
+    "email.subject.mention": {
+        "en": 'You were mentioned in a comment',
+        "fr": 'Vous avez été mentionné dans un commentaire',
+    },
+    "email.body.mention": {
+        "en": 'Someone mentioned you in a comment on a document.',
+        "fr": "Quelqu'un vous a mentionné dans un commentaire sur un document.",
+    },
+    "email.subject.comment_reply": {
+        "en": 'New reply to your comment',
+        "fr": 'Nouvelle réponse à votre commentaire',
+    },
+    "email.body.comment_reply": {
+        "en": 'Someone replied to your comment on a document.',
+        "fr": "Quelqu'un a répondu à votre commentaire sur un document.",
+    },
+    "email.subject.retention_eligible": {
+        "en": 'Retention periods have ended',
+        "fr": 'Des durées de conservation sont échues',
+    },
+    "email.body.retention_eligible": {
+        "en": 'Documents reached the end of their retention period and wait for a decision.',
+        "fr": 'Des documents ont atteint la fin de leur durée de conservation et attendent une décision.',
+    },
+    "email.subject.destruction_proposed": {
+        "en": 'A destruction awaits your approval',
+        "fr": 'Une élimination attend votre approbation',
+    },
+    "email.body.destruction_proposed": {
+        "en": 'A destruction proposal awaits your approval.',
+        "fr": "Une proposition d'élimination attend votre approbation.",
+    },
+    "email.subject.sync_down": {
+        "en": 'Synchronisation is down',
+        "fr": 'La synchronisation est interrompue',
+    },
+    "email.body.sync_down": {
+        "en": 'The synchronisation between the local and cloud servers has not succeeded for several hours.',
+        "fr": "La synchronisation entre les serveurs local et cloud n'a pas abouti depuis plusieurs heures.",
+    },
+    "email.subject.backup_failed": {
+        "en": 'A backup failed',
+        "fr": 'Une sauvegarde a échoué',
+    },
+    "email.body.backup_failed": {
+        "en": 'The last backup of a server failed.',
+        "fr": "La dernière sauvegarde d'un serveur a échoué.",
+    },
+    "email.subject.signature_requested": {
+        "en": 'Your signature is requested',
+        "fr": 'Votre signature est demandée',
+    },
+    "email.body.signature_requested": {
+        "en": 'You are asked to sign a document.',
+        "fr": 'Il vous est demandé de signer un document.',
+    },
+    "email.subject.signature_completed": {
+        "en": 'A document has been signed',
+        "fr": 'Un document a été signé',
+    },
+    "email.body.signature_completed": {
+        "en": 'Every requested signature of a document has been given.',
+        "fr": 'Toutes les signatures demandées sur un document ont été apposées.',
+    },
+    "email.subject.signature_declined": {
+        "en": 'A signature was declined',
+        "fr": 'Une signature a été refusée',
+    },
+    "email.body.signature_declined": {
+        "en": 'A signer declined to sign a document.',
+        "fr": 'Un signataire a refusé de signer un document.',
+    },
+    "email.subject.lock_released": {
+        "en": 'Your check-out was released',
+        "fr": 'Votre extraction a été libérée',
+    },
+    "email.body.lock_released": {
+        "en": 'An administrator released your check-out of a document.',
+        "fr": "Un administrateur a libéré votre extraction d'un document.",
+    },
 }
 
 

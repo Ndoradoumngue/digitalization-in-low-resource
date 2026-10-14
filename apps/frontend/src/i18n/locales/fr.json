@@ -98,7 +98,9 @@
     "tabs": {
       "record": "Fiche",
       "versions": "Versions",
-      "history": "Historique"
+      "history": "Historique",
+      "comments": "Commentaires",
+      "signatures": "Signatures"
     }
   },
   "fields": {
@@ -582,7 +584,20 @@
       "destruction_cancelled": "Élimination retirée",
       "document_destroyed": "Document éliminé",
       "destruction_pv_downloaded": "Procès-verbal téléchargé",
-      "document_deleted": "Document supprimé"
+      "document_deleted": "Document supprimé",
+      "document_checked_out": "Document extrait",
+      "document_checked_in": "Document réintégré",
+      "comment_added": "Commentaire ajouté",
+      "comment_edited": "Commentaire modifié",
+      "comment_deleted": "Commentaire supprimé",
+      "signature_requested": "Signature demandée",
+      "document_signed": "Document signé",
+      "signature_declined": "Signature refusée",
+      "signature_request_cancelled": "Demande de signature annulée",
+      "signature_password_failed": "Signature - mot de passe erroné",
+      "notification_preferences_changed": "Préférences de notification modifiées",
+      "emails_retried": "E-mails renvoyés",
+      "emails_discarded": "E-mails en échec supprimés"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -819,7 +834,8 @@
       "backup_not_configured": "Aucune sauvegarde hors site n'est configurée (BACKUP_SFTP_TARGET).",
       "backup_stale": "Aucune sauvegarde depuis plus de 36 h (dernière : {{since}}).",
       "files_failed": "{{count}} fichier(s) n'ont pas pu être synchronisés.",
-      "conflicts_open": "{{count}} conflit(s) de synchronisation en attente de décision."
+      "conflicts_open": "{{count}} conflit(s) de synchronisation en attente de décision.",
+      "emails_failed": "{{count}} e-mail(s) n'ont pas pu être envoyés."
     },
     "node": {
       "heading": "Ce serveur",
@@ -918,6 +934,26 @@
         "nas": "NAS"
       },
       "help": "Sauvegardes chiffrées chaque nuit avec restic (30 quotidiennes + 12 mensuelles). La synchronisation n'est pas une sauvegarde - voir RESTORE.md pour restaurer."
+    },
+    "emails": {
+      "heading": "E-mails envoyés par ce serveur",
+      "disabled": "L'e-mail n'est pas configuré sur ce serveur (SMTP_HOST / SMTP_FROM) - rien n'est mis en file.",
+      "pending": "En attente",
+      "failed": "En échec",
+      "sent": "Envoyés",
+      "hint": "Chaque serveur envoie les e-mails qu'il a mis en file ; ceux en échec restent ici jusqu'à un nouvel envoi ou leur suppression.",
+      "retryAll": "Renvoyer tous les échecs",
+      "discardAll": "Supprimer tous les échecs",
+      "retry": "Renvoyer",
+      "none": "Aucun e-mail en échec ou en cours de nouvelle tentative.",
+      "attempts_one": "{{count}} tentative",
+      "attempts_other": "{{count}} tentatives",
+      "status": {
+        "failed": "Échec",
+        "pending": "Nouvelle tentative",
+        "sending": "Envoi",
+        "sent": "Envoyé"
+      }
     }
   },
   "tags": {
@@ -1192,5 +1228,139 @@
     "type": "Type",
     "dates": "Versement → échéance",
     "fingerprints": "Empreintes SHA-256"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "bellLabel_one": "Notifications - {{count}} non lue",
+    "bellLabel_other": "Notifications - {{count}} non lues",
+    "unreadOnly": "Non lues seulement",
+    "markAllRead": "Tout marquer comme lu",
+    "markRead": "Marquer lu",
+    "empty": "Aucune notification.",
+    "aDocument": "un document",
+    "unavailable": "{{kind}} - ce document ne vous est plus accessible",
+    "toSign_one": "{{count}} document attend votre signature",
+    "toSign_other": "{{count}} documents attendent votre signature",
+    "askedBy": "demandé par {{name}}",
+    "preferences": "Notifications par e-mail",
+    "emailLabel": "M'envoyer un e-mail",
+    "email": {
+      "immediate": "À chaque notification",
+      "digest": "Une fois par jour (résumé)",
+      "off": "Jamais"
+    },
+    "emailLanguage": "Langue des e-mails",
+    "emailDisabled": "L'e-mail n'est pas configuré sur ce serveur - les notifications ne sont affichées qu'ici.",
+    "kinds": {
+      "review_pending": "À valider",
+      "document_shared": "Partagé avec vous",
+      "mention": "Mention",
+      "comment_reply": "Réponse",
+      "retention_eligible": "Conservation échue",
+      "destruction_proposed": "Élimination à approuver",
+      "sync_down": "Synchronisation",
+      "backup_failed": "Sauvegarde",
+      "signature_requested": "Signature demandée",
+      "signature_completed": "Signé",
+      "signature_declined": "Signature refusée",
+      "lock_released": "Extraction libérée"
+    },
+    "text": {
+      "review_pending_one": "Un nouveau document attend votre validation",
+      "review_pending_other": "{{count}} nouveaux documents attendent votre validation",
+      "document_shared": "{{by}} a partagé {{record}} avec vous",
+      "mention": "{{by}} vous a mentionné dans un commentaire sur {{record}}",
+      "comment_reply": "{{by}} a répondu à votre commentaire sur {{record}}",
+      "retention_eligible_one": "La durée de conservation d'un document est échue",
+      "retention_eligible_other": "La durée de conservation de {{count}} documents est échue",
+      "destruction_proposed": "{{by}} propose l'élimination de {{count}} document(s) - votre approbation est requise",
+      "sync_down": "La synchronisation du serveur {{node}} échoue depuis plusieurs heures",
+      "backup_failed": "La dernière sauvegarde du serveur {{node}} a échoué",
+      "signature_requested": "{{by}} vous demande de signer {{record}}",
+      "signature_completed": "{{record}} est signé par tous ({{by}} a signé en dernier)",
+      "signature_declined": "{{by}} a refusé de signer {{record}}",
+      "lock_released": "{{by}} a libéré votre extraction de {{record}}",
+      "unknown": "Nouvelle notification"
+    }
+  },
+  "checkout": {
+    "checkout": "Extraire",
+    "checkin": "Réintégrer",
+    "forceUnlock": "Forcer le déverrouillage",
+    "forceUnlockConfirm": "Libérer l'extraction de {{name}} ? Cette personne sera notifiée ; ses modifications non réintégrées restent de son côté.",
+    "lockedBy": "Verrouillé par {{name}}",
+    "lockedByMe": "Extrait par vous",
+    "until": "Jusqu'au {{date}}",
+    "checkoutHint": "Verrouiller le document pour {{hours}} h - les autres ne peuvent que le consulter pendant ce temps",
+    "checkinHint": "Libérer le document. Vous pouvez joindre le nouveau fichier : il devient la version suivante.",
+    "comment": "Commentaire (facultatif)",
+    "reextract": "Extraire à nouveau les champs du nouveau fichier"
+  },
+  "comments": {
+    "empty": "Aucun commentaire pour l'instant.",
+    "readOnly": "Les lecteurs peuvent lire les commentaires mais pas en publier.",
+    "reply": "Répondre",
+    "edit": "Modifier",
+    "delete": "Supprimer",
+    "deleteConfirm": "Supprimer ce commentaire ?",
+    "deleted": "Commentaire supprimé",
+    "edited": "(modifié)",
+    "post": "Commenter",
+    "placeholder": "Écrire un commentaire… (@ pour mentionner quelqu'un)",
+    "mentionHint": "@ pour mentionner · Ctrl+Entrée pour envoyer",
+    "replyingTo": "Réponse à {{name}}"
+  },
+  "signatures": {
+    "requests": "Demandes de signature",
+    "ask": "Demander une signature",
+    "noRequests": "Aucune demande de signature.",
+    "notConfigured": "La signature électronique n'est pas configurée sur ce serveur (certificat de l'organisation absent).",
+    "certExpired": "Le certificat de l'organisation a expiré - la signature échouera.",
+    "status": {
+      "pending": "En attente",
+      "completed": "Terminée",
+      "declined": "Refusée",
+      "cancelled": "Annulée",
+      "signed": "Signé"
+    },
+    "askedBy": "demandée par {{name}}",
+    "sign": "Signer",
+    "signing": "Signature…",
+    "decline": "Refuser",
+    "cancelRequest": "Annuler la demande",
+    "signHint": "Saisissez votre mot de passe pour signer. La version courante est signée avec le certificat de l'organisation et enregistrée comme nouvelle version.",
+    "reason": "Motif",
+    "password": "Votre mot de passe",
+    "noteOptional": "Note (facultative)",
+    "levelNote": "Signature électronique simple / avancée (PAdES) avec les preuves conservées par SDAI - ce n'est pas une signature qualifiée.",
+    "askHint": "Choisissez les signataires dans l'ordre - chacun est sollicité quand le précédent a signé.",
+    "reasonPlaceholder": "Motif (ex. Approbation)",
+    "titlePlaceholder": "Qualité sur le cachet (facultatif)",
+    "moveUp": "Monter",
+    "moveDown": "Descendre",
+    "remove": "Retirer",
+    "addSigner": "Ajouter un signataire (rechercher par nom)…",
+    "messagePlaceholder": "Message aux signataires (facultatif)",
+    "send": "Envoyer la demande",
+    "verification": "Vérification",
+    "notPdf": "La version courante n'est pas un PDF - rien à vérifier.",
+    "noSignature": "La version {{version}} ne porte aucune signature électronique.",
+    "allValid_one": "Version {{version}} : la signature est valide et le document n'a pas changé depuis.",
+    "allValid_other": "Version {{version}} : les {{count}} signatures sont valides et le document n'a pas changé depuis.",
+    "invalid": "Version {{version}} : vérification en ÉCHEC - le fichier a été modifié après signature ou une signature n'est pas reconnue.",
+    "intact": "Inchangé depuis la signature",
+    "trusted": "Certificat reconnu",
+    "evidenceMatches": "Conforme aux preuves SDAI",
+    "coverage": {
+      "ENTIRE_FILE": "Couvre tout le fichier",
+      "ENTIRE_REVISION": "Couvre sa révision (signatures ajoutées ensuite)"
+    },
+    "hashMismatch": "Le fichier ne correspond plus à l'empreinte enregistrée pour cette version.",
+    "evidence": "Preuves",
+    "signer": "Signataire",
+    "when": "Date",
+    "versions": "Versions",
+    "certificate": "Certificat",
+    "auditTrail": "Journal d'audit"
   }
 }

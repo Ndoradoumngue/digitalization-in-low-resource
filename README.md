@@ -36,6 +36,8 @@ On top of the extraction pipeline, the platform is being extended into a complet
 | Search | French full-text search (accents ignored, "phrases", -exclusions) across every extracted field and the text of every page (Tesseract transcription, backfill script for older documents), with highlighted snippets and page numbers that open the viewer at the page; search box on every page; filters (series incl. sub-series, tags, type, reviewer, dates) |
 | Sharing & export | Traceable download of originals (current or any version, optional watermark on confidential PDFs); external share links with expiry, password, download limit and revocation, re-checked against the sharer's access on every use; selective export (ticked documents, search results or a series) as a ZIP with metadata and a SHA-256 integrity manifest |
 | Lifecycle & retention | Archiving (archived documents read-only), trash with restore (30 days by default, then destroyed with a record), retention rules per series or document type (duration, start date, outcome: destroy, re-examine, keep forever) applied automatically every day, legal holds (document, series tree or search result) that block any deletion, two-person approved destruction - files removed on both servers, a tombstone kept, PDF procès-verbal d'élimination |
+| Collaboration | In-app notifications (bell) and e-mail (immediate, daily digest or off, in the user's language, never any document content); check-out / check-in (others read-only while a document is checked out, forced unlock by an admin, expiry); threaded comments with @mentions; electronic signature requests with ordered signers |
+| Electronic signature | Simple / advanced electronic signature (PAdES): the signer re-enters their password, the document is signed with the organisation's certificate with a visible stamp and stored as a new version (images converted to PDF/A first); verification of every signature next to SDAI's evidence (who, when, IP, certificate, hashes) - never a "qualified" signature |
 | Versioning & traceability | File versions with restore (history never rewritten), optional re-extraction of a new version, before/after history of every field change, view/download logging |
 | Integrity & audit | Original and every file version kept and SHA-256-verified (scheduled fixity check); tamper-evident audit log (hash-chained per server, append-only, verifiable on demand) |
 | Hybrid local + cloud | The local server stays primary and works offline; a cloud copy (standard VM at DigitalOcean or AWS, no GPU) is synchronized both ways automatically - field-level merge, conflicts flagged for a decision and never lost, files copied, documents uploaded remotely processed by the local GPU, restored or rebuilt servers catch up by themselves; admin Synchronisation page with alerts |
@@ -62,11 +64,30 @@ person - another admin - to approve it. `TRASH_RETENTION_DAYS` (default 30) and
 with an English part for organisations created with `create_tenant.py --locale en`. Destroyed files stay
 in the off-site backups until their retention expires - see [RESTORE.md](./RESTORE.md).
 
-### Roadmap
+### Notifications and e-mail
 
-| Area | Planned |
-|---|---|
-| Collaboration | Notifications (in-app and email), check-out/check-in, comments, simple/advanced electronic signature (PAdES) |
+Notifications appear under the bell (top of the sidebar). E-mails are only sent when `SMTP_HOST` and
+`SMTP_FROM` are set; each node sends the e-mails it created (`.env.example`, "Notifications and e-mail").
+`PUBLIC_BASE_URL` is used for the links. Each person chooses immediate e-mails, a daily digest or none,
+and the language, on the Notifications page.
+
+### Electronic signature
+
+Signing needs the organisation's certificate as a PKCS#12 file (`SIGNING_P12_PATH`,
+`SIGNING_P12_PASSWORD`) mounted on every node where people sign. For a test or a first installation,
+generate a self-signed one in the api container:
+
+```bash
+python scripts/generate_signing_cert.py --org "My Organisation" --country XX --out /secrets/sdai-signing.p12
+```
+
+SDAI verifies its own signatures with that certificate, but PDF readers outside the organisation show a
+self-signed signature as "validity unknown". For documents that leave the organisation, obtain a
+document-signing certificate from a certification provider recognised in your country (a provider on
+the Adobe Approved Trust List is also recognised by Acrobat everywhere), and add its CA chain to
+`SIGNING_TRUST_ROOTS`. Whatever the certificate, SDAI produces simple
+or advanced electronic signatures - never qualified ones, which require a qualified certificate held
+personally by each signer on a qualified device.
 
 ---
 

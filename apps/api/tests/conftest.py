@@ -309,6 +309,14 @@ def mock_db(monkeypatch):
     monkeypatch.setattr(retention, "recompute_quietly", AsyncMock())
     monkeypatch.setattr(retention, "recompute", AsyncMock(return_value=0))
     monkeypatch.setattr(lifecycle, "refresh_hold_flags", AsyncMock(return_value=0))
+    # Notifications (GED Phase 7) run in their own savepoint and never fail
+    # the action - covered by the real-PostgreSQL tests, stubbed here too.
+    import notifications
+
+    monkeypatch.setattr(notifications, "notify", AsyncMock(return_value=[]))
+    monkeypatch.setattr(notifications, "notify_review_pending", AsyncMock())
+    monkeypatch.setattr(notifications, "notify_in_new_transaction", AsyncMock())
+    monkeypatch.setattr(notifications, "notify_document_shared", AsyncMock())
     return conn
 
 

@@ -37,6 +37,7 @@ import sys
 from datetime import date, datetime, timezone
 
 import lifecycle
+import notifications
 from sqlalchemy import text
 
 TRIGGERS = ("document_date", "ingested_at", "reviewed_at", "archived_at")
@@ -293,26 +294,6 @@ async def lifecycle_managers(conn, tenant_id: str) -> list[str]:
     return [r[0] for r in rows]
 
 
-async def notify(
-    conn, tenant_id: str, user_ids: list[str], kind: str, payload: dict
-) -> None:
-    import json
-
-    for user_id in user_ids:
-        await conn.execute(
-            text("""
-                INSERT INTO sdai_notifications (tenant_id, user_id, kind, payload)
-                VALUES (CAST(:tid AS uuid), CAST(:u AS uuid), :k, CAST(:p AS jsonb))
-            """),
-            {
-                "tid": tenant_id,
-                "u": user_id,
-                "k": kind,
-                "p": json.dumps(payload, default=str),
-            },
-        )
-
-
 async def mark_eligible_documents(conn, tenant_id: str, today: date) -> list[dict]:
     """archived → destruction_eligible for every archived, untrashed
     document of the tenant whose retention date has passed and whose rule
@@ -364,7 +345,7 @@ async def run_once(engine, today: date | None = None) -> dict:
             totals["recomputed"] += await recompute(conn, tenant_id)
             eligible = await mark_eligible_documents(conn, tenant_id, today)
             if eligible:
-                await notify(
+                await notifications.notify(
                     conn,
                     tenant_id,
                     await lifecycle_managers(conn, tenant_id),

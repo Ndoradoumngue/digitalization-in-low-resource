@@ -93,6 +93,12 @@ SYNC_TABLES: tuple[SyncTable, ...] = (
     # row arrives (the sync 'destroy' event, destruction.purge_destroyed_files).
     SyncTable("sdai_destroyed_files", insert_only=True, order_by="destroyed_at"),
     SyncTable("sdai_notifications", order_by="created_at"),
+    # Collaboration (GED Phase 7): replies after the comment they answer.
+    SyncTable("sdai_comments", order_by="created_at"),
+    SyncTable("sdai_signature_requests", order_by="created_at"),
+    # Evidence of a signature - written once, never changed, but deleted
+    # with the document when it is destroyed (so not insert_only).
+    SyncTable("sdai_signatures", order_by="signed_at"),
     SyncTable("sdai_audit_log", insert_only=True, order_by="origin_node, chain_seq"),
     SyncTable("sdai_token_blocklist", pk=("jti",), insert_only=True),
 )
@@ -109,7 +115,9 @@ SYNC_META_COLS = frozenset({"updated_at", "origin_node", "hlc"})
 # only ever assigned on the local node, so the counter can't fork - 8.6),
 # sdai_audit_chain_heads (last head verified on THIS node), sdai_sync_*,
 # sdai_export_jobs (the ZIP is on this node's disk only),
-# sdai_destroyed_files_done (which destroyed files THIS node has deleted).
+# sdai_destroyed_files_done (which destroyed files THIS node has deleted),
+# sdai_email_outbox (the node that queued an e-mail sends it - Phase 7),
+# sdai_ops_alerts (this node's own sync/backup alerts).
 NODE_LOCAL_TABLES = frozenset(
     {
         "sdai_nodes",
@@ -124,6 +132,8 @@ NODE_LOCAL_TABLES = frozenset(
         "sdai_backup_runs",
         "sdai_export_jobs",
         "sdai_destroyed_files_done",
+        "sdai_email_outbox",
+        "sdai_ops_alerts",
     }
 )
 

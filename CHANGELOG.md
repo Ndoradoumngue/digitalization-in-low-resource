@@ -9,6 +9,20 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added - GED Phase 7 (notifications, check-out, comments, electronic signature)
+- Notifications: a bell with the unread count (refreshed every minute) and a Notifications page. People are notified when a document waits for their review (grouped into "N documents to review"), a document is shared with them, someone mentions them or replies to their comment, a retention period ends, a destruction awaits approval, their signature is requested (and the requester when everyone signed or someone declined), an admin releases their check-out, and (admins) when synchronisation is down or a backup failed. Notifications about a document the person can no longer open hide the document.
+- E-mail: immediate, daily digest or off, per person, in their language (French/English). E-mails carry only a fixed sentence and a link (`PUBLIC_BASE_URL`), never document content. Settings `SMTP_*`, `EMAIL_*`. Each node sends the e-mails it queued, with retries; queueing the same e-mail twice is a no-op. Admins see failed e-mails on the Synchronisation page (alert + list) and can send them again or drop them.
+- Check-out / check-in ("Extraire / Réintégrer"): a checked-out document is read-only for everyone else, admins included (fields, versions, review, tags, series, links, page actions, trash) with a "Verrouillé par X" answer; check-in can attach the new file as the next version with a comment; an admin can force the unlock (the holder is notified); check-outs expire (`CHECKOUT_DEFAULT_HOURS` 8 h, max `CHECKOUT_MAX_HOURS`). Between the two servers a check-out is advisory while they can't reach each other.
+- Comments on documents: threads, replies, @mentions of people who can read the document, edit / delete (soft). Readers read, reviewers and admins comment - also on checked-out or archived documents.
+- Electronic signature (simple / advanced, PAdES - never "qualified"): request signatures from one or more people in order with a reason; each signer re-enters their password and the current version is signed with the organisation's certificate (`SIGNING_P12_PATH`) with a visible stamp (name, title, date, reason), stored as a new version; image originals are converted to PDF (PDF/A with ocrmypdf) first. Verification of every embedded signature (unchanged, trusted, coverage) next to SDAI's evidence (signer, time, IP, certificate fingerprint, hashes) and the audit trail. Decline and cancel. `scripts/generate_signing_cert.py` creates a self-signed test certificate.
+- Audit: `document_checked_out`, `document_checked_in`, `comment_added` / `_edited` / `_deleted`, `signature_requested`, `document_signed`, `signature_declined`, `signature_request_cancelled`, `signature_password_failed`, `notification_preferences_changed`, `emails_retried`, `emails_discarded`.
+
+### Changed - GED Phase 7
+- Refusals because of a check-out answer 423 (was 409 for new versions).
+- A checked-out document leaves the other reviewers' review queue until it is checked in.
+- Destroying a document also removes its comments, notifications, signature requests and signature evidence (the audit log keeps the events).
+- New dependencies: `pyhanko`, `img2pdf`; `ocrmypdf` in the API image.
+
 ### Added - GED Phase 6 (lifecycle, trash, retention, legal hold, destruction)
 - Document lifecycle: active → archived → to be destroyed → destroyed, enforced in one place (`lifecycle.py`). Archiving is done by an archivist (admin, or reviewer with the "archivist" permission); archived documents are read-only for everyone else.
 - Trash: deleting a document (review page, upload / batch removal) now moves it to the trash - hidden everywhere, links kept, restorable for `TRASH_RETENTION_DAYS` (30) from the "Corbeille" page. After that the daily job destroys it with an automatically approved destruction record ("purge corbeille").

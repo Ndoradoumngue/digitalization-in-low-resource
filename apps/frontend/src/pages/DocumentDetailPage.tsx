@@ -20,7 +20,10 @@ import ShareButton from "../components/ShareDialog";
 import LifecycleBadge from "../components/LifecycleBadge";
 import LifecycleSection from "../components/LifecycleSection";
 import { useAuth } from "../context/AuthContext";
-import { canShare, canShareLevel } from "../utils/permissions";
+import { canShare, canShareLevel, isActor } from "../utils/permissions";
+import CheckoutControl from "../components/CheckoutControl";
+import CommentsSection from "../components/CommentsSection";
+import SignaturesSection from "../components/SignaturesSection";
 
 // The document-management record view: presents a document the way a real
 // records system would - every extracted field as a labeled entry, no QA
@@ -55,9 +58,14 @@ const SKIP_FIELDS = new Set([
   "retention_override", "destroyed_at", "destruction_id",
 ]);
 
-// Right-pane tabs: the record itself, its file versions, its change history.
-const TABS = ["record", "versions", "history"] as const;
+// Right-pane tabs: the record itself, its file versions, its change
+// history, comments and signatures (GED Phase 7). ?tab=<name> opens one.
+const TABS = ["record", "versions", "history", "comments", "signatures"] as const;
 type Tab = (typeof TABS)[number];
+
+function asTab(value: string | null): Tab {
+  return (TABS as readonly string[]).includes(value ?? "") ? (value as Tab) : "record";
+}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -84,8 +92,10 @@ export default function DocumentDetailPage() {
   const [searchParams] = useSearchParams();
   const startPage = Math.max(0, (parseInt(searchParams.get("page") ?? "", 10) || 1) - 1);
   const [activePage, setActivePage] = useState(startPage);
-  const [tab, setTab] = useState<Tab>("record");
+  const tabParam = searchParams.get("tab");
+  const [tab, setTab] = useState<Tab>(asTab(tabParam));
   useEffect(() => { setActivePage(startPage); }, [tableName, id, startPage]);
+  useEffect(() => { setTab(asTab(tabParam)); }, [tableName, id, tabParam]);
 
   // Key press for prev/next
   useEffect(() => {
@@ -158,6 +168,8 @@ export default function DocumentDetailPage() {
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          {data && tableName && id && <CheckoutControl tableName={tableName} id={id} />}
 
           {data && tableName && id && perms.canDownload && (
             <DownloadOriginalMenu tableName={tableName} id={id} />
@@ -287,6 +299,12 @@ export default function DocumentDetailPage() {
                 />
               )}
               {tab === "history" && tableName && id && <HistorySection tableName={tableName} id={id} />}
+              {tab === "comments" && tableName && id && (
+                <CommentsSection tableName={tableName} id={id} canPost={isActor(user)} />
+              )}
+              {tab === "signatures" && tableName && id && (
+                <SignaturesSection tableName={tableName} id={id} canRequest={perms.canAct} />
+              )}
 
               {tab === "record" && tableName && id && (
                 <FieldsPanel

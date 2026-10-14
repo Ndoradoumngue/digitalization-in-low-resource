@@ -98,7 +98,9 @@
     "tabs": {
       "record": "Record",
       "versions": "Versions",
-      "history": "History"
+      "history": "History",
+      "comments": "Comments",
+      "signatures": "Signatures"
     }
   },
   "fields": {
@@ -582,7 +584,20 @@
       "destruction_cancelled": "Destruction withdrawn",
       "document_destroyed": "Document destroyed",
       "destruction_pv_downloaded": "Destruction report downloaded",
-      "document_deleted": "Document deleted"
+      "document_deleted": "Document deleted",
+      "document_checked_out": "Checked out",
+      "document_checked_in": "Checked in",
+      "comment_added": "Comment added",
+      "comment_edited": "Comment edited",
+      "comment_deleted": "Comment deleted",
+      "signature_requested": "Signature requested",
+      "document_signed": "Document signed",
+      "signature_declined": "Signature declined",
+      "signature_request_cancelled": "Signature request cancelled",
+      "signature_password_failed": "Signature - wrong password",
+      "notification_preferences_changed": "Notification preferences changed",
+      "emails_retried": "E-mails sent again",
+      "emails_discarded": "Failed e-mails dropped"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -819,7 +834,8 @@
       "backup_not_configured": "No off-site backup is configured (BACKUP_SFTP_TARGET).",
       "backup_stale": "No backup for more than 36 h (last one: {{since}}).",
       "files_failed": "{{count}} file(s) could not be synchronised.",
-      "conflicts_open": "{{count}} sync conflict(s) waiting for a decision."
+      "conflicts_open": "{{count}} sync conflict(s) waiting for a decision.",
+      "emails_failed": "{{count}} e-mail(s) could not be sent."
     },
     "node": {
       "heading": "This server",
@@ -918,6 +934,26 @@
         "nas": "NAS"
       },
       "help": "Nightly encrypted backups with restic (30 daily + 12 monthly). Sync is not a backup - see RESTORE.md to restore."
+    },
+    "emails": {
+      "heading": "E-mails sent by this server",
+      "disabled": "E-mail is not set up on this server (SMTP_HOST / SMTP_FROM) - nothing is queued.",
+      "pending": "Waiting",
+      "failed": "Failed",
+      "sent": "Sent",
+      "hint": "Each server sends the e-mails it queued; failed ones stay here until sent again or dropped.",
+      "retryAll": "Send all failed again",
+      "discardAll": "Drop all failed",
+      "retry": "Send again",
+      "none": "No failed or retrying e-mail.",
+      "attempts_one": "{{count}} attempt",
+      "attempts_other": "{{count}} attempts",
+      "status": {
+        "failed": "Failed",
+        "pending": "Retrying",
+        "sending": "Sending",
+        "sent": "Sent"
+      }
     }
   },
   "tags": {
@@ -1192,5 +1228,139 @@
     "type": "Type",
     "dates": "Filed → retention end",
     "fingerprints": "SHA-256 fingerprints"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "bellLabel_one": "Notifications - {{count}} unread",
+    "bellLabel_other": "Notifications - {{count}} unread",
+    "unreadOnly": "Unread only",
+    "markAllRead": "Mark all as read",
+    "markRead": "Mark read",
+    "empty": "No notifications.",
+    "aDocument": "a document",
+    "unavailable": "{{kind}} - this document is no longer available to you",
+    "toSign_one": "{{count}} document waits for your signature",
+    "toSign_other": "{{count}} documents wait for your signature",
+    "askedBy": "asked by {{name}}",
+    "preferences": "E-mail notifications",
+    "emailLabel": "Send me an e-mail",
+    "email": {
+      "immediate": "For each notification",
+      "digest": "Once a day (summary)",
+      "off": "Never"
+    },
+    "emailLanguage": "E-mail language",
+    "emailDisabled": "E-mail is not set up on this server - notifications are only shown here.",
+    "kinds": {
+      "review_pending": "To review",
+      "document_shared": "Shared with you",
+      "mention": "Mention",
+      "comment_reply": "Reply",
+      "retention_eligible": "Retention ended",
+      "destruction_proposed": "Destruction to approve",
+      "sync_down": "Synchronisation",
+      "backup_failed": "Backup",
+      "signature_requested": "Signature requested",
+      "signature_completed": "Signed",
+      "signature_declined": "Signature declined",
+      "lock_released": "Check-out released"
+    },
+    "text": {
+      "review_pending_one": "A new document is waiting for your review",
+      "review_pending_other": "{{count}} new documents are waiting for your review",
+      "document_shared": "{{by}} shared {{record}} with you",
+      "mention": "{{by}} mentioned you in a comment on {{record}}",
+      "comment_reply": "{{by}} replied to your comment on {{record}}",
+      "retention_eligible_one": "The retention period of a document has ended",
+      "retention_eligible_other": "The retention period of {{count}} documents has ended",
+      "destruction_proposed": "{{by}} proposes destroying {{count}} document(s) - your approval is needed",
+      "sync_down": "Synchronisation of server {{node}} has been failing for several hours",
+      "backup_failed": "The last backup of server {{node}} failed",
+      "signature_requested": "{{by}} asks you to sign {{record}}",
+      "signature_completed": "{{record}} is signed by everyone ({{by}} signed last)",
+      "signature_declined": "{{by}} declined to sign {{record}}",
+      "lock_released": "{{by}} released your check-out of {{record}}",
+      "unknown": "New notification"
+    }
+  },
+  "checkout": {
+    "checkout": "Check out",
+    "checkin": "Check in",
+    "forceUnlock": "Force unlock",
+    "forceUnlockConfirm": "Release {{name}}'s check-out? They will be notified and any changes they have not checked in yet stay on their side.",
+    "lockedBy": "Locked by {{name}}",
+    "lockedByMe": "Checked out by you",
+    "until": "Until {{date}}",
+    "checkoutHint": "Lock the document for {{hours}} h - the others can only read it meanwhile",
+    "checkinHint": "Release the document. Optionally attach the new file - it becomes the next version.",
+    "comment": "Comment (optional)",
+    "reextract": "Extract the fields again from the new file"
+  },
+  "comments": {
+    "empty": "No comments yet.",
+    "readOnly": "Readers can read comments but not post.",
+    "reply": "Reply",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this comment?",
+    "deleted": "Comment deleted",
+    "edited": "(edited)",
+    "post": "Comment",
+    "placeholder": "Write a comment… (@ to mention someone)",
+    "mentionHint": "@ to mention · Ctrl+Enter to send",
+    "replyingTo": "Replying to {{name}}"
+  },
+  "signatures": {
+    "requests": "Signature requests",
+    "ask": "Request a signature",
+    "noRequests": "No signature request.",
+    "notConfigured": "Electronic signature is not set up on this server (organisation certificate missing).",
+    "certExpired": "The organisation certificate has expired - signing will fail.",
+    "status": {
+      "pending": "Pending",
+      "completed": "Completed",
+      "declined": "Declined",
+      "cancelled": "Cancelled",
+      "signed": "Signed"
+    },
+    "askedBy": "asked by {{name}}",
+    "sign": "Sign",
+    "signing": "Signing…",
+    "decline": "Decline",
+    "cancelRequest": "Cancel the request",
+    "signHint": "Enter your password to sign. The current version is signed with the organisation's certificate and saved as a new version.",
+    "reason": "Reason",
+    "password": "Your password",
+    "noteOptional": "Note (optional)",
+    "levelNote": "Simple / advanced electronic signature (PAdES) with SDAI's evidence - not a qualified signature.",
+    "askHint": "Choose the signers in order - each one is asked when the previous one has signed.",
+    "reasonPlaceholder": "Reason (e.g. Approval)",
+    "titlePlaceholder": "Title on the stamp (optional)",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "remove": "Remove",
+    "addSigner": "Add a signer (search by name)…",
+    "messagePlaceholder": "Message to the signers (optional)",
+    "send": "Send the request",
+    "verification": "Verification",
+    "notPdf": "The current version is not a PDF - nothing to verify.",
+    "noSignature": "Version {{version}} carries no electronic signature.",
+    "allValid_one": "Version {{version}}: the signature is valid and the document unchanged since.",
+    "allValid_other": "Version {{version}}: all {{count}} signatures are valid and the document unchanged since.",
+    "invalid": "Version {{version}}: verification FAILED - the file was changed after signing or a signature is not trusted.",
+    "intact": "Unchanged since signed",
+    "trusted": "Trusted certificate",
+    "evidenceMatches": "Matches SDAI's evidence",
+    "coverage": {
+      "ENTIRE_FILE": "Covers the whole file",
+      "ENTIRE_REVISION": "Covers its revision (later signatures added)"
+    },
+    "hashMismatch": "The file no longer matches the hash recorded for this version.",
+    "evidence": "Evidence",
+    "signer": "Signer",
+    "when": "When",
+    "versions": "Versions",
+    "certificate": "Certificate",
+    "auditTrail": "Audit trail"
   }
 }

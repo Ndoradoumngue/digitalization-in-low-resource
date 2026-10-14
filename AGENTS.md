@@ -38,6 +38,14 @@ sdai_digitalization/
 │   │   ├── retention.py         # retention rules (precedence, dates) + daily job (local node)
 │   │   ├── destruction.py       # two-person destruction, tombstones, file deletion on both nodes, PV
 │   │   ├── pdf_report.py        # small text-PDF writer (destruction PV)
+│   │   ├── notifications.py     # notify() + recipients, node-local e-mail outbox + sender, digest, ops alerts (GED Phase 7)
+│   │   ├── notifications_router.py  # /api/db/notifications + notification preferences
+│   │   ├── locks.py             # check-out lock SQL (part of the edit level), checkout/release, expiry
+│   │   ├── checkout_router.py   # /api/db/.../lock|checkout|checkin|unlock
+│   │   ├── comments_router.py   # /api/db/.../comments (threads, @mentions)
+│   │   ├── signatures.py        # PAdES signing/verification with the organisation certificate (pyHanko)
+│   │   ├── signature_router.py  # signature requests, sign, decline, cancel, verification
+│   │   ├── scripts/generate_signing_cert.py  # self-signed signing certificate for tests / first install
 │   │   ├── admin_router.py      # /api/admin/* (admin-only)
 │   │   ├── sync/                # local/cloud sync (GED Phase 8)
 │   │   │   ├── capture.py       # changelog triggers, row clocks, SYNC_TABLES, seed, node-local tables
@@ -63,6 +71,8 @@ sdai_digitalization/
 │   │       ├── test_review.py       # approve, reject, flag, count (delete = trash)
 │   │       ├── test_lifecycle.py    # lifecycle guards, transitions, retention helpers, PV (mocked)
 │   │       ├── test_lifecycle_pg.py # trash, retention, holds, destruction on a real PostgreSQL (-m pg)
+│   │       ├── test_collab.py       # notifications / locks / signature helpers (mocked)
+│   │       ├── test_collab_pg.py    # notifications, outbox, check-out, comments, signatures (-m pg)
 │   │       ├── test_permissions.py  # role/flag/permission-level matrix + leak tests (mocked)
 │   │       ├── test_access_pg.py    # access control on a real PostgreSQL (opt-in: -m pg + TEST_DATABASE_URL)
 │   │       ├── test_versions.py     # versioning/fixity/history helpers (mocked)
@@ -199,6 +209,7 @@ pre-commit run --all-files  # run manually
 - **Series tree**: never write `sdai_series.path` by hand outside `classification_router` - moves go through `PATCH /api/db/series/{id}` (cycle check + subtree rewrite), and series-scope access always goes through `documents_router._series_grant_match` (subtree inheritance).
 - **Handing files out** (GED Phase 5): resolve a document's file with `document_files.resolve` (version rows - never `original_path`/`source_*` directly) and serve it through `check_servable` + `deliver` (safe roots, sync-pending answer, watermark). Never add a route without `get_current_user` besides `share_router.public_router` (`test_only_known_routes_are_unauthenticated` fails); public share checks go through `_usable_share` (creator re-checked on every use). Exports select documents with `permission="download"`, never `read`. Only the token hash is stored - never log or return a share token after creation.
 - **Lifecycle** (GED Phase 6): never `DELETE` a document row and never write `lifecycle_status`, `deleted_at`/`deleted_by`/`deleted_reason` or `archived_at` outside `lifecycle.py` - trash with `lifecycle.trash` (routes: `lifecycle_router.trash_document`), destroy only through `destruction.execute` (approved record or trash purge). Legal holds are evaluated with `lifecycle.held_sql` at the moment of the change, never from the `legal_hold` column (a display copy). Code that changes a date a retention rule may depend on (fields, review, series, archiving) calls `retention.recompute(_quietly)` in its transaction. Files are only ever deleted by `destruction.purge_destroyed_files`; a new file-path column must be covered by `destruction.files_of`. Dedup and restore only consider live rows (`ingest_router._LIVE_HASH_PREDICATE`). Mocked tests: `mock_db` stubs the retention/hold hooks.
+- **Collaboration** (GED Phase 7): notify people only through `notifications.notify` (savepoint, never fails the action) with recipients from `notifications.users_with_permission` - never notify someone about a document they can't read, and never put document content (field values, comment text) in an e-mail: fixed `email.*` sentences + a link only. `sdai_email_outbox` is node-local (the node that queued an e-mail sends it) - never add it to `SYNC_TABLES`. The check-out lock is part of the `edit` level (`locks.unlocked_sql` in `_access_where_clause`, admins included): a new write path that checks `edit` gets it for free - don't bypass it, and don't write `locked_by`/`locked_until` outside `locks.py`. A signed PDF is always a new version (`versions_router._lock_for_change` + `_insert_version`), never an overwrite; call it a "simple/advanced electronic signature", never "qualified". Destruction must delete every row that describes a document (`destruction.execute` + `heal_tombstones` lists) - add new per-document tables there.
 - **Full-text search**: every search expression uses the `sdai_fr` configuration (`documents_router._TSQUERY`, `_field_vector` - the field expression must stay identical to the index built by `_ensure_table`/`_backfill_fts_indexes`). Page rows are only created through `ingest_router._create_page_rows` (it queues their transcription); set a manual page's text through `_update_page_status(..., "manual", fields=...)`. Never select or write `batch_document_pages.ocr_tsv` - it is generated (and kept out of sync).
 - `ingest_router.py` owns `_engine()`. Both `auth.py` and `audit.py` import it lazily (inside function bodies) to avoid the circular import: `ingest_router → auth → ingest_router`.
 - **Deduplication**: `_compute_hash(path)` computes SHA-256 in 64 KB chunks; `_find_duplicate(hash)` queries all tables with a `content_hash` column. `_register_and_enqueue()` calls both before touching the queue. Duplicates get `status='duplicate'` in `batch_documents` and are counted in the `duplicates_skipped` field of `GET /api/ingest/status/{batch_id}`.
@@ -292,5 +303,11 @@ pre-commit run --all-files  # run manually
 | `TRASH_RETENTION_DAYS` / `TRASH_PURGE_BATCH` | `30` / `500` | Days a trashed document stays restorable before the purge (destruction) / documents purged per run |
 | `RETENTION_JOB_INTERVAL_HOURS` | `24` | Retention job period (local node): dates, documents whose retention ended, trash purge |
 | `DESTROYED_FILES_SWEEP_SECONDS` | `600` | Every node: delete files destroyed here or on the peer, heal tombstones |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | *(unset)* / `587` / `starttls` | E-mail notifications - nothing is queued without `SMTP_HOST` + `SMTP_FROM` |
+| `EMAIL_POLL_SECONDS` / `EMAIL_MAX_ATTEMPTS` / `EMAIL_DIGEST_HOUR` | `30` / `8` / `7` | Outbox sender period, attempts before failing, hour after which daily digests go out (local node) |
+| `OPS_ALERT_CHECK_SECONDS` | `300` | Every node: notify admins when its sync is down / a backup failed |
+| `CHECKOUT_DEFAULT_HOURS` / `CHECKOUT_MAX_HOURS` / `LOCK_SWEEP_SECONDS` | `8` / `72` / `300` | Check-out length and expiry sweep (local node) |
+| `SIGNING_P12_PATH` / `SIGNING_P12_PASSWORD` | *(unset)* | Organisation certificate (PKCS#12) for electronic signatures - unset = signing unavailable |
+| `SIGNING_TRUST_ROOTS` / `SIGNING_LOCATION` | *(unset)* | Extra CA certificates trusted when verifying / location written into signatures |
 
 Users and roles are stored in PostgreSQL, not in env vars. Use `create_admin.py` to seed the first admin account. `AUTH_USERNAME` and `AUTH_PASSWORD` no longer exist.

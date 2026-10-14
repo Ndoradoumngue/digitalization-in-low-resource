@@ -76,6 +76,85 @@ async def _pending_file_bytes(conn) -> int:
     return total
 
 
+def node_alerts(state: dict, peers: list[dict], backups: list[dict], last_backup_success, now) -> list[dict]:
+    """Alerts about this node itself: sync down for longer than
+    SYNC_ALERT_HOURS, backups missing / failed / stale."""
+    from sync import config
+
+    initiator = bool(config.SYNC_PEER_URL)
+    alerts = []
+    if config.enabled():
+        # The local node knows from its own worker; the passive cloud node
+        # from when the local one last reached it.
+        last_ok = (
+            state["last_success_at"]
+            if initiator
+            else max(
+                (p["last_contact_at"] for p in peers if p["last_contact_at"]),
+                default=None,
+            )
+        )
+        reference = last_ok or state["seeded_at"]
+        if (
+            reference is None
+            or (now - reference).total_seconds() > config.SYNC_ALERT_HOURS * 3600
+        ):
+            alerts.append(
+                {
+                    "kind": "sync_down",
+                    "since": _iso(last_ok),
+                    "hours": config.SYNC_ALERT_HOURS,
+                }
+            )
+    latest = max(backups, key=lambda b: b["finished_at"], default=None)
+    if latest is None or latest["status"] == "not_configured":
+        alerts.append({"kind": "backup_not_configured"})
+    elif any(b["status"] == "failed" for b in backups):
+        alerts.append({"kind": "backup_failed", "since": _iso(last_backup_success)})
+    elif (now - latest["finished_at"]).total_seconds() > 36 * 3600:
+        alerts.append({"kind": "backup_stale", "since": _iso(latest["finished_at"])})
+    return alerts
+
+
+async def compute_alerts(conn) -> list[dict]:
+    """node_alerts from the database - used by the admin notifications
+    (notifications.check_ops_alerts)."""
+    state = dict(
+        (
+            await conn.execute(
+                text("SELECT seeded_at, last_success_at FROM sdai_sync_state WHERE id = 1")
+            )
+        )
+        .mappings()
+        .one_or_none()
+        or {"seeded_at": None, "last_success_at": None}
+    )
+    peers = [
+        dict(r)
+        for r in (
+            await conn.execute(text("SELECT last_contact_at FROM sdai_sync_cursors"))
+        ).mappings()
+    ]
+    backups = [
+        dict(r)
+        for r in (
+            await conn.execute(
+                text("""
+                    SELECT DISTINCT ON (COALESCE(target, '-')) target, status, finished_at
+                    FROM sdai_backup_runs ORDER BY COALESCE(target, '-'), finished_at DESC
+                """)
+            )
+        ).mappings()
+    ]
+    last_backup_success = (
+        await conn.execute(
+            text("SELECT max(finished_at) FROM sdai_backup_runs WHERE status = 'success'")
+        )
+    ).scalar()
+    now = (await conn.execute(text("SELECT now()"))).scalar()
+    return node_alerts(state, peers, backups, last_backup_success, now)
+
+
 @router.get("/status", summary="Sync and backup status of this node")
 async def sync_status(current_user: CurrentUser = Depends(require_admin)):
     import ingest_router
@@ -151,43 +230,19 @@ async def sync_status(current_user: CurrentUser = Depends(require_admin)):
             )
         ).scalar()
         now = (await conn.execute(text("SELECT now()"))).scalar()
+        # E-mails this node gave up sending (GED Phase 7, notifications_router).
+        from notifications_router import failed_email_count
+
+        emails_failed = await failed_email_count(conn, current_user.tenant_id)
 
     initiator = bool(config.SYNC_PEER_URL)
-    alerts = []
-    if config.enabled():
-        # The local node knows from its own worker; the passive cloud node
-        # from when the local one last reached it.
-        last_ok = (
-            state["last_success_at"]
-            if initiator
-            else max(
-                (p["last_contact_at"] for p in peers if p["last_contact_at"]),
-                default=None,
-            )
-        )
-        reference = last_ok or state["seeded_at"]
-        if (
-            reference is None
-            or (now - reference).total_seconds() > config.SYNC_ALERT_HOURS * 3600
-        ):
-            alerts.append(
-                {
-                    "kind": "sync_down",
-                    "since": _iso(last_ok),
-                    "hours": config.SYNC_ALERT_HOURS,
-                }
-            )
-    latest = max(backups, key=lambda b: b["finished_at"], default=None)
-    if latest is None or latest["status"] == "not_configured":
-        alerts.append({"kind": "backup_not_configured"})
-    elif any(b["status"] == "failed" for b in backups):
-        alerts.append({"kind": "backup_failed", "since": _iso(last_backup_success)})
-    elif (now - latest["finished_at"]).total_seconds() > 36 * 3600:
-        alerts.append({"kind": "backup_stale", "since": _iso(latest["finished_at"])})
+    alerts = node_alerts(state, peers, backups, last_backup_success, now)
     if files_by_status.get("failed"):
         alerts.append({"kind": "files_failed", "count": files_by_status["failed"]})
     if conflicts_open:
         alerts.append({"kind": "conflicts_open", "count": conflicts_open})
+    if emails_failed:
+        alerts.append({"kind": "emails_failed", "count": emails_failed})
 
     return {
         "node": {

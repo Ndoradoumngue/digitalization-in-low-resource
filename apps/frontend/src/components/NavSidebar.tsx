@@ -9,6 +9,7 @@ import { canManageLifecycle, isReader } from "../utils/permissions";
 import { useEligibleDocuments, useDestructions } from "../hooks/useLifecycle";
 import { useSyncStatus } from "../hooks/useSync";
 import { alertText } from "../pages/SyncAdminPage";
+import NotificationBell from "./NotificationBell";
 
 // Alerts worth interrupting an admin for on every page; the rest (no backup
 // target configured on a standalone server, ...) stay on the Sync page.
@@ -53,6 +54,7 @@ export default function NavSidebar() {
             {t("nav.documentCount", { count: dbTotal })}
           </p>
         </div>
+        <NotificationBell />
       </div>
 
       <GlobalSearch />

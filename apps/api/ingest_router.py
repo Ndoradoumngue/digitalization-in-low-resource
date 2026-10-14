@@ -39,6 +39,8 @@ from typing import NamedTuple
 
 import cv2
 import httpx
+import locks
+import notifications
 import numpy as np
 import page_text
 import pytesseract
@@ -888,6 +890,126 @@ CREATE TABLE IF NOT EXISTS sdai_notifications (
 CREATE INDEX IF NOT EXISTS idx_sdai_notifications_user
     ON sdai_notifications (user_id, created_at DESC);
 
+-- Notifications (GED Phase 7, notifications.py): the document a
+-- notification is about, and what each person wants by e-mail
+-- (immediate / daily digest / off) in which language.
+ALTER TABLE sdai_notifications ADD COLUMN IF NOT EXISTS table_name TEXT;
+ALTER TABLE sdai_notifications ADD COLUMN IF NOT EXISTS document_id UUID;
+CREATE INDEX IF NOT EXISTS idx_sdai_notifications_unread
+    ON sdai_notifications (user_id) WHERE read_at IS NULL;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS locale TEXT;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS email_notifications TEXT NOT NULL DEFAULT 'immediate';
+
+-- E-mail outbox - node-local: the node that queued an e-mail sends it
+-- (notifications.send_due). dedupe_key makes queueing idempotent
+-- (n:<notification id>, digest:<user>:<date>). No document content in
+-- subject or body, only a link.
+CREATE TABLE IF NOT EXISTS sdai_email_outbox (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       UUID,
+    user_id         UUID,
+    to_email        TEXT        NOT NULL,
+    locale          TEXT        NOT NULL DEFAULT 'fr',
+    kind            TEXT        NOT NULL,
+    dedupe_key      TEXT        NOT NULL UNIQUE,
+    subject         TEXT        NOT NULL,
+    body            TEXT        NOT NULL,
+    status          TEXT        NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'sending', 'sent', 'failed')),
+    attempts        INTEGER     NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    claimed_at      TIMESTAMPTZ,
+    last_error      TEXT,
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    sent_at         TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_email_outbox_due
+    ON sdai_email_outbox (next_attempt_at) WHERE status = 'pending';
+
+-- Comments on a document (GED Phase 7.3, comments_router.py): threaded
+-- through parent_id, made on version_no, mentions = the user ids notified.
+-- Edits keep edited_at, deletes are soft (deleted_at) - the body is no
+-- longer served. Removed with the document when it is destroyed. No
+-- foreign key on parent_id: the peer applies row deletes one by one, in
+-- any order (the parent is checked by the router instead).
+CREATE TABLE IF NOT EXISTS sdai_comments (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID        NOT NULL REFERENCES sdai_tenants(id),
+    table_name  TEXT        NOT NULL,
+    document_id UUID        NOT NULL,
+    parent_id   UUID,
+    version_no  INTEGER,
+    author_id   UUID        NOT NULL,
+    body        TEXT        NOT NULL,
+    mentions    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    edited_at   TIMESTAMPTZ,
+    deleted_at  TIMESTAMPTZ,
+    deleted_by  UUID
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_comments_document
+    ON sdai_comments (table_name, document_id, created_at);
+
+-- Electronic signatures (GED Phase 7.4, signature_router.py / signatures.py).
+-- A request lists its signers in order (signers = JSON list of
+-- user_id, title, status pending/signed/declined, signed_at, signature_id),
+-- each signs in turn. Each signature is a new version of the document
+-- (the signed PDF), described in sdai_signatures - the evidence kept next
+-- to the PAdES signature itself: who, when, from where, with which
+-- certificate, the hashes before and after.
+CREATE TABLE IF NOT EXISTS sdai_signature_requests (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id    UUID        NOT NULL REFERENCES sdai_tenants(id),
+    table_name   TEXT        NOT NULL,
+    document_id  UUID        NOT NULL,
+    requested_by UUID,
+    reason       TEXT        NOT NULL,
+    message      TEXT,
+    signers      JSONB       NOT NULL,
+    status       TEXT        NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'completed', 'declined', 'cancelled')),
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    closed_at    TIMESTAMPTZ,
+    closed_by    UUID,
+    close_note   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_signature_requests_document
+    ON sdai_signature_requests (table_name, document_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sdai_signature_requests_pending
+    ON sdai_signature_requests (tenant_id) WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS sdai_signatures (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id         UUID        NOT NULL REFERENCES sdai_tenants(id),
+    table_name        TEXT        NOT NULL,
+    document_id       UUID        NOT NULL,
+    request_id        UUID,
+    version_no        INTEGER     NOT NULL,
+    source_version_no INTEGER     NOT NULL,
+    field_name        TEXT        NOT NULL,
+    signer_id         UUID        NOT NULL,
+    signer_name       TEXT        NOT NULL,
+    signer_title      TEXT,
+    reason            TEXT        NOT NULL,
+    level             TEXT        NOT NULL DEFAULT 'simple' CHECK (level IN ('simple', 'advanced')),
+    signed_at         TIMESTAMPTZ NOT NULL,
+    ip_address        TEXT,
+    cert_subject      TEXT        NOT NULL,
+    cert_fingerprint  TEXT        NOT NULL,
+    source_file_hash  TEXT,
+    signed_file_hash  TEXT        NOT NULL,
+    created_at        TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sdai_signatures_document
+    ON sdai_signatures (table_name, document_id, signed_at);
+
+-- Node-local: ops alerts (sync down, backup failed) the admins were
+-- already told about - a row disappears when the alert clears.
+CREATE TABLE IF NOT EXISTS sdai_ops_alerts (
+    kind        TEXT        PRIMARY KEY,
+    notified_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Tamper-evident audit log: every row is chained to the previous one of
 -- the same origin_node (chain_seq 1, 2, 3 ... and prev_hash = the previous
 -- row_hash), row_hash being sha256 over the row's canonical JSON (see
@@ -1379,6 +1501,9 @@ _SYNCED_STATIC_TABLES = (
     "sdai_destruction_records",
     "sdai_destroyed_files",
     "sdai_notifications",
+    "sdai_comments",
+    "sdai_signature_requests",
+    "sdai_signatures",
     "batches",
     "batch_documents",
     "batch_document_pages",
@@ -1849,7 +1974,12 @@ async def startup() -> None:
     import retention
 
     # Every node deletes the files a destruction listed (its own or the peer's).
-    _worker_tasks = [asyncio.create_task(destruction.destroyed_files_worker())]
+    _worker_tasks = [
+        asyncio.create_task(destruction.destroyed_files_worker()),
+        # Each node sends the e-mails it queued and reports its own alerts.
+        asyncio.create_task(notifications.email_worker()),
+        asyncio.create_task(notifications.ops_alert_worker()),
+    ]
     if NODE_ROLE == "cloud":
         # No GPU/Ollama on the cloud node: uploads there wait as 'pending'
         # rows until the local node processes them (_peer_upload_pickup_worker
@@ -1858,6 +1988,8 @@ async def startup() -> None:
         return
     _worker_tasks += [
         asyncio.create_task(retention.daily_worker()),
+        asyncio.create_task(notifications.digest_worker()),
+        asyncio.create_task(locks.expiry_worker()),
         asyncio.create_task(_stage1_worker()),
         asyncio.create_task(_stage2_worker()),
         asyncio.create_task(_stage3_worker()),
@@ -3683,6 +3815,9 @@ async def _store_extraction(
             "batch_id": batch_id,
         },
     )
+    if review_status != "auto_approved":
+        # Tell whoever can review it (coalesced: one unread "N to review").
+        await notifications.notify_review_pending(tenant_id, table_name, doc_id)
 
 
 # ── DB helpers for batch_documents ────────────────────────────────────────────

@@ -201,6 +201,20 @@ async def login(
     ):
         raise HTTPException(status_code=401, detail=t("auth.incorrect_credentials", locale))
 
+    # Until the person picks one in their preferences, e-mail
+    # notifications use the language of their first login.
+    try:
+        async with _engine().begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE sdai_users SET locale = :l"
+                    " WHERE id = :id AND locale IS NULL"
+                ),
+                {"l": locale, "id": user[0]},
+            )
+    except Exception:
+        logger.warning("could not record the login language", exc_info=True)
+
     jti = str(uuid.uuid4())
     token = _create_token(str(user[0]), jti)
     _set_auth_cookie(response, token)
@@ -467,6 +481,20 @@ app.include_router(classification_router)
 from lifecycle_router import router as lifecycle_router
 
 app.include_router(lifecycle_router)
+
+# ── Collaboration (notifications, check-out, comments, signatures) ─────────────────────────────────────────────
+
+from checkout_router import router as checkout_router
+from comments_router import router as comments_router
+from notifications_router import admin_router as email_admin_router
+from notifications_router import router as notifications_router
+from signature_router import router as signature_router
+
+app.include_router(notifications_router)
+app.include_router(email_admin_router)
+app.include_router(checkout_router)
+app.include_router(comments_router)
+app.include_router(signature_router)
 
 # ── Review queue router ───────────────────────────────────────────────────────
 

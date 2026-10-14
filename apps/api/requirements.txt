@@ -18,6 +18,10 @@ pdf2image==1.17.0
 # PDF watermark on confidential downloads (GED Phase 5)
 pypdf==5.1.0
 
+# Electronic signature - PAdES (GED Phase 7), image originals to PDF
+pyhanko==0.25.3
+img2pdf==0.5.1
+
 # Async HTTP (Ollama REST calls)
 httpx==0.28.1
 

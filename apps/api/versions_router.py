@@ -320,6 +320,21 @@ async def upload_version(
     current version). With reextract=true the file is also run through the
     extraction pipeline and its fields written into this same document -
     the previous values stay in the field history."""
+    return await add_uploaded_version(
+        request, table_name, doc_id, file, comment, reextract, current_user
+    )
+
+
+async def add_uploaded_version(
+    request: Request,
+    table_name: str,
+    doc_id: str,
+    file: UploadFile,
+    comment: str | None,
+    reextract: bool,
+    current_user: CurrentUser,
+) -> dict:
+    """upload_version's work - also used by check-in (checkout_router)."""
     locale = current_user.locale
     filename = _safe_filename(file.filename or "")
     ext = Path(filename).suffix.lower()

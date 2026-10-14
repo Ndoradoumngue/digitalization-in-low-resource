@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
+import NotificationsPage from "./pages/NotificationsPage";
 import AdminRoute from "./components/auth/AdminRoute";
 import ContributorRoute from "./components/auth/ContributorRoute";
 import LoginPage from "./pages/LoginPage";
@@ -171,6 +172,15 @@ export default function App() {
             <AdminRoute>
               <BenchmarksPage />
             </AdminRoute>
+          }
+        />
+
+        <Route
+          path="/notifications"
+          element={
+            <ProtectedRoute>
+              <NotificationsPage />
+            </ProtectedRoute>
           }
         />
 

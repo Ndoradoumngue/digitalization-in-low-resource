@@ -162,6 +162,20 @@ services:
       - RETENTION_JOB_INTERVAL_HOURS=${RETENTION_JOB_INTERVAL_HOURS:-24}
       - TRASH_PURGE_BATCH=${TRASH_PURGE_BATCH:-500}
       - DESTROYED_FILES_SWEEP_SECONDS=${DESTROYED_FILES_SWEEP_SECONDS:-600}
+      # Notifications and e-mail, check-out, electronic signature (README, Document management)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_SECURITY=${SMTP_SECURITY:-starttls}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - EMAIL_DIGEST_HOUR=${EMAIL_DIGEST_HOUR:-7}
+      - CHECKOUT_DEFAULT_HOURS=${CHECKOUT_DEFAULT_HOURS:-8}
+      - CHECKOUT_MAX_HOURS=${CHECKOUT_MAX_HOURS:-72}
+      - SIGNING_P12_PATH=${SIGNING_P12_PATH:-}
+      - SIGNING_P12_PASSWORD=${SIGNING_P12_PASSWORD:-}
+      - SIGNING_TRUST_ROOTS=${SIGNING_TRUST_ROOTS:-}
+      - SIGNING_LOCATION=${SIGNING_LOCATION:-}
       # Optional - customize the VLM extraction schema for your document
       # corpus without a rebuild. See README.md "Customizing the extraction
       # schema" and .env.example for details.

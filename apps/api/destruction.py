@@ -504,6 +504,14 @@ async def execute(
             " AND table_name = :t AND document_id = CAST(:id AS uuid)",
             "DELETE FROM sdai_document_access WHERE tenant_id = CAST(:tid AS uuid)"
             " AND scope = 'document' AND table_name = :t AND document_id = CAST(:id AS uuid)",
+            "DELETE FROM sdai_comments WHERE tenant_id = CAST(:tid AS uuid)"
+            " AND table_name = :t AND document_id = CAST(:id AS uuid)",
+            "DELETE FROM sdai_notifications WHERE tenant_id = CAST(:tid AS uuid)"
+            " AND table_name = :t AND document_id = CAST(:id AS uuid)",
+            "DELETE FROM sdai_signature_requests WHERE tenant_id = CAST(:tid AS uuid)"
+            " AND table_name = :t AND document_id = CAST(:id AS uuid)",
+            "DELETE FROM sdai_signatures WHERE tenant_id = CAST(:tid AS uuid)"
+            " AND table_name = :t AND document_id = CAST(:id AS uuid)",
             "UPDATE sdai_share_links SET revoked_at = now() WHERE tenant_id = CAST(:tid AS uuid)"
             " AND table_name = :t AND document_id = CAST(:id AS uuid) AND revoked_at IS NULL",
         ):
@@ -738,6 +746,10 @@ async def heal_tombstones(engine) -> int:
                 f"DELETE FROM sdai_document_tags WHERE table_name = :t AND document_id IN {dead}",
                 f"DELETE FROM sdai_document_access WHERE scope = 'document' AND table_name = :t"
                 f" AND document_id IN {dead}",
+                f"DELETE FROM sdai_comments WHERE table_name = :t AND document_id IN {dead}",
+                f"DELETE FROM sdai_notifications WHERE table_name = :t AND document_id IN {dead}",
+                f"DELETE FROM sdai_signature_requests WHERE table_name = :t AND document_id IN {dead}",
+                f"DELETE FROM sdai_signatures WHERE table_name = :t AND document_id IN {dead}",
                 f"""DELETE FROM batch_document_pages WHERE batch_document_id IN (
                         SELECT batch_document_id FROM "{table}"
                         WHERE lifecycle_status = 'destroyed' AND batch_document_id IS NOT NULL)""",

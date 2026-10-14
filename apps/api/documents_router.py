@@ -33,6 +33,8 @@ import uuid
 from pathlib import Path
 
 import lifecycle
+import locks
+import notifications
 import retention
 from audit import client_ip, log_action
 from auth import (
@@ -360,6 +362,11 @@ def _access_where_clause(
     this returns non-empty."""
     live = "" if include_deleted else _live_where_clause(table)
     if current_user.role == "admin":
+        if permission == "edit":
+            # Even an admin edits a checked-out document only after a
+            # forced unlock (GED Phase 7) - the holder must be told.
+            unlocked = locks.unlocked_sql(table, current_user.id)
+            return f"{live} AND {unlocked}" if live else unlocked
         return live
     if permission not in PERMISSION_LEVELS:
         raise ValueError(f"unknown permission level {permission!r}")
@@ -402,6 +409,10 @@ def _access_where_clause(
         # Archived / destruction-eligible documents are read-only except for
         # lifecycle managers (GED Phase 6) - every edit-level action at once.
         access = f"{lifecycle.editable_sql(table)} AND {access}"
+    if permission == "edit":
+        # Checked out by someone else: read-only for everyone else (GED
+        # Phase 7) - fields, versions, review, tags, series, links, pages.
+        access = f"{locks.unlocked_sql(table, current_user.id)} AND {access}"
     return f"{live} AND {access}" if live else access
 
 
@@ -450,7 +461,10 @@ async def _require_document_permission(
         )
         visible = (
             await conn.execute(
-                text(f'SELECT lifecycle_status FROM "{table}" WHERE {where}'),
+                text(
+                    f"SELECT lifecycle_status, {locks.held_by_other_sql(table, current_user.id)}"
+                    f' AS locked FROM "{table}" WHERE {where}'
+                ),
                 {"id": doc_id, **_access_params(current_user)},
             )
         ).one_or_none()
@@ -459,6 +473,8 @@ async def _require_document_permission(
             raise HTTPException(
                 status_code=403, detail=t("lifecycle.read_only", current_user.locale)
             )
+        if permission == "edit" and visible[1]:
+            raise await locks.locked_error(conn, table, doc_id, current_user.locale)
         raise HTTPException(
             status_code=403,
             detail=t(f"documents.permission_{permission}_required", current_user.locale),
@@ -2016,6 +2032,10 @@ async def create_document_access(
             },
         )
         grant_id = result.scalar()
+
+        await notifications.notify_document_shared(
+            conn, current_user, safe, doc_id, body.grantee_type, body.grantee_id, body.permission
+        )
 
     await log_action(
         action="document_access_granted",
