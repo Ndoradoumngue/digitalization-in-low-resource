@@ -224,7 +224,7 @@ docker compose exec api python create_admin.py \
 
 The dashboard is available at **http://localhost**. The API is at **http://localhost/api** (proxied internally by Nginx; expose port 8000 in docker-compose for direct access).
 
-> **Ollama is now containerised.** The stack includes an `ollama` service that starts automatically. If you prefer to use a host-installed Ollama instead, change `OLLAMA_HOST=http://ollama:11434` in `docker-compose.yml` to `OLLAMA_HOST=http://host.docker.internal:11434` and remove the `ollama` service and `depends_on` entry from `api`.
+> **Where Ollama runs** (in Docker on the CPU or a GPU, installed on the machine, or on another machine) is the `OLLAMA_MODE` setting chosen by `scripts/first-run.sh` - see [Faster extraction](#faster-extraction-give-ollama-a-gpu). Never edit `docker-compose.yml` for it.
 
 ### First steps after install
 
@@ -414,110 +414,60 @@ Ollama runs as a Docker service - no host installation required. The model (~5 G
 
 **Check what Ollama is running on.** Run `docker compose exec ollama ollama ps`, or `ollama ps` for a host install. The `PROCESSOR` column shows `100% CPU` or `100% GPU`.
 
-The default `docker-compose.yml` gives the Ollama container no GPU access, so out of the box it always runs on CPU. Pick the option below that matches your hardware. In every option, only Ollama moves: Postgres, Redis, the API and the frontend stay in Docker as they are, and existing batches and data are unaffected.
+Where Ollama runs is an installation setting, `OLLAMA_MODE` in `.env`, chosen by `scripts/first-run.sh`
+(run it again to switch - it rewrites `.env` and `COMPOSE_FILE` and restarts what changed; never edit
+`docker-compose.yml` for this). In every mode only Ollama moves: Postgres, Redis, the API and the
+frontend stay in Docker, and existing batches and data are unaffected.
 
-| Machine running the stack | GPU available to Ollama? | Use |
+| Machine running the stack | `OLLAMA_MODE` | What it does |
 |---|---|---|
-| Linux server or PC with an NVIDIA GPU (on-premises or a cloud GPU instance) | Yes, once the container is given the GPU | [Option A](#option-a---server-with-a-gpu-keep-ollama-in-docker) |
-| Linux server or PC with an AMD GPU (supported by ROCm) | Yes, with the ROCm image of Ollama | [Option A](#option-a---server-with-a-gpu-keep-ollama-in-docker) |
-| Windows with an NVIDIA GPU (Docker Desktop + WSL 2) | Yes, once the container is given the GPU | [Option A](#option-a---server-with-a-gpu-keep-ollama-in-docker) |
-| macOS (Apple Silicon) | Not inside Docker; Docker on macOS cannot use the Apple GPU (Metal) | [Option B](#option-b---ollama-installed-on-the-same-machine-macos) |
-| NAS, mini-PC, or any server without a usable GPU (including Intel integrated graphics) | No | [Option C](#option-c---ollama-on-another-machine-on-the-network-nas-and-gpu-less-servers) |
+| Linux server or PC with an NVIDIA GPU (on-premises or a cloud GPU instance), Windows + WSL 2 with an NVIDIA GPU | `docker-nvidia` | Ollama in Docker, given the GPU (`docker-compose.gpu-nvidia.yml`). On Linux this is as fast as a native install |
+| Linux with an AMD GPU supported by ROCm | `docker-amd` | Ollama's ROCm image in Docker with `/dev/kfd` and `/dev/dri` (`docker-compose.gpu-amd.yml`) |
+| macOS (Apple Silicon) | `host` | Ollama installed on the Mac itself: Docker on macOS cannot use the Apple GPU (Metal), so a native install is 10-20x faster (`docker-compose.ollama-external.yml`) |
+| NAS, mini-PC, or any server without a usable GPU, with a GPU machine on the network | `remote` | The stack stays where it is and sends each page to Ollama on that machine (same file, `OLLAMA_HOST=http://<ip>:11434`) |
+| Anything else (testing, small volumes) | `docker` (default) | Ollama in Docker on the CPU - works everywhere, slowly |
 
-A GPU server does not have to run the whole stack. If one is available elsewhere on the network, for example a shared GPU workstation or a machine in the ministry's server room, the stack can stay where it is and send extraction to it with [Option C](#option-c---ollama-on-another-machine-on-the-network-nas-and-gpu-less-servers).
+`first-run.sh` suggests a mode (`host` on a Mac, `docker-nvidia` when `nvidia-smi` sees a GPU, otherwise
+`docker`) and, for `host` / `remote`, checks that the API reaches Ollama and that the model is there.
+Non-interactive: `SDAI_OLLAMA_MODE=remote SDAI_OLLAMA_HOST=http://192.168.1.20:11434`.
 
-**Sizing.** `qwen2.5vl:7b` needs about 8 GB of GPU memory (VRAM) to run fully on the GPU. Cards with less VRAM split the model between GPU and CPU (`ollama ps` then shows something like `40%/60% CPU/GPU`), which is faster than CPU alone but far slower than a full fit. Any NVIDIA card with 8 GB or more from the last several generations (for example an RTX 3060 12 GB, RTX 4060 Ti 16 GB, or a data-centre card such as an A10 or L4) is comfortably fast enough.
+**Sizing.** `qwen2.5vl:7b` needs about 8 GB of GPU memory (VRAM) to run fully on the GPU. Cards with less VRAM split the model between GPU and CPU (`ollama ps` then shows something like `40%/60% CPU/GPU`), which is faster than CPU alone but far slower than a full fit. Any NVIDIA card with 8 GB or more from the last several generations (for example an RTX 3060 12 GB, RTX 4060 Ti 16 GB, or a data-centre card such as an A10 or L4) is comfortably fast enough. Measured on an Apple Silicon Mac in `host` mode: one scanned page in about 50 s, model load included.
 
-### Option A - Server with a GPU (keep Ollama in Docker)
+**Offline bundle.** Build it for the mode the server will use: `OLLAMA_MODE=docker-amd ./setup.sh` bundles
+the ROCm image, `host` / `remote` bundle no Ollama image. The model archive (`models/ollama-models.tar.gz`)
+is always made: the `docker*` modes restore it at first start; for an Ollama outside Docker load it on
+that machine (below).
 
-**NVIDIA GPU**
+### `docker-nvidia` / `docker-amd` - prerequisites on the host
 
-1. Install the NVIDIA driver and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) on the host. Confirm the GPU is visible with `nvidia-smi`. Cloud GPU instances usually come with the driver preinstalled; the toolkit may still need installing. On Windows, a recent NVIDIA driver plus Docker Desktop with the WSL 2 backend is enough.
-2. Give the `ollama` service the GPU in `docker-compose.yml`:
+- NVIDIA: the driver and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html); `nvidia-smi` must work and `docker info` must list the `nvidia` runtime (`first-run.sh` warns otherwise). On Windows, a recent NVIDIA driver plus Docker Desktop with the WSL 2 backend is enough.
+- AMD: the GPU driver with ROCm, and a card on [Ollama's list of supported AMD GPUs](https://github.com/ollama/ollama/blob/main/docs/gpu.md).
+- Check: `docker compose exec ollama ollama ps` shows `100% GPU`. A CPU/GPU split means the card lacks VRAM for the whole model (see Sizing).
 
-   ```yaml
-   ollama:
-     # ...existing settings...
-     deploy:
-       resources:
-         reservations:
-           devices:
-             - driver: nvidia
-               count: all
-               capabilities: [gpu]
-   ```
+### `host` / `remote` - Ollama outside Docker
 
-**AMD GPU**
-
-1. Install the AMD GPU driver with ROCm support on the host. Check that your card is on [Ollama's list of supported AMD GPUs](https://github.com/ollama/ollama/blob/main/docs/gpu.md).
-2. In `docker-compose.yml`, switch the `ollama` service to the ROCm image and pass the GPU devices through:
-
-   ```yaml
-   ollama:
-     image: ollama/ollama:rocm
-     # ...existing settings...
-     devices:
-       - /dev/kfd
-       - /dev/dri
-   ```
-
-**Then, for either vendor**
-
-3. Recreate the service with `docker compose up -d ollama`.
-4. Check that `docker compose exec ollama ollama ps` shows `100% GPU`. If it shows a CPU/GPU split, the card does not have enough VRAM for the whole model (see Sizing above).
-
-### Option B - Ollama installed on the same machine (macOS)
-
-On a Mac, Ollama installed natively uses the Apple GPU and is roughly 10-20× faster than in Docker.
-
-1. Install Ollama on the host, start it, and pull the model:
+1. Install Ollama on that machine ([ollama.com](https://ollama.com/download); macOS: `brew install ollama`) and start it with one request at a time:
 
    ```bash
-   brew install ollama
-   OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 ollama serve   # leave running (or: brew services start ollama)
-   ollama pull qwen2.5vl:7b                                        # in another terminal
+   OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 ollama serve                 # host
+   OLLAMA_HOST=0.0.0.0:11434 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 ollama serve   # remote: listen on the network
    ```
 
-2. Point the API at the host. In `docker-compose.yml`, under the `api` service:
-   - change `OLLAMA_HOST=http://ollama:11434` to `OLLAMA_HOST=http://host.docker.internal:11434`. The value is set in the compose file, so changing `.env` alone has no effect.
-   - remove `ollama` from `depends_on`.
-3. Stop the containerised Ollama and restart the API:
+   (or as a service: `brew services start ollama`, or the Linux installer's systemd unit with the same variables).
+2. Load the model: `ollama pull qwen2.5vl:7b` with internet, or offline from the bundle:
 
    ```bash
-   docker compose stop ollama
-   docker compose up -d api
+   tar xzf models/ollama-models.tar.gz -C ~/.ollama                                  # macOS / a user's ollama serve
+   sudo tar xzf models/ollama-models.tar.gz -C /usr/share/ollama/.ollama \
+     && sudo chown -R ollama: /usr/share/ollama/.ollama                              # Linux systemd service
    ```
 
-   This also frees the ~8 GiB the model was using inside the Docker VM.
-4. Check that `ollama ps` on the host shows `100% GPU`.
+3. Run `./scripts/first-run.sh` and choose `host` (or `remote` and give the address, with a fixed IP or a DHCP reservation for that machine).
+4. Check that `ollama ps` on that machine shows `100% GPU` while a page is processed.
 
-This option also works on a Linux host with an NVIDIA or AMD GPU, as an alternative to Option A. On Linux, `host.docker.internal` additionally needs `extra_hosts: ["host.docker.internal:host-gateway"]` on the `api` service.
+> **Security (`remote`).** Ollama has no authentication. Anyone who can reach port 11434 can use the model. Keep the GPU machine on the internal network only: do not forward port 11434 on the router, and if possible restrict it with a firewall rule so that only the SDAI server can connect. Page images travel over the LAN to this machine, which should be one the deployment is allowed to process documents on.
 
-### Option C - Ollama on another machine on the network (NAS and GPU-less servers)
-
-Most NAS devices (Synology, QNAP, TrueNAS boxes and the like) have a low-power CPU, no GPU Ollama can use, and limited RAM. On them `qwen2.5vl:7b` runs slower than on a laptop CPU, if it fits in memory at all. The NAS is still a good place for the rest of the stack: the database, document storage and web app. Extraction should run on a separate machine on the same network that has a GPU, such as an Apple Silicon Mac or a PC with an NVIDIA card. The API sends each page image to that machine and gets the JSON back.
-
-1. On the GPU machine, install Ollama, pull the model, and let it accept connections from the network:
-
-   ```bash
-   ollama pull qwen2.5vl:7b
-   OLLAMA_HOST=0.0.0.0:11434 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 ollama serve
-   ```
-
-   Give the machine a fixed IP address, or a DHCP reservation, so the address below does not change.
-2. On the NAS, in `docker-compose.yml` under the `api` service, set `OLLAMA_HOST=http://<gpu-machine-ip>:11434` and remove `ollama` from `depends_on`.
-3. On the NAS, remove or stop the `ollama` service and restart the API:
-
-   ```bash
-   docker compose stop ollama
-   docker compose up -d api
-   ```
-
-4. From the NAS, check the connection with `curl http://<gpu-machine-ip>:11434/api/tags`. It should list `qwen2.5vl:7b`.
-
-> **Security.** Ollama has no authentication. Anyone who can reach port 11434 can use the model. Keep the GPU machine on the internal network only: do not forward port 11434 on the router, and if possible restrict it with a firewall rule so that only the NAS can connect. Page images travel over the LAN to this machine, which should be one the deployment is allowed to process documents on.
-
-The GPU machine must be on and running `ollama serve` while documents are being ingested. If it is unreachable, pages fail with a connection error and can be retried once it is back.
+The Ollama machine must be on and running `ollama serve` while documents are being ingested. If it is unreachable, pages fail with a connection error and can be retried once it is back.
 
 ### After switching
 
@@ -578,7 +528,8 @@ Copy `.env.example` to `.env` and adjust as needed. Docker Compose reads this fi
 | `LETSENCRYPT_EMAIL` | *(empty)* | Email for Let's Encrypt expiry notices; required when `HTTPS_MODE=letsencrypt` |
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@localhost:5432/sdai` | asyncpg connection string; use `@db:5432` inside Docker |
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection string; use `redis://redis:6379` inside Docker |
-| `OLLAMA_HOST` | `http://ollama:11434` | Points to the containerised Ollama service. Change to `http://host.docker.internal:11434` to use a host-installed Ollama |
+| `OLLAMA_MODE` | `docker` | Where Ollama runs: `docker`, `docker-nvidia`, `docker-amd`, `host`, `remote` - set by `scripts/first-run.sh` with `COMPOSE_FILE` (see [Faster extraction](#faster-extraction-give-ollama-a-gpu)) |
+| `OLLAMA_HOST` | `http://ollama:11434` (docker modes) | Ollama's address for `host` (`http://host.docker.internal:11434`) and `remote` (`http://<ip>:11434`); local development outside Docker: `http://localhost:11434` |
 | `DATA_DIR` | `./data` | Writable directory for processed images and uploaded files |
 | `NODE_ID` | `local` | Unique, stable identifier of this server (lowercase letters, digits, `_`, `-`; max 40 chars) - stamped on every row it writes. Give each server its own ID |
 | `NODE_ROLE` | `local` | `local` (on-site primary server) or `cloud` (synchronized replica) |

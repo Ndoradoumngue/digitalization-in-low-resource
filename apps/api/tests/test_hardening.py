@@ -130,3 +130,78 @@ def test_setup_pulls_every_image_for_the_target_platform():
     assert 'docker pull --quiet --platform "$TARGET_PLATFORM"' in setup
     assert "compose -f docker-compose.yml pull" not in setup
     assert "the bundle would not run on the server" in setup  # mismatch = error
+
+
+OLLAMA_MODES = {
+    # OLLAMA_MODE -> compose files added to docker-compose.yml
+    "docker": "",
+    "docker-nvidia": ":docker-compose.gpu-nvidia.yml",
+    "docker-amd": ":docker-compose.gpu-amd.yml",
+    "host": ":docker-compose.ollama-external.yml",
+    "remote": ":docker-compose.ollama-external.yml",
+}
+
+
+def test_first_run_and_setup_agree_on_the_ollama_modes():
+    root = Path(api_server.__file__).resolve().parents[2]
+    first_run = (root / "scripts" / "first-run.sh").read_text()
+    setup = (root / "setup.sh").read_text()
+    for mode, files in OLLAMA_MODES.items():
+        for name in filter(None, files.split(":")):
+            assert (root / name).exists(), name
+            assert name in first_run and mode in first_run
+    assert "choose OLLAMA_MODE" in first_run
+    # setup bundles the image each mode runs (none outside Docker)
+    assert 'docker-amd) COMPOSE_FILES="docker-compose.yml:docker-compose.gpu-amd.yml"' in setup
+    assert (
+        'host|remote) COMPOSE_FILES="docker-compose.yml:docker-compose.ollama-external.yml"'
+        in setup
+    )
+    # the model archive never carries that Ollama's private key
+    assert '-C /root/.ollama models"' in setup
+
+
+def test_ollama_modes_render(tmp_path):
+    """Each OLLAMA_MODE's compose files render: GPU reservation / ROCm image,
+    or no ollama container and the API calling OLLAMA_HOST without waiting."""
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    import pytest
+
+    if shutil.which("docker") is None:
+        pytest.skip("needs the docker CLI")
+    root = Path(api_server.__file__).resolve().parents[2]
+
+    def config(mode):
+        env = {
+            **os.environ,
+            "COMPOSE_FILE": "docker-compose.yml" + OLLAMA_MODES[mode],
+            "OLLAMA_HOST": "http://192.0.2.10:11434",
+            "COMPOSE_PROJECT_NAME": "sdai_render_test",
+        }
+        out = subprocess.run(
+            ["docker", "compose", "--env-file", os.devnull, "config", "--format", "json"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if out.returncode != 0 and "unknown" in out.stderr.lower():
+            pytest.skip(f"docker compose too old: {out.stderr.strip()}")
+        assert out.returncode == 0, out.stderr
+        return json.loads(out.stdout)["services"]
+
+    cpu = config("docker")
+    assert cpu["api"]["environment"]["OLLAMA_HOST"] == "http://ollama:11434"
+    assert "ollama" in cpu["api"]["depends_on"]
+    gpu = config("docker-nvidia")["ollama"]["deploy"]["resources"]["reservations"]
+    assert gpu["devices"][0]["driver"] == "nvidia"
+    assert config("docker-amd")["ollama"]["image"] == "ollama/ollama:rocm"
+    for mode in ("host", "remote"):
+        services = config(mode)
+        assert "ollama" not in services
+        assert services["api"]["environment"]["OLLAMA_HOST"] == "http://192.0.2.10:11434"
+        assert sorted(services["api"]["depends_on"]) == ["db", "redis"]

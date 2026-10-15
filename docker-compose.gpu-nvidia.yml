@@ -1,0 +1,16 @@
+# SDAI Digitalisation - Ollama in Docker on an NVIDIA GPU (OLLAMA_MODE=docker-nvidia).
+#
+# Needs the NVIDIA driver and the NVIDIA Container Toolkit on the host
+# (`nvidia-smi` works, `docker info` lists the nvidia runtime). Added to
+# COMPOSE_FILE by scripts/first-run.sh - never edit docker-compose.yml for it.
+# Check: docker compose exec ollama ollama ps  ->  PROCESSOR 100% GPU
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]

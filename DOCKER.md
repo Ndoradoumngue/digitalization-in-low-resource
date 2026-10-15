@@ -258,7 +258,7 @@ Full list in `.env.example`. Key variables:
 | `LETSENCRYPT_EMAIL` | *(empty)* | Required for `letsencrypt` mode |
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@db:5432/sdai` | asyncpg connection string |
 | `REDIS_URL` | `redis://redis:6379` | Redis connection string |
-| `OLLAMA_HOST` | `http://ollama:11434` | Change to `http://host.docker.internal:11434` to use host Ollama |
+| `OLLAMA_MODE` / `OLLAMA_HOST` | `docker` / `http://ollama:11434` | Where Ollama runs (`docker`, `docker-nvidia`, `docker-amd`, `host`, `remote`) and its address outside Docker - set by `scripts/first-run.sh`, see README "Faster extraction" |
 | `DATA_DIR` | `./data` | Writable directory for processed images and uploads |
 
 ---

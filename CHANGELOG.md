@@ -9,6 +9,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Where the extraction model runs is an installation setting, `OLLAMA_MODE` (`docker`, `docker-nvidia`, `docker-amd`, `host`, `remote`), chosen by `scripts/first-run.sh` - which suggests the fastest option for the machine (a Mac: Ollama installed on it, since Docker can't use the Apple GPU; an NVIDIA GPU: Ollama in Docker on the GPU), checks that an Ollama outside Docker answers and has the model, and switches modes when run again. Override files `docker-compose.gpu-nvidia.yml`, `docker-compose.gpu-amd.yml`, `docker-compose.ollama-external.yml` are selected through `COMPOSE_FILE` - no more editing `docker-compose.yml`. `setup.sh` bundles the image of the chosen mode (`OLLAMA_MODE=...`; none for `host` / `remote`).
+
+### Fixed
+- The model archive made by `setup.sh` contained the Ollama instance's private key (`id_ed25519`), which every installation would have shared: only `models/` is archived now.
+
 ---
 
 ## [2.0.0] - 2026-10-15

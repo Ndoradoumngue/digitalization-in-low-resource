@@ -502,6 +502,13 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
   Ubuntu 24.04 client for a local and a cloud node. Frontend entrypoint: per-installation self-signed
   certificate (volume `frontend_ssl`, IP SAN for an IPv4 CN), http → https redirect keeps `HTTPS_PORT`.
   Container logs capped (`x-logging` in compose).
+- **Where Ollama runs** (after 2.0.0): `OLLAMA_MODE` in `.env` → `scripts/first-run.sh` `ollama_compose()`
+  adds `docker-compose.gpu-nvidia.yml` (GPU reservation), `docker-compose.gpu-amd.yml` (ROCm image +
+  devices) or `docker-compose.ollama-external.yml` (ollama service behind an unused profile, API
+  `OLLAMA_HOST=${OLLAMA_HOST:?}`, `extra_hosts host-gateway`, `depends_on` without ollama) to
+  `COMPOSE_FILE`; `setup.sh` reads `OLLAMA_MODE` for the image list. Verified on an Apple Silicon Mac in
+  `host` mode (native Ollama, 100 % GPU, ~50 s per page) and switching host → remote → host;
+  `docker-nvidia` / `docker-amd` only checked by rendering (`tests/test_hardening.py`), no such GPU here.
 - **Manuals (9.4)**: `docs/manuals/guide-utilisateur.md`, `guide-administrateur.md`,
   `fiche-exploitation.md` (French; every quoted label is a fr.json string).
 - **Performance (9.5)**: `_access_where_clause` builds its grant checks with `_grant_targets_sql` - one

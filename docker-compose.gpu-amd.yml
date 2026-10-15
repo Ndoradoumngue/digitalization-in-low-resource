@@ -1,0 +1,13 @@
+# SDAI Digitalisation - Ollama in Docker on an AMD GPU (OLLAMA_MODE=docker-amd).
+#
+# Needs the AMD driver with ROCm on the host and a card Ollama supports
+# (https://github.com/ollama/ollama/blob/main/docs/gpu.md). Added to
+# COMPOSE_FILE by scripts/first-run.sh - never edit docker-compose.yml for it.
+# Check: docker compose exec ollama ollama ps  ->  PROCESSOR 100% GPU
+
+services:
+  ollama:
+    image: ollama/ollama:rocm
+    devices:
+      - /dev/kfd
+      - /dev/dri

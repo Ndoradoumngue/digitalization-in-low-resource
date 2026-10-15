@@ -54,9 +54,9 @@ else
   warn "no docker-images.tar.gz - first-run will build the images (needs internet)"
 fi
 if [ -f "$MODELS_DIR/ollama-models.tar.gz" ]; then
-  ok "VLM model archive present (restored by the ollama container at first start)"
+  ok "VLM model archive present (restored by the ollama container at first start; for an Ollama outside Docker, first-run shows how to load it)"
 else
-  warn "no ollama-models.tar.gz - the ollama container will download the model (needs internet)"
+  warn "no ollama-models.tar.gz - Ollama will have to download the model (needs internet)"
 fi
 
 # ── 2. Development dependencies (optional) ───────────────────────────────────

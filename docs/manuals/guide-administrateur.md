@@ -70,7 +70,7 @@ gardez-en une copie hors des serveurs.
 |---|---|---|
 | Système | Ubuntu Server 24.04 LTS (64 bits) | Ubuntu 24.04 (VM chez un hébergeur) |
 | Processeur / mémoire | 8 cœurs, 32 Go (16 Go minimum) | 2 à 4 cœurs, 8 Go |
-| Carte graphique | NVIDIA 12 Go+ recommandée (sans elle, l'extraction est lente : plusieurs minutes par page) | aucune |
+| Carte graphique | NVIDIA 12 Go+ recommandée (sans elle, l'extraction est lente : jusqu'à 15-30 minutes par page dense) - ou un Mac Apple Silicon, ou une machine du réseau équipée (section 2.6) | aucune |
 | Disque | 100 Go + la taille des archives à numériser, de préférence en RAID 1 | 50 Go + archives |
 | Logiciels | Docker Engine et Docker Compose v2 (paquets `docker.io` et `docker-compose-v2`) | idem |
 | Électricité | onduleur (voir la fiche d'exploitation) | - |
@@ -86,6 +86,7 @@ Le serveur local n'a pas besoin d'internet : on prépare un paquet sur un autre 
 ```bash
 ./setup.sh                                # serveurs Intel / AMD (linux/amd64)
 TARGET_PLATFORM=linux/arm64 ./setup.sh    # serveurs ARM
+OLLAMA_MODE=docker-amd ./setup.sh         # selon l'emplacement du modèle (section 2.6)
 ```
 
 Le script télécharge le modèle d'extraction (environ 5 Go), construit les images et écrit dans
@@ -114,6 +115,7 @@ images, puis lance `scripts/first-run.sh`, qui pose les questions :
 | Rôle | `local` s'il y aura un serveur cloud, sinon `single` |
 | Nom du nœud | `site-main` (unique, ne change plus ensuite) |
 | Langue | `fr` |
+| Emplacement du modèle d'extraction | proposé selon la machine : `docker-nvidia` (carte NVIDIA), `host` (Mac), `docker` sinon - voir section 2.6 |
 | Fuseau horaire | par exemple `Africa/Ndjamena`, `Europe/Paris`, `UTC` |
 | Certificat HTTPS | `self_signed` (réseau interne) |
 | Nom ou adresse IP du serveur | ce que les utilisateurs taperont, par exemple `serveur-ged` ou `192.168.1.10` |
@@ -176,13 +178,55 @@ Pour une installation scriptée, donnez les réponses par variables d'environnem
 
 ```bash
 SDAI_ROLE=local SDAI_NODE_ID=site-main SDAI_LANGUAGE=fr SDAI_TZ=UTC \
-SDAI_HTTPS_MODE=self_signed SDAI_DOMAIN=serveur-ged \
+SDAI_HTTPS_MODE=self_signed SDAI_DOMAIN=serveur-ged SDAI_OLLAMA_MODE=docker-nvidia \
 SDAI_CLOUD_URL=https://ged.example.org SDAI_ORG_NAME="Mon organisation" \
 SDAI_ADMIN_EMAIL=admin@example.org SDAI_ADMIN_PASSWORD='...' \
 ./install.sh --non-interactive
 ```
 
 (cloud : `SDAI_ROLE=cloud SDAI_DOMAIN=... SDAI_LE_EMAIL=... SDAI_AUTH_SECRET=... SDAI_SYNC_TOKEN=...`)
+
+(modèle sur un autre poste : `SDAI_OLLAMA_MODE=remote SDAI_OLLAMA_HOST=http://192.168.1.20:11434`)
+
+### 2.6 Modèle d'extraction (Ollama) : où il tourne
+
+L'extraction utilise un modèle d'IA (`qwen2.5vl:7b`, servi par Ollama). Il est beaucoup plus rapide sur
+une carte graphique. L'emplacement est un réglage de l'installation, `OLLAMA_MODE` dans `.env`, choisi
+par `scripts/first-run.sh` ; pour en changer, relancez simplement le script (`./scripts/first-run.sh`).
+**Ne modifiez jamais `docker-compose.yml`** pour cela.
+
+| Machine | Réglage | Effet |
+|---|---|---|
+| Serveur Linux avec carte NVIDIA | `docker-nvidia` | Ollama dans Docker, sur la carte graphique (aussi rapide qu'une installation directe) |
+| Serveur Linux avec carte AMD (ROCm) | `docker-amd` | Ollama dans Docker (image ROCm), sur la carte graphique |
+| Mac (Apple Silicon) | `host` | Ollama installé directement sur le Mac : Docker ne peut pas utiliser la puce graphique du Mac, l'installation directe est 10 à 20 fois plus rapide |
+| Serveur sans carte graphique, avec un poste équipé sur le réseau | `remote` | Les pages sont envoyées au poste équipé (adresse `http://<ip>:11434`) |
+| Autre cas, tests | `docker` | Ollama dans Docker, sur le processeur : fonctionne partout, lentement |
+
+Ordre de grandeur mesuré : une page scannée en 50 secondes environ sur un Mac en mode `host`, contre 15 à
+30 minutes sur un processeur seul.
+
+**Prérequis `docker-nvidia`** : pilote NVIDIA et *NVIDIA Container Toolkit* installés (`nvidia-smi`
+fonctionne) ; le script prévient s'il manque. **`docker-amd`** : pilote AMD avec ROCm et une carte
+reconnue par Ollama.
+
+**Modes `host` et `remote`** (Ollama hors de Docker) :
+
+1. installez Ollama sur la machine concernée (ollama.com ; sur Mac `brew install ollama`) et
+   démarrez-le : `ollama serve` (pour `remote`, il doit écouter le réseau :
+   `OLLAMA_HOST=0.0.0.0:11434 ollama serve`, ou le service installé avec les mêmes variables) ;
+2. chargez le modèle : `ollama pull qwen2.5vl:7b` avec internet, ou depuis le paquet d'installation :
+   `tar xzf models/ollama-models.tar.gz -C ~/.ollama` (Mac), ou sous Linux
+   `sudo tar xzf models/ollama-models.tar.gz -C /usr/share/ollama/.ollama && sudo chown -R ollama: /usr/share/ollama/.ollama` ;
+3. relancez `./scripts/first-run.sh` et choisissez `host` ou `remote` (donnez alors l'adresse du poste,
+   avec une adresse IP fixe) : le script vérifie que le modèle répond.
+
+La machine Ollama doit être allumée pendant les dépôts ; sinon les pages échouent et se relancent avec
+**Réessayer**. En mode `remote`, Ollama n'a pas de mot de passe : ne l'ouvrez jamais sur internet
+(pas de redirection du port 11434 sur la box) et, si possible, n'autorisez que le serveur SDAI.
+
+Vérification : `ollama ps` (ou `docker compose exec ollama ollama ps`) affiche `100% GPU` pendant
+le traitement d'une page.
 
 ---
 

@@ -6,8 +6,8 @@
 #
 # What it does, in order:
 #   1. checks Docker / Docker Compose
-#   2. writes .env (from .env.example): role, NODE_ID, language, HTTPS, sync,
-#      backups - and generates every missing secret (never overwrites one)
+#   2. writes .env (from .env.example): role, NODE_ID, language, extraction
+#      model (Ollama), HTTPS, sync, backups - and generates every missing secret (never overwrites one)
 #   3. loads the bundled images (models/docker-images.tar.gz) if they are missing
 #   4. cloud node only, on its very first start: python -m sync.join
 #   5. starts the stack (docker compose up -d --no-build) and waits for the API
@@ -23,7 +23,16 @@
 # Answers for --non-interactive (and defaults for the questions):
 #   SDAI_ROLE SDAI_NODE_ID SDAI_LANGUAGE SDAI_TZ SDAI_HTTPS_MODE SDAI_DOMAIN
 #   SDAI_LE_EMAIL SDAI_CLOUD_URL SDAI_SYNC_TOKEN SDAI_AUTH_SECRET
+#   SDAI_OLLAMA_MODE SDAI_OLLAMA_HOST
 #   SDAI_BACKUP_SFTP SDAI_ORG_NAME SDAI_ADMIN_EMAIL SDAI_ADMIN_PASSWORD
+#
+# Where the extraction model (Ollama) runs - local / single node, OLLAMA_MODE:
+#   docker          in Docker, on the CPU (works everywhere, slow)
+#   docker-nvidia   in Docker, on an NVIDIA GPU (Linux + NVIDIA Container Toolkit)
+#   docker-amd      in Docker, on an AMD GPU (Linux + ROCm)
+#   host            installed on this machine (a Mac: Docker can't use its GPU)
+#   remote          on another machine of the network (OLLAMA_HOST)
+# Change it later by running this script again.
 #
 # Safe to run again: existing secrets are kept, the admin is updated, a cloud
 # node is joined only once.
@@ -94,6 +103,16 @@ choose() {  # choose VAR "question" default allowed...
     [ "$INTERACTIVE" = 1 ] || die "invalid value '$value' for: $question"
     warn "answer one of: $*"
   done
+}
+
+# Compose files added for an Ollama mode (see the header)
+ollama_compose() {
+  case "$1" in
+    docker-nvidia) echo ":docker-compose.gpu-nvidia.yml" ;;
+    docker-amd) echo ":docker-compose.gpu-amd.yml" ;;
+    host|remote) echo ":docker-compose.ollama-external.yml" ;;
+    *) echo "" ;;
+  esac
 }
 
 echo -e "${BOLD}=== SDAI - first run ===${RESET}"
@@ -194,7 +213,32 @@ if [ "$ROLE" = cloud ]; then
   set_env PUBLIC_BASE_URL "https://${DOMAIN}"
   set_env SYNC_PEER_URL ""
 else
-  set_env COMPOSE_FILE "docker-compose.yml"
+  # Extraction model: suggest the fastest option this machine can use
+  default_ollama="$(get_env OLLAMA_MODE)"
+  if [ -z "$default_ollama" ]; then
+    if [ "$(uname -s)" = Darwin ]; then default_ollama=host
+    elif command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then default_ollama=docker-nvidia
+    else default_ollama=docker
+    fi
+  fi
+  choose OLLAMA_MODE "Where the extraction model (Ollama) runs: docker (CPU), docker-nvidia, docker-amd, host (installed on this machine), remote (another machine)" \
+    "${SDAI_OLLAMA_MODE:-$default_ollama}" docker docker-nvidia docker-amd host remote
+  case "$OLLAMA_MODE" in
+    host) OLLAMA_URL="http://host.docker.internal:11434" ;;
+    remote)
+      current_url="$(get_env OLLAMA_HOST | grep -v -E 'localhost|host\.docker\.internal|//ollama:' || true)"
+      ask OLLAMA_URL "Address of the Ollama machine (e.g. http://192.168.1.20:11434)" "${SDAI_OLLAMA_HOST:-$current_url}"
+      [[ "$OLLAMA_URL" =~ ^https?://[^/]+ ]] || die "the Ollama address must look like http://192.168.1.20:11434"
+      OLLAMA_URL="${OLLAMA_URL%/}"
+      ;;
+    *) OLLAMA_URL="" ;;
+  esac
+  set_env OLLAMA_MODE "$OLLAMA_MODE"
+  [ -z "$OLLAMA_URL" ] || set_env OLLAMA_HOST "$OLLAMA_URL"
+  if [ "$OLLAMA_MODE" = docker-nvidia ] && ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q nvidia; then
+    warn "Docker has no NVIDIA runtime - install the NVIDIA Container Toolkit (administrator guide), or the ollama service will not start"
+  fi
+  set_env COMPOSE_FILE "docker-compose.yml$(ollama_compose "$OLLAMA_MODE")"
   choose HTTPS_MODE "HTTPS certificate: self_signed (intranet) or letsencrypt (public domain)" \
     "${SDAI_HTTPS_MODE:-$(get_env HTTPS_MODE | grep . || echo self_signed)}" self_signed letsencrypt
   set_env HTTPS_MODE "$HTTPS_MODE"
@@ -290,6 +334,26 @@ done
 [ "${ready:-0}" = 1 ] || die "the API did not start - see: docker compose logs api"
 ok "API answering"
 
+if [ "$ROLE" != cloud ] && { [ "$OLLAMA_MODE" = host ] || [ "$OLLAMA_MODE" = remote ]; }; then
+  # The API container must reach Ollama and find the model there
+  if models="$(docker compose exec -T api python -c "
+import json, os, urllib.request
+with urllib.request.urlopen(os.environ['OLLAMA_HOST'] + '/api/tags', timeout=5) as r:
+    print(' '.join(m['name'] for m in json.load(r).get('models', [])))
+" 2>/dev/null)"; then
+    if echo "$models" | grep -q 'qwen2.5vl:7b'; then
+      ok "Ollama reachable at ${OLLAMA_URL}, model qwen2.5vl:7b present"
+    else
+      warn "Ollama answers at ${OLLAMA_URL} but has no qwen2.5vl:7b - load it on that machine:"
+      echo "        ollama pull qwen2.5vl:7b    (internet), or from this bundle (administrator guide):"
+      echo "        tar xzf models/ollama-models.tar.gz -C ~/.ollama        (macOS)"
+      echo "        sudo tar xzf models/ollama-models.tar.gz -C /usr/share/ollama/.ollama && sudo chown -R ollama: /usr/share/ollama/.ollama   (Linux)"
+    fi
+  else
+    warn "Ollama does not answer at ${OLLAMA_URL} - start it there (ollama serve$([ "$OLLAMA_MODE" = remote ] && echo ', listening on the network: OLLAMA_HOST=0.0.0.0:11434'))"
+  fi
+fi
+
 # ── 6. Organisation and first administrator ──────────────────────────────────
 step 6 "Organisation and administrator…"
 if [ "$ROLE" = cloud ]; then
@@ -337,6 +401,7 @@ fi
 echo ""
 echo -e "${BOLD}=== Node ${NODE_ID} (${ROLE}) is running ===${RESET}"
 echo "  Address: ${url}"
+[ "$ROLE" = cloud ] || echo "  Extraction model: OLLAMA_MODE=${OLLAMA_MODE}${OLLAMA_URL:+ (${OLLAMA_URL})}"
 if [ "$(get_env HTTPS_MODE)" = letsencrypt ]; then
   echo "  Certificate (once DNS points here):"
   echo "    docker compose exec frontend certbot --nginx -d $(get_env LETSENCRYPT_DOMAIN) \\"

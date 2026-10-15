@@ -11,6 +11,11 @@
 #                       outside Docker - not needed to run the application)
 #
 #   TARGET_PLATFORM=linux/arm64 ./setup.sh   for ARM servers
+#   OLLAMA_MODE=docker-nvidia ./setup.sh     the Ollama image the server will run:
+#       docker / docker-nvidia (default image), docker-amd (ROCm image),
+#       host / remote (Ollama outside Docker: no Ollama image, the model
+#       archive is still made - it loads into that Ollama, see the
+#       administrator guide). Same values as OLLAMA_MODE in .env.
 #
 # The images are built for TARGET_PLATFORM (default linux/amd64, the usual
 # server), whatever this machine is - on an ARM laptop (Apple Silicon) the
@@ -26,6 +31,13 @@ cd "$(dirname "$0")"
 
 MODELS_DIR="./models"
 TARGET_PLATFORM="${TARGET_PLATFORM:-linux/amd64}"
+OLLAMA_MODE="${OLLAMA_MODE:-docker}"
+case "$OLLAMA_MODE" in
+  docker|docker-nvidia) COMPOSE_FILES="docker-compose.yml" ;;
+  docker-amd) COMPOSE_FILES="docker-compose.yml:docker-compose.gpu-amd.yml" ;;
+  host|remote) COMPOSE_FILES="docker-compose.yml:docker-compose.ollama-external.yml" ;;
+  *) echo "OLLAMA_MODE must be docker, docker-nvidia, docker-amd, host or remote" >&2; exit 1 ;;
+esac
 DEV=0
 [ "${1:-}" = "--dev" ] && DEV=1
 STEPS=$((DEV ? 5 : 3))
@@ -35,7 +47,7 @@ step() { echo -e "\n${BOLD}[${1}/${STEPS}]${RESET} ${2}"; }
 ok()   { echo -e "      ${GREEN}✓ ${1}${RESET}"; }
 warn() { echo -e "      ${YELLOW}⚠ ${1}${RESET}"; }
 
-echo -e "${BOLD}=== SDAI Offline Setup (${TARGET_PLATFORM}) ===${RESET}"
+echo -e "${BOLD}=== SDAI Offline Setup (${TARGET_PLATFORM}, Ollama: ${OLLAMA_MODE}) ===${RESET}"
 echo "Run on a machine with internet access."
 mkdir -p "$MODELS_DIR"
 
@@ -47,7 +59,8 @@ if [ -f "$MODELS_DIR/ollama-models.tar.gz" ]; then
 else
   # A temporary Ollama container, so the model lands in a Docker volume (no
   # dependency on a host-installed Ollama). The model files are the same
-  # on every platform.
+  # on every platform. Only models/ is archived: the store also holds that
+  # Ollama's private key (id_ed25519), which must not ship to every server.
   docker volume create sdai_ollama_export >/dev/null 2>&1 || true
   docker rm -f sdai_ollama_export >/dev/null 2>&1 || true
   docker run -d --name sdai_ollama_export \
@@ -66,7 +79,7 @@ else
   docker run --rm \
     -v sdai_ollama_export:/root/.ollama:ro \
     -v "$(pwd)/$MODELS_DIR:/backup" \
-    alpine sh -c "tar czf /backup/ollama-models.tar.gz -C /root/.ollama ."
+    alpine sh -c "tar czf /backup/ollama-models.tar.gz -C /root/.ollama models"
 
   docker rm sdai_ollama_export >/dev/null
   docker volume rm sdai_ollama_export >/dev/null
@@ -76,8 +89,10 @@ fi
 # ── 2. Build and save Docker images ──────────────────────────────────────────
 step 2 "Building and saving Docker images for ${TARGET_PLATFORM}…"
 export DOCKER_DEFAULT_PLATFORM="$TARGET_PLATFORM"
-# Only the images used on a server (the cloud override adds none).
-IMAGES=$(docker compose -f docker-compose.yml config --images | sort -u | tr '\n' ' ')
+# Only the images used on a server (the cloud override adds none), for
+# this OLLAMA_MODE. OLLAMA_HOST only has to be set for config to render.
+IMAGES=$(COMPOSE_FILE="$COMPOSE_FILES" OLLAMA_HOST="${OLLAMA_HOST:-http://unused}" \
+  docker compose config --images | sort -u | tr '\n' ' ')
 [ -n "$IMAGES" ] || { echo "docker compose config --images returned nothing" >&2; exit 1; }
 # Pulled one by one with an explicit platform: `docker compose pull` keeps an
 # image already present for this machine's platform (an arm64 postgres on an
@@ -88,7 +103,7 @@ for image in $IMAGES; do
     *) docker pull --quiet --platform "$TARGET_PLATFORM" "$image" >/dev/null ;;
   esac
 done
-docker compose -f docker-compose.yml build
+COMPOSE_FILE="$COMPOSE_FILES" OLLAMA_HOST="${OLLAMA_HOST:-http://unused}" docker compose build
 
 # Docker's containerd image store keeps several platforms under one tag:
 # inspect and save must name the platform (older Docker: no such flag, one

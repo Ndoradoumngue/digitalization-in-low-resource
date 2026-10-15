@@ -282,6 +282,7 @@ pre-commit run --all-files  # run manually
 - Do not change `DATA_DIR`, the `documents/` mount point or `INGEST_ROOT` on only one node of a hybrid deployment - files are referenced by absolute path and must have the same path on both nodes.
 - Do not assign `record_id` or run extraction on the cloud node (`_next_record_id` raises there).
 - Do not write to synced tables with triggers disabled (`session_replication_role = replica`, `ALTER TABLE ... DISABLE TRIGGER`) - the change would never reach the other node.
+- Do not put machine-specific choices (GPU, where Ollama runs, ports) into `docker-compose.yml` - the platform is generic: add an override file selected through `.env` (`COMPOSE_FILE`, written by `scripts/first-run.sh`), like `docker-compose.gpu-nvidia.yml` / `docker-compose.ollama-external.yml`.
 
 ---
 
@@ -293,7 +294,8 @@ pre-commit run --all-files  # run manually
 | `AUTH_SECURE_COOKIES` | `true` in Docker (`.env.example`, compose) | `false` only for plain-HTTP local development |
 | `AUTH_TOKEN_EXPIRE_HOURS` | `8` | JWT TTL |
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@localhost:5432/sdai` | asyncpg connection string |
-| `OLLAMA_HOST` | `http://ollama:11434` | Points to containerised Ollama; change to `http://host.docker.internal:11434` for host Ollama |
+| `OLLAMA_MODE` | `docker` | Where Ollama runs - picks the compose override: `docker-nvidia` → `docker-compose.gpu-nvidia.yml`, `docker-amd` → `docker-compose.gpu-amd.yml`, `host` / `remote` → `docker-compose.ollama-external.yml` (no ollama container, API calls `OLLAMA_HOST`). Written with `COMPOSE_FILE` by `scripts/first-run.sh`; `setup.sh` bundles the matching image |
+| `OLLAMA_HOST` | `http://ollama:11434` (docker modes) | Ollama's address in `host` / `remote` mode; `http://localhost:11434` for local dev |
 | `CORS_ORIGINS` | *(unset)* | Comma-separated allowed origins for local dev |
 | `NODE_ID` / `NODE_ROLE` | `local` / `local` | This server in a hybrid deployment (`local` with GPU, or `cloud`) |
 | `SYNC_NODE_TOKEN` | *(unset)* | Shared secret both nodes sign sync requests with - unset disables sync |
