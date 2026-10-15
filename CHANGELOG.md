@@ -38,6 +38,7 @@ with sync and backups, user management, an offline installer and French manuals 
 
 ### Fixed - GED Phase 9
 - The backup service (`scripts/backup/`) was missing from the repository (matched by a `.gitignore` pattern meant for `./backup/`).
+- `setup.sh` building for another platform (an amd64 bundle on an ARM laptop) shipped the laptop's own PostgreSQL, Redis and Ollama images: they are now pulled for `TARGET_PLATFORM` one by one, and a platform mismatch stops the script instead of warning.
 - Security review: the batch status route listed uploads filed into documents the caller can't read; a Google Drive import could write outside its folder (file name used as a path); nginx cached `/images/` responses and served them without authentication (cache removed); Ollama was published on all interfaces (now 127.0.0.1); login timing revealed which e-mails exist; sync requests are size-capped before being read; retention rule counts respected access; invalid ids answer 404 instead of 500; stricter Content-Security-Policy; warnings for short `AUTH_SECRET_KEY` / `SYNC_NODE_TOKEN`; notification links only open in-app paths.
 
 ### Added - GED Phase 7 (notifications, check-out, comments, electronic signature)

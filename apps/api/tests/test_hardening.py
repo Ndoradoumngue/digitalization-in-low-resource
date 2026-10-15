@@ -120,3 +120,13 @@ def test_compose_build_contexts_are_not_git_ignored():
             ["git", "check-ignore", "-q", str(path)], cwd=root
         ).returncode
         assert ignored == 1, f"{path.relative_to(root)} is git-ignored"
+
+
+def test_setup_pulls_every_image_for_the_target_platform():
+    """`docker compose pull` keeps an image present for the build machine's
+    platform - an arm64 postgres would ship in an amd64 bundle (GED Phase 9)."""
+    root = Path(api_server.__file__).resolve().parents[2]
+    setup = (root / "setup.sh").read_text()
+    assert 'docker pull --quiet --platform "$TARGET_PLATFORM"' in setup
+    assert "compose -f docker-compose.yml pull" not in setup
+    assert "the bundle would not run on the server" in setup  # mismatch = error

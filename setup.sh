@@ -77,18 +77,34 @@ fi
 step 2 "Building and saving Docker images for ${TARGET_PLATFORM}…"
 export DOCKER_DEFAULT_PLATFORM="$TARGET_PLATFORM"
 # Only the images used on a server (the cloud override adds none).
-docker compose -f docker-compose.yml pull --quiet --ignore-buildable
-docker compose -f docker-compose.yml build
-
 IMAGES=$(docker compose -f docker-compose.yml config --images | sort -u | tr '\n' ' ')
 [ -n "$IMAGES" ] || { echo "docker compose config --images returned nothing" >&2; exit 1; }
+# Pulled one by one with an explicit platform: `docker compose pull` keeps an
+# image already present for this machine's platform (an arm64 postgres on an
+# Apple Silicon laptop), which would then be shipped to an amd64 server.
 for image in $IMAGES; do
-  arch=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")
-  [ "$arch" = "$TARGET_PLATFORM" ] || warn "$image is $arch, not $TARGET_PLATFORM"
+  case "$image" in
+    sdai/*) ;;  # built below
+    *) docker pull --quiet --platform "$TARGET_PLATFORM" "$image" >/dev/null ;;
+  esac
+done
+docker compose -f docker-compose.yml build
+
+# Docker's containerd image store keeps several platforms under one tag:
+# inspect and save must name the platform (older Docker: no such flag, one
+# platform per tag).
+PLATFORM_FLAG=()
+docker save --help 2>/dev/null | grep -q -- '--platform' && PLATFORM_FLAG=(--platform "$TARGET_PLATFORM")
+for image in $IMAGES; do
+  arch=$(docker image inspect ${PLATFORM_FLAG[@]+"${PLATFORM_FLAG[@]}"} --format '{{.Os}}/{{.Architecture}}' "$image" 2>/dev/null || echo missing)
+  if [ "$arch" != "$TARGET_PLATFORM" ]; then
+    echo "      ✗ $image is $arch, not $TARGET_PLATFORM - the bundle would not run on the server" >&2
+    exit 1
+  fi
 done
 
 # shellcheck disable=SC2086
-docker save $IMAGES | gzip > "$MODELS_DIR/docker-images.tar.gz"
+docker save ${PLATFORM_FLAG[@]+"${PLATFORM_FLAG[@]}"} $IMAGES | gzip > "$MODELS_DIR/docker-images.tar.gz"
 ok "Images saved: $MODELS_DIR/docker-images.tar.gz ($(du -sh "$MODELS_DIR/docker-images.tar.gz" | cut -f1))"
 echo "      $IMAGES"
 
