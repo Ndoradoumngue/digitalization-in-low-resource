@@ -52,13 +52,18 @@ async def main(email: str, password: str, full_name: str, tenant_slug: str, role
 
         result = await conn.execute(
             text("""
-                INSERT INTO sdai_users (email, hashed_password, full_name, role, tenant_id)
-                VALUES (:email, :hashed, :full_name, :role, :tenant_id)
+                INSERT INTO sdai_users (email, hashed_password, full_name, role, tenant_id,
+                                        clearance)
+                VALUES (:email, :hashed, :full_name, :role, :tenant_id,
+                        CASE WHEN :role = 'admin' THEN 'secret' ELSE 'internal' END)
                 ON CONFLICT (email) DO UPDATE
                     SET hashed_password = :hashed,
                         full_name       = :full_name,
                         role            = :role,
                         tenant_id       = :tenant_id,
+                        -- admins see every level anyway; shown as such in Users
+                        clearance       = CASE WHEN :role = 'admin' THEN 'secret'
+                                               ELSE sdai_users.clearance END,
                         is_active       = true
                 RETURNING id, email, role
             """),

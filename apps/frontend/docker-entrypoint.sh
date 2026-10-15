@@ -4,7 +4,8 @@
 # HTTPS_MODE=self_signed (default)
 #   A certificate of this installation is generated at first start into
 #   /etc/nginx/ssl (a volume - kept across restarts and image updates).
-#   CN = SELF_SIGNED_CN (default: this host name). Accept the browser
+#   CN = SELF_SIGNED_CN (default: this host name; an IPv4 gets an IP SAN). The
+#   http:// redirect keeps HTTPS_PORT (the host port). Accept the browser
 #   warning once.
 #
 # DEFAULT_LANGUAGE (en|fr, optional) is written into index.html: the
@@ -36,14 +37,22 @@ case "$HTTPS_MODE" in
       CN="${SELF_SIGNED_CN:-$(hostname)}"
       echo "[entrypoint] HTTPS_MODE=self_signed - generating this installation's certificate (CN=${CN})."
       mkdir -p /etc/nginx/ssl
+      # Browsers match an address typed as an IP only against an IP SAN.
+      if echo "$CN" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then SAN="IP:${CN}"; else SAN="DNS:${CN}"; fi
       openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
         -keyout /etc/nginx/ssl/key.pem -out /etc/nginx/ssl/cert.pem \
-        -subj "/CN=${CN}/O=SDAI" -addext "subjectAltName=DNS:${CN}" 2>/dev/null
+        -subj "/CN=${CN}/O=SDAI" -addext "subjectAltName=${SAN}" 2>/dev/null
       chmod 600 /etc/nginx/ssl/key.pem
     else
       echo "[entrypoint] HTTPS_MODE=self_signed - using this installation's certificate."
     fi
     cp /etc/nginx/templates/self_signed.conf "$CONF"
+    # http:// -> https:// keeps the host port users type (8443 on site servers)
+    case "${HTTPS_PORT:-443}" in
+      443) ;;
+      *[!0-9]*) echo "[entrypoint] WARNING: HTTPS_PORT must be a number - redirect to 443." >&2 ;;
+      *) sed -i "s|return 301 https://\$host\$request_uri;|return 301 https://\$host:${HTTPS_PORT}\$request_uri;|" "$CONF" ;;
+    esac
     ;;
 
   letsencrypt)

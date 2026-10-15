@@ -222,7 +222,8 @@ pre-commit run --all-files  # run manually
 ### Nginx (`apps/frontend/`)
 
 - Three config templates: `nginx.conf` (self-signed TLS), `nginx.letsencrypt.conf` (Let's Encrypt HTTPS), `nginx.letsencrypt_pending.conf` (HTTP-only pending first cert).
-- All three include `proxy_cache_path` at the `http` level (before `server {}`) and a `/images/` location block with 24-hour caching and `X-Cache-Status` header.
+- No proxy cache on `/images/` (removed in GED Phase 9: it served cached images without the API's access check) - never add one back for authenticated routes.
+- `docker-entrypoint.sh` picks the template by `HTTPS_MODE`, generates the per-installation self-signed certificate at first start (volume `frontend_ssl`), rewrites the http → https redirect with `HTTPS_PORT` and writes `DEFAULT_LANGUAGE` into the `sdai-default-language` meta of `index.html`.
 - Only the pending config omits `X-Forwarded-Proto: https` (HTTP-only until cert is issued).
 
 ### Packages (`packages/`)
@@ -289,7 +290,7 @@ pre-commit run --all-files  # run manually
 | Variable | Default | Purpose |
 |---|---|---|
 | `AUTH_SECRET_KEY` | `change-me-in-production` | JWT signing key - **change in production** |
-| `AUTH_SECURE_COOKIES` | `false` | Set `true` in production (HTTPS) |
+| `AUTH_SECURE_COOKIES` | `true` in Docker (`.env.example`, compose) | `false` only for plain-HTTP local development |
 | `AUTH_TOKEN_EXPIRE_HOURS` | `8` | JWT TTL |
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@localhost:5432/sdai` | asyncpg connection string |
 | `OLLAMA_HOST` | `http://ollama:11434` | Points to containerised Ollama; change to `http://host.docker.internal:11434` for host Ollama |
@@ -309,5 +310,10 @@ pre-commit run --all-files  # run manually
 | `CHECKOUT_DEFAULT_HOURS` / `CHECKOUT_MAX_HOURS` / `LOCK_SWEEP_SECONDS` | `8` / `72` / `300` | Check-out length and expiry sweep (local node) |
 | `SIGNING_P12_PATH` / `SIGNING_P12_PASSWORD` | *(unset)* | Organisation certificate (PKCS#12) for electronic signatures - unset = signing unavailable |
 | `SIGNING_TRUST_ROOTS` / `SIGNING_LOCATION` | *(unset)* | Extra CA certificates trusted when verifying / location written into signatures |
+| `DEFAULT_LANGUAGE` | *(empty)* | `en` / `fr`: interface default until a person chooses (frontend meta, at container start), share pages and e-mails (API/sync `DEFAULT_LOCALE`); empty = browser language / English |
+| `TZ` | `UTC` | Time zone of the containers (backup schedule) |
+| `HTTP_PORT` / `HTTPS_PORT` | `8080` / `8443` (cloud: `80` / `443`) | Host ports of the frontend; `HTTPS_PORT` also drives the http → https redirect |
+| `SELF_SIGNED_CN` | *(host name)* | Name or IPv4 the per-installation self-signed certificate is issued for |
+| `COMPOSE_FILE` / `SDAI_IMAGE_TAG` | `docker-compose.yml` / `latest` | Written by `scripts/first-run.sh` (cloud adds `docker-compose.cloud.yml`) / tag of the `sdai/*` images |
 
 Users and roles are stored in PostgreSQL, not in env vars. Use `create_admin.py` to seed the first admin account. `AUTH_USERNAME` and `AUTH_PASSWORD` no longer exist.

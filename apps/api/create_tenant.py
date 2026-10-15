@@ -12,7 +12,8 @@ Usage:
   python create_tenant.py --slug aid --name "Aid Agency" --locale en
 
 Upserts by slug: running again updates the tenant's name/config and
-re-activates it. The prompt file itself is placed by ops directly on the
+re-activates it. --slug default names/configures the auto-seeded tenant of a
+standalone deployment (it is never created by this script). The prompt file itself is placed by ops directly on the
 documents/ volume mount (per README) - no rebuild needed to onboard a
 ministry's schema.
 
@@ -45,7 +46,46 @@ async def main(
 ) -> None:
     engine = create_async_engine(DATABASE_URL, echo=False)
 
+    params = {
+        "slug": slug,
+        "name": name,
+        "prompt_file": prompt_file,
+        "list_fields": list_fields,
+        "page_timeout_seconds": page_timeout_seconds,
+        "split_page_columns": split_page_columns,
+        "locale": locale,
+    }
     async with engine.begin() as conn:
+        if slug == "default":
+            # The auto-seeded tenant of a standalone/local deployment: only
+            # named and configured here (scripts/first-run.sh), never created -
+            # a joined cloud node receives its tenants from the peer instead.
+            row = (
+                await conn.execute(
+                    text("""
+                        UPDATE sdai_tenants
+                           SET name = :name, prompt_file = :prompt_file,
+                               list_fields = :list_fields,
+                               page_timeout_seconds = :page_timeout_seconds,
+                               split_page_columns = :split_page_columns,
+                               locale = :locale, is_active = true
+                         WHERE slug = :slug
+                     RETURNING id, slug, name
+                    """),
+                    params,
+                )
+            ).one_or_none()
+            if row is None:
+                await engine.dispose()
+                print(
+                    "Error: this database has no 'default' tenant (a cloud node that"
+                    " joined a deployment gets its tenants from the peer).",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            print(f"Tenant ready - id={row[0]}  slug={row[1]}  name={row[2]}")
+            await engine.dispose()
+            return
         result = await conn.execute(
             text("""
                 INSERT INTO sdai_tenants
@@ -64,15 +104,7 @@ async def main(
                         is_active            = true
                 RETURNING id, slug, name
             """),
-            {
-                "slug": slug,
-                "name": name,
-                "prompt_file": prompt_file,
-                "list_fields": list_fields,
-                "page_timeout_seconds": page_timeout_seconds,
-                "split_page_columns": split_page_columns,
-                "locale": locale,
-            },
+            params,
         )
         row = result.one()
 
@@ -126,13 +158,6 @@ if __name__ == "__main__":
         print(
             "Error: --slug must start with a letter and contain only lowercase"
             " letters, digits, and underscores (max 24 chars)",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if args.slug == "default":
-        print(
-            "Error: 'default' is a reserved tenant slug (auto-seeded for standalone"
-            " deployments) - choose a different slug.",
             file=sys.stderr,
         )
         sys.exit(1)

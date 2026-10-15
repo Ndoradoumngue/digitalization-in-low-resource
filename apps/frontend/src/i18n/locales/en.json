@@ -407,7 +407,7 @@
   },
   "accessAdmin": {
     "header": "Access & Groups",
-    "subtitle": "Manage groups, users (role, clearance, delegated permissions), series, and who can see whole series or document types.",
+    "subtitle": "Manage groups and their members, series, automatic filing, tags, and who can see whole series or document types.",
     "export": {
       "heading": "Export archive",
       "descriptionPrefix": "Downloads every document in this tenant - all extracted fields plus a ",

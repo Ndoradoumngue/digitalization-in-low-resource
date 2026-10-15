@@ -14,7 +14,7 @@ This file captures what has been built, why, and what is known to be incomplete 
 - `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
 - `CurrentUser` dataclass (`id`, `email`, `full_name`, `role`, `tenant_id`, `tenant_slug`, `tenant_name`, delegated flags, `group_ids`, `clearance`) returned by `get_current_user` dependency - the tenant fields come from a join to `sdai_tenants`, so a user always resolves to exactly one tenant.
 - Role guards in `auth.py`: `require_admin` (admin is tenant-scoped, not global), `require_user` (any person - rejects API keys), `require_contributor` (upload/ingestion tracking - rejects readers), `require_reviewer` (document actions - rejects readers and API keys), `require_access_manager`, `require_extraction_editor`.
-- `create_admin.py` seed script: `python create_admin.py --email admin@example.com --password secret --tenant default` (`--tenant` required; the tenant must already exist).
+- `create_admin.py` seed script: `python create_admin.py --email admin@example.com --tenant default` (password from `SDAI_ADMIN_PASSWORD` or prompted; `--tenant` required, the tenant must exist; `--deactivate` blocks an account). Accounts are otherwise managed on the Utilisateurs page (GED Phase 9).
 - React: `AuthContext` + `ProtectedRoute` + `AdminRoute` + `LoginPage`.
 - All API data routes require a valid JWT - unauthenticated requests get HTTP 401.
 
@@ -477,6 +477,42 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
   `test_sync_e2e_pg.py` (two real API processes + the real worker over HTTP, edits on both sides while
   disconnected, convergence), all real-PostgreSQL ones opt-in with `-m pg`.
 
+### Hardening, User Management, Offline Install, Manuals (GED Phase 9)
+
+- **User management** (`users_router.py`, `UsersPage` at `/ops/users`, `ChangePasswordPage` at
+  `/account/password`): admins and holders of `can_manage_users` create / update / deactivate /
+  reactivate / reset; delete = admins only, soft (`deleted_at`, the live e-mail replaced by the tombstone
+  `<id>@deleted.invalid`, the original in `deleted_email`). Guards: no escalation by non-admin managers
+  (`_check_grants`, `_check_manageable`), never on oneself or the last active admin. Temporary password →
+  `must_change_password` → 403 + `X-Password-Change-Required` everywhere except `PASSWORD_CHANGE_PATHS`;
+  a token issued before `password_changed_at` is refused (401). References to deleted users: SQL
+  `audit.display_email_sql()`, frontend `replaceDeletedUsers` in api-client ("Utilisateur supprimé du
+  système"); signed PDFs and destruction PVs keep the name. Group membership stays admin-only (Accès &
+  Groupes).
+- **Security review (9.1)**: every route walks to `get_current_user` (except login/logout, `/s/{token}`
+  and HMAC sync); findings fixed are listed in CHANGELOG 2.0.0. `tests/test_hardening.py` also checks that
+  the API Dockerfile copies every imported module and that no compose build context is git-ignored.
+- **i18n (9.2)**: fr/en catalogues key-identical (`tests/test_i18n_completeness.py`), backend messages
+  en+fr; `DEFAULT_LANGUAGE` → frontend meta `sdai-default-language` (rewritten by the entrypoint at start)
+  and API `DEFAULT_LOCALE`; `utils/dates.ts` / `i18n.format_date` (fr dd/MM/yyyy).
+- **Offline install (9.3)**: `setup.sh` (internet) → `models/{docker-images,ollama-models}.tar.gz` +
+  `SHA256SUMS`; `install.sh` (offline) → checksum, `docker load`, `scripts/first-run.sh` (`.env` via awk
+  helpers, secrets from `/dev/urandom`, `COMPOSE_FILE` per role, `sync.join` once on a cloud node
+  (`SDAI_JOINED`), `create_tenant.py --slug default` + `create_admin.py`, `sync.check`). Verified from an
+  Ubuntu 24.04 client for a local and a cloud node. Frontend entrypoint: per-installation self-signed
+  certificate (volume `frontend_ssl`, IP SAN for an IPv4 CN), http → https redirect keeps `HTTPS_PORT`.
+  Container logs capped (`x-logging` in compose).
+- **Manuals (9.4)**: `docs/manuals/guide-utilisateur.md`, `guide-administrateur.md`,
+  `fiche-exploitation.md` (French; every quoted label is a fr.json string).
+- **Performance (9.5)**: `_access_where_clause` builds its grant checks with `_grant_targets_sql` - one
+  EXISTS per scope; the series scope looks up the document's series once and probes
+  `sdai_document_access (tenant_id, series_id)` with `= ANY(ancestor ids from path + own id)`. The old
+  single OR made PostgreSQL test every series grant against every document (2.5 s for 20 000 documents
+  with 50 series grants; now ~25 ms). JIT is off on every app connection
+  (`ingest_router._set_node_id_on_connect`) and per list query. Benchmarks:
+  `tests/test_search_benchmark_pg.py -m benchmark` (`BENCH_DOCS=20000` = 100 000 pages, production-like
+  grants); results in docs/ged/PROGRESS.md (local, git-ignored) and CHANGELOG 2.0.0.
+
 ### Document Upload & Ingestion
 
 - `POST /api/ingest` - accepts multipart file upload, stores document in PostgreSQL.
@@ -522,17 +558,14 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 
 ### Offline Deployment
 
-- `setup.sh` - run on an internet-connected machine to prepare `./models/` bundle:
-  - Exports Ollama model data via Docker volume as `ollama-models.tar.gz`.
-  - Saves Docker images as tarballs.
-  - Downloads Python wheels and pnpm packages locally.
-- `install.sh` - run on the offline server:
-  - Loads Docker images, installs Python wheels and Node packages from local store.
-  - Runs `docker compose up -d`.
-- `docker-compose.yml` Ollama service:
-  - Conditionally restores `ollama-models.tar.gz` if present (first-run offline restore).
-  - Waits for Ollama to be ready, pulls model if not already loaded.
-  - Health check gating: `api` service only starts after Ollama is healthy.
+- `setup.sh` (internet-connected machine): pulls / builds the images for `TARGET_PLATFORM` (default
+  linux/amd64), saves them to `models/docker-images.tar.gz`, bundles the Ollama model store as
+  `models/ollama-models.tar.gz` (skipped if present), writes `models/SHA256SUMS`; `--dev` also wheels and
+  a pnpm store.
+- `install.sh` (offline server): verifies `SHA256SUMS`, `docker load`, then `scripts/first-run.sh` (see
+  GED Phase 9). Re-running it with a newer bundle updates the node and keeps `.env` and data.
+- `docker-compose.yml` Ollama service: restores `ollama-models.tar.gz` when its volume has no model,
+  falls back to `ollama pull`; the `api` service starts after Ollama is healthy.
 
 ### Request Timing Middleware
 
@@ -540,11 +573,11 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 - Every response carries an `X-Process-Time` header (4 decimal places, e.g. `0.0123`).
 - Requests exceeding **2.0 s** emit a `WARNING` log: `Slow request: METHOD /path took X.XXXXs`.
 
-### Nginx Image Caching
+### Nginx and Images
 
-- All three nginx config files (`nginx.conf`, `nginx.letsencrypt.conf`, `nginx.letsencrypt_pending.conf`) include a `proxy_cache_path` at the `http` context (10 MB key zone, up to 1 GB on disk, 24-hour idle eviction).
-- The `/images/` location block caches `200` responses for 24 hours; cache misses hit FastAPI once and subsequent requests are served from disk.
-- The `X-Cache-Status` response header reports `HIT / MISS / EXPIRED / STALE / BYPASS`.
+- No nginx cache on `/images/` any more (GED Phase 9.1): a cached response was served to anyone
+  without the API's access check. The API answers image requests with `Cache-Control: private`, so
+  only the user's own browser caches them.
 
 ### Docker Deployment
 
@@ -582,9 +615,7 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 
 | Feature | Status |
 |---|---|
-| Document search / filter by field values | Not built - document list is unfiltered |
 | VLM model selector | Not built - only `vlm_qwen25_results.json` is wired to the VLM tab |
-| Field correction UI | Not built - document detail view is read-only |
 | Mobile / responsive layout | Not tested - designed for desktop |
 | Bulk review actions | Not built - documents are approved/rejected one at a time |
 | Audit log user filter in UI | Backend supports `user_id` filter but UI exposes only `action` and date range |
@@ -628,6 +659,8 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 | Export ZIPs stay on one node | An export job and its ZIP exist only on the node that built it; the selection is frozen at creation (access changes in the 24 h window don't shrink a finished ZIP) |
 | Export disk use | ZIPs are built on disk next to the data (`DATA_DIR/generated/exports`), up to `EXPORT_MAX_MB` each, deleted after `EXPORT_LINK_HOURS` |
 | Watermark | Standard Helvetica (WinAnsi): characters outside it print as "?"; only PDFs are stamped (images are sent as stored) |
+| Low disk space | No alert in the app - the operations sheet asks for a daily `df -h` check |
+| Sync file transfers | One file at a time; on a 2 Mbps / 50 ms link files use ~95 % of the bandwidth, rows ~1 000 per 25 s. After an outage the next attempt waits for the current backoff (up to 15 min) |
 | Audit entries of API keys | API-key actions carry no `sdai_users` id, so the tenant-scoped audit view only shows them when they name one of the tenant's tables |
 
 ---
@@ -781,12 +814,12 @@ install.sh                          # offline server: install from bundle + dock
 
 ## Suggested Next Steps
 
-> **Active roadmap: GED extension** - see README.md, "Document management (GED)" > Roadmap.
-> It builds on what is listed above (tenants, access grants, series, links, record_id, exports, i18n).
+> The GED extension (Phases 0-9) is complete - release 2.0.0 in CHANGELOG.md.
 
-1. **Audit log user filter** - expose the `user_id` filter in `AuditPage` with a user email autocomplete.
-2. **VLM model switcher** - allow selecting between multiple `vlm_*_results.json` files via a dropdown.
-3. **Bulk review** - select multiple documents in `ReviewPage` and approve/reject in batch.
-4. **Field correction** - allow users to edit extracted fields in `DocumentDetailPage` and save to the database.
-5. **Auto-suggest document links** - when a VLM-extracted field (e.g. `reference_number`) matches an existing record, suggest a link during review instead of requiring the reviewer to search for it manually via `DocumentLinkPicker`.
+1. **Low-disk-space alert** on the Synchronisation page / admin notifications (today a manual check).
+2. **Move from python-jose to PyJWT** (accepted CVEs only apply to asymmetric keys - see CHANGELOG).
+3. **react-router v7** (two moderate advisories left in v6; the only dynamic navigate is guarded).
+4. **Audit log user filter** - expose the `user_id` filter in `AuditPage` with a user email autocomplete.
+5. **Bulk review** - select multiple documents in `ReviewPage` and approve/reject in batch.
 6. **Tenant deactivate/delete flow** - see Known Limitations.
+7. **VLM model switcher** for the legacy benchmark viewer.

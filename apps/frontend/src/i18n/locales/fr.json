@@ -407,7 +407,7 @@
   },
   "accessAdmin": {
     "header": "Accès & Groupes",
-    "subtitle": "Gérez les groupes, les utilisateurs (rôle, habilitation, permissions déléguées), les séries, et qui peut voir des séries ou des types de documents entiers.",
+    "subtitle": "Gérez les groupes et leurs membres, les séries, le classement automatique, les étiquettes, et qui peut voir des séries ou des types de documents entiers.",
     "export": {
       "heading": "Exporter l'archive",
       "descriptionPrefix": "Télécharge tous les documents de ce tenant - tous les champs extraits ainsi qu'un dossier ",

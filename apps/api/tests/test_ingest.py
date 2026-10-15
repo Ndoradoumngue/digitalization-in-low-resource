@@ -914,7 +914,10 @@ def test_set_node_id_on_connect():
     dbapi_conn = MagicMock()
     dbapi_conn.cursor.return_value = cursor
     ingest_router._set_node_id_on_connect(dbapi_conn, None)
-    cursor.execute.assert_called_once_with(f"SET sdai.node_id = '{ingest_router.NODE_ID}'")
+    assert [c.args[0] for c in cursor.execute.call_args_list] == [
+        f"SET sdai.node_id = '{ingest_router.NODE_ID}'",
+        "SET jit = off",  # GED Phase 9 benchmark: JIT cost ~0.5 s per list
+    ]
     cursor.close.assert_called_once()
 
 

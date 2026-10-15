@@ -92,3 +92,31 @@ def test_dockerfile_copies_every_imported_module():
         copied.update(line.split())
     assert set(out.split()) - copied == set()
     assert "api_server.py" in out.split()
+
+
+def test_compose_build_contexts_are_not_git_ignored():
+    """A build context matched by .gitignore builds here but is missing from
+    every clone (GED Phase 9: `backup/` also hid scripts/backup/) - each
+    compose context and Dockerfile exists and is not ignored."""
+    import re
+    import shutil
+    import subprocess
+
+    import pytest
+
+    root = Path(api_server.__file__).resolve().parents[2]
+    if shutil.which("git") is None or not (root / ".git").exists():
+        pytest.skip("needs a git checkout")
+    compose = (root / "docker-compose.yml").read_text()
+    paths = []
+    for context, dockerfile in re.findall(
+        r"^\s+context: (\S+)\n(?:\s+dockerfile: (\S+))?", compose, re.M
+    ):
+        paths += [root / context, root / context / (dockerfile or "Dockerfile")]
+    assert len(paths) >= 6  # api, frontend, backup (sync reuses the api image)
+    for path in paths:
+        assert path.exists(), path
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", str(path)], cwd=root
+        ).returncode
+        assert ignored == 1, f"{path.relative_to(root)} is git-ignored"

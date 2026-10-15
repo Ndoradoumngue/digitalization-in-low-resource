@@ -9,6 +9,37 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+---
+
+## [2.0.0] - 2026-10-15
+
+The platform becomes a complete GED (*gestion électronique des documents*): access rights,
+versioning and tamper-evident audit, classification, full-text search, sharing and export,
+lifecycle and retention, collaboration and electronic signature, a hybrid local + cloud deployment
+with sync and backups, user management, an offline installer and French manuals (Phases 0-9 below).
+
+### Added - GED Phase 9 (hardening, user management, offline install, manuals)
+- User management page (**Utilisateurs**, `/ops/users`) for admins and people given the new "can manage users" permission: create accounts with a temporary password (forced change at first sign-in), change role / clearance / permissions, reset a password, deactivate / reactivate; admins can delete an account (soft: hidden everywhere, history kept and shown as "User no longer in system", e-mail address freed). Non-admin managers can't create or edit admins, nor hand out a permission or clearance they don't hold; nobody can change their own rights, deactivate or delete themselves or the last active admin. Sessions end on the next request after a deactivation, deletion, reset or password change. "Change my password" page.
+- Offline installation: `install.sh` checks the bundle (`SHA256SUMS`), loads the images and runs the new `scripts/first-run.sh`, which configures a node (role single / local / cloud, node id, language, time zone, HTTPS, sync peer, backup target), generates every secret once, joins a cloud node, starts the stack, names the organisation, creates the first admin and tests the link to the peer (`python -m sync.check`). Interactive, or `--non-interactive` with `SDAI_*` variables; safe to run again. `setup.sh` builds for `TARGET_PLATFORM` (default linux/amd64) and writes checksums.
+- Deployment language `DEFAULT_LANGUAGE` (en / fr): interface default until each person chooses, share pages, e-mails. Dates in dd/MM/yyyy in French (interface, watermark, lock messages, share pages, destruction report).
+- French manuals in `docs/manuals/`: user guide, administrator guide, operations sheet (daily / weekly checks, power cut, internet cut, full disk).
+- `create_admin.py --deactivate`; `--password` optional (read from `SDAI_ADMIN_PASSWORD` or prompted, never on the command line).
+- Audit: `user_created`, `user_updated`, `user_deactivated`, `user_reactivated`, `password_reset`, `user_deleted`, `password_changed`, `password_change_failed`.
+
+### Changed - GED Phase 9
+- Faster document lists and searches with access grants: the access check is three index probes per document instead of testing every series grant (100 000 pages, 20 000 documents with series, type and per-document grants: list 2.1 s → 65-80 ms, search 0.8-2.8 s → 0.26-0.63 s), and PostgreSQL JIT is off for the application's connections (it added ~0.5 s to each list for nothing).
+- Container logs are capped (10 MB x 5 files per service).
+- The self-signed certificate is generated per installation at first start (it was baked into the image - the same key everywhere) for `SELF_SIGNED_CN`, with an IP address SAN when that is an IPv4 address; the http → https redirect keeps the HTTPS port (`HTTPS_PORT`).
+- Fixed image names `sdai/api`, `sdai/frontend`, `sdai/backup` (`SDAI_IMAGE_TAG`), `HTTP_PORT` / `HTTPS_PORT`, `./secrets` mounted read-only for the signing certificate, frontend image on Node 22.
+- `AUTH_SECURE_COOKIES` defaults to true; `TZ` defaults to UTC.
+- `create_tenant.py --slug default` names / configures the auto-seeded organisation (it was refused); admins created by `create_admin.py` get the "secret" clearance.
+- Login is case-insensitive on the e-mail address.
+- Dependencies upgraded after `pip-audit` / `pnpm audit` (FastAPI 0.136, Starlette 1.8, python-jose 3.5, python-multipart 0.0.32, Pillow 12.3, pypdf 6.20, Vite 6, Vitest 4).
+
+### Fixed - GED Phase 9
+- The backup service (`scripts/backup/`) was missing from the repository (matched by a `.gitignore` pattern meant for `./backup/`).
+- Security review: the batch status route listed uploads filed into documents the caller can't read; a Google Drive import could write outside its folder (file name used as a path); nginx cached `/images/` responses and served them without authentication (cache removed); Ollama was published on all interfaces (now 127.0.0.1); login timing revealed which e-mails exist; sync requests are size-capped before being read; retention rule counts respected access; invalid ids answer 404 instead of 500; stricter Content-Security-Policy; warnings for short `AUTH_SECRET_KEY` / `SYNC_NODE_TOKEN`; notification links only open in-app paths.
+
 ### Added - GED Phase 7 (notifications, check-out, comments, electronic signature)
 - Notifications: a bell with the unread count (refreshed every minute) and a Notifications page. People are notified when a document waits for their review (grouped into "N documents to review"), a document is shared with them, someone mentions them or replies to their comment, a retention period ends, a destruction awaits approval, their signature is requested (and the requester when everyone signed or someone declined), an admin releases their check-out, and (admins) when synchronisation is down or a backup failed. Notifications about a document the person can no longer open hide the document.
 - E-mail: immediate, daily digest or off, per person, in their language (French/English). E-mails carry only a fixed sentence and a link (`PUBLIC_BASE_URL`), never document content. Settings `SMTP_*`, `EMAIL_*`. Each node sends the e-mails it queued, with retries; queueing the same e-mail twice is a no-op. Admins see failed e-mails on the Synchronisation page (alert + list) and can send them again or drop them.

@@ -1962,9 +1962,15 @@ class _VlmResult(NamedTuple):
 def _set_node_id_on_connect(dbapi_connection, _connection_record) -> None:
     """Every pooled connection identifies this node to the sdai_touch_row
     trigger. NODE_ID is validated against a strict pattern at import time,
-    so embedding it as a literal is safe."""
+    so embedding it as a literal is safe.
+
+    JIT is off for the application's connections: the per-row access
+    subqueries inflate the planner's cost estimates, and JIT-compiling those
+    short queries cost ~0.5 s per list/search/count for nothing (GED Phase 9
+    benchmark, 100 000 pages)."""
     cursor = dbapi_connection.cursor()
     cursor.execute(f"SET sdai.node_id = '{NODE_ID}'")
+    cursor.execute("SET jit = off")
     cursor.close()
 
 

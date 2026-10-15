@@ -12,10 +12,11 @@
 # Quick start:
 #   cp .env.example .env                               # edit AUTH_SECRET_KEY at minimum
 #   docker compose up --build
-#   docker compose exec api python create_admin.py --email admin@example.com --password secret --tenant default
+#   docker compose exec api python create_admin.py --email admin@example.com --tenant default   # asks the password
 #
 # HTTPS modes (set HTTPS_MODE in .env):
-#   self_signed  - default; self-signed cert baked in at build time; no config needed.
+#   self_signed  - default; this installation's certificate is generated at the
+#                  frontend's first start (volume frontend_ssl), CN = SELF_SIGNED_CN.
 #   letsencrypt  - certbot with the nginx plugin; requires LETSENCRYPT_DOMAIN + email.
 #                  See README § HTTPS for the one-time certbot command.
 #
@@ -24,6 +25,14 @@
 #   whole directory and run ./install.sh on the offline server (it loads the
 #   bundled images, then scripts/first-run.sh configures and starts the node).
 
+# Container logs (docker compose logs) are capped per service - Docker's
+# default keeps them forever, which fills the disk of a server left running.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   redis:
     image: redis:7-alpine
@@ -31,6 +40,7 @@ services:
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
       interval: 10s
@@ -48,6 +58,7 @@ services:
     # Port 5432 is NOT exposed to the host in production.
     # Use: docker compose exec db psql -U sdai sdai
     restart: unless-stopped
+    logging: *default-logging
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sdai}" ]
       interval: 5s
@@ -80,6 +91,7 @@ services:
       # Keep only one model loaded; qwen2.5vl:7b fills most of GPU/RAM already.
       OLLAMA_MAX_LOADED_MODELS: 1
     restart: unless-stopped
+    logging: *default-logging
     # Override the default entrypoint so we can run a shell script that
     # restores the offline bundle before starting the server.
     entrypoint: [ "/bin/sh", "-c" ]
@@ -204,6 +216,7 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
     # Uncomment to reach the API directly at http://localhost:8000
     # ports:
     #   - "8000:8000"
@@ -244,6 +257,7 @@ services:
       api:
         condition: service_started
     restart: unless-stopped
+    logging: *default-logging
 
   # Nightly off-site backups (restic: database dump + /data + documents/)
   # to BACKUP_SFTP_TARGET and optionally BACKUP_NAS_PATH - see RESTORE.md.
@@ -276,6 +290,7 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   frontend:
     image: sdai/frontend:${SDAI_IMAGE_TAG:-latest}
@@ -295,6 +310,8 @@ services:
       - HTTPS_MODE=${HTTPS_MODE:-self_signed}
       # Name the self-signed certificate is issued for (default: container host name)
       - SELF_SIGNED_CN=${SELF_SIGNED_CN:-}
+      # Host HTTPS port, for the http:// -> https:// redirect (self_signed)
+      - HTTPS_PORT=${HTTPS_PORT:-8443}
       # Interface language until each person picks one (en|fr; empty = browser)
       - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-}
       # Required only when HTTPS_MODE=letsencrypt
@@ -303,6 +320,7 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   pgdata:

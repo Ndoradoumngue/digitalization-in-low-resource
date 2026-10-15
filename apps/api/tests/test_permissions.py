@@ -237,7 +237,10 @@ def test_clause_covers_all_three_scopes():
     assert "da.scope = 'document'" in clause
     # series grants reach the whole subtree through the materialized path
     assert f'gs.id = "{T}".series_id' in clause
-    assert "gs.id = da.series_id OR strpos(gs.path, '/' || da.series_id::text || '/') > 0" in clause
+    # ... as one index probe on the series and its ancestors (own id always in)
+    assert "da.series_id = ANY(array_append(" in clause
+    assert "string_to_array(gs.path, '/')" in clause
+    assert "gs.id)" in clause
     assert "da.scope = 'doc_type'" in clause
     assert "CAST(:__access_tenant_id AS uuid)" in clause
 

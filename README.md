@@ -74,11 +74,13 @@ and the language, on the Notifications page.
 ### Electronic signature
 
 Signing needs the organisation's certificate as a PKCS#12 file (`SIGNING_P12_PATH`,
-`SIGNING_P12_PASSWORD`) mounted on every node where people sign. For a test or a first installation,
-generate a self-signed one in the api container:
+`SIGNING_P12_PASSWORD`) in `./secrets/` (mounted read-only at `/secrets`) on every node where people
+sign. For a test or a first installation, set `SIGNING_P12_PATH=/secrets/sdai-signing.p12` and
+`SIGNING_P12_PASSWORD` in `.env`, then generate a self-signed one and restart (`docker compose up -d`):
 
 ```bash
-python scripts/generate_signing_cert.py --org "My Organisation" --country XX --out /secrets/sdai-signing.p12
+docker compose run --rm --no-deps -v "$PWD/secrets:/out" api \
+  python scripts/generate_signing_cert.py --org "My Organisation" --out /out/sdai-signing.p12
 ```
 
 SDAI verifies its own signatures with that certificate, but PDF readers outside the organisation show a
@@ -88,6 +90,15 @@ the Adobe Approved Trust List is also recognised by Acrobat everywhere), and add
 `SIGNING_TRUST_ROOTS`. Whatever the certificate, SDAI produces simple
 or advanced electronic signatures - never qualified ones, which require a qualified certificate held
 personally by each signer on a qualified device.
+
+### Manuals (French)
+
+For the client's staff, in [docs/manuals](./docs/manuals/):
+[Guide utilisateur](./docs/manuals/guide-utilisateur.md) (search, upload, review, versions, sharing,
+signature), [Guide administrateur](./docs/manuals/guide-administrateur.md) (installation, users, access,
+filing plan, retention, destruction, sync, backups, restore, certificates, updates) and
+[Fiche d'exploitation](./docs/manuals/fiche-exploitation.md) (daily/weekly checks, power cut, internet
+cut, full disk).
 
 ---
 
@@ -230,71 +241,60 @@ The dashboard is available at **http://localhost**. The API is at **http://local
 
 ## Offline deployment
 
-For ministry servers or air-gapped environments with no reliable internet connection, use the two-script workflow.
-
-### When to use this
-
-| Scenario | Use |
-|---|---|
-| Internet-connected server, first deployment | `docker compose up --build` (standard quick start) |
-| Air-gapped server, or unreliable connectivity | `setup.sh` + `install.sh` |
-| Recurring deployment to many offline servers | Run `setup.sh` once, copy `./models/` to each server |
+For servers with no reliable internet connection: prepare a bundle on a connected machine, copy it,
+install without internet. The French administrator guide ([docs/manuals](./docs/manuals/)) has the
+same procedure step by step for the client's administrators.
 
 ### Step 1 - Prepare on an internet-connected machine
 
 ```bash
-./setup.sh
+./setup.sh                                 # linux/amd64 servers (the usual case)
+TARGET_PLATFORM=linux/arm64 ./setup.sh     # ARM servers
+./setup.sh --dev                           # also Python wheels + a pnpm store (development only)
 ```
 
-This takes 15–30 minutes and produces `./models/` (~7–10 GB total):
+It writes `./models/` (~9 GB, 15-60 minutes):
 
 | File | Contents |
 |---|---|
-| `models/ollama-models.tar.gz` | `qwen2.5vl:7b` model weights and manifest |
-| `models/docker-images.tar.gz` | All Docker images (`postgres`, `ollama`, `api`, `frontend`) |
-| `models/wheels/` | Python wheels for `linux/amd64` (matching the API container) |
-| `models/pnpm-store/` | Node package cache for local development |
+| `models/ollama-models.tar.gz` | `qwen2.5vl:7b` model store (skipped if the file already exists) |
+| `models/docker-images.tar.gz` | every image the server runs (`sdai/api`, `sdai/frontend`, `sdai/backup`, postgres, redis, ollama), built for `TARGET_PLATFORM` |
+| `models/SHA256SUMS` | checksums, verified by `install.sh` |
+| `models/wheels/`, `models/pnpm-store/` | `--dev` only |
 
-### Step 2 - Transfer to the offline server
-
-```bash
-rsync -av --exclude '.git' . user@ministry-server:/opt/sdai_digitalization/
-```
-
-Or archive and copy manually:
+### Step 2 - Transfer to the server
 
 ```bash
-tar czf sdai_bundle.tar.gz --exclude='.git' .
-scp sdai_bundle.tar.gz user@ministry-server:/opt/
-# On server: tar xzf sdai_bundle.tar.gz
+rsync -av --exclude .git --exclude node_modules . admin@server:/opt/sdai/
 ```
 
-### Step 3 - Install on the offline server
+(or a USB disk - `install.sh` detects a damaged copy through `SHA256SUMS`).
+
+### Step 3 - Install
 
 ```bash
-cd /opt/sdai_digitalization
-./install.sh
+cd /opt/sdai
+./install.sh                       # asks the questions
+./install.sh --non-interactive     # answers from SDAI_* variables (see scripts/first-run.sh)
 ```
 
-This loads the Docker images, installs local dependencies, and starts the stack. The `ollama` container automatically restores the model from `models/ollama-models.tar.gz` on first boot - no internet required.
+`install.sh` checks the bundle, loads the images (no build, no internet) and runs
+`scripts/first-run.sh`, which: writes `.env` (role `single` / `local` / `cloud`, `NODE_ID`, language,
+time zone, HTTPS, sync peer, backup target) and generates every secret (never replacing an existing
+one); on a cloud node runs `sync.join` once; starts the stack; names the organisation and creates the
+first admin (local / single); tests the link to the peer (`python -m sync.check`). It is safe to run
+again. Install the local node first, then the cloud node with the local node's `AUTH_SECRET_KEY` and
+`SYNC_NODE_TOKEN`.
 
-### Step 4 - Create the first admin user
-
-```bash
-docker compose exec api python create_admin.py \
-  --email admin@example.org --password yourpassword --tenant default
-```
+**Updating:** run `setup.sh` with the new version, copy the directory over the installation without
+`.env`, `documents/`, `secrets/` and `backup/ssh/`, and run `./install.sh` again - cloud node first.
 
 ### How the offline model loading works
 
-The `ollama` service in `docker-compose.yml` runs a shell script at startup that:
-
-1. Checks if `./models/ollama-models.tar.gz` exists (mounted read-only at `/models`).
-2. If yes, extracts it into the Ollama model store volume (`ollama_data`) - this is fast (no download).
-3. Starts `ollama serve`.
-4. If the model is not yet in the store (e.g., the tar wasn't present), falls back to `ollama pull` - this requires internet.
-
-The `api` service waits for the `ollama` healthcheck to pass before starting, so processing begins only once the model is fully available.
+The `ollama` service mounts `./models` read-only. At first start, if no model is in its volume and
+`models/ollama-models.tar.gz` exists, it extracts the archive (no download), then starts `ollama
+serve`; without the archive it falls back to `ollama pull` (needs internet). The `api` service waits
+for the `ollama` healthcheck.
 
 ---
 
@@ -570,6 +570,10 @@ Copy `.env.example` to `.env` and adjust as needed. Docker Compose reads this fi
 | `AUTH_SECURE_COOKIES` | `true` (Docker) | Keep `true` in production; `false` only for plain-HTTP local development |
 | `AUTH_TOKEN_EXPIRE_HOURS` | `8` | JWT lifetime in hours |
 | `HTTPS_MODE` | `self_signed` | `self_signed` or `letsencrypt` - see [HTTPS](#https) |
+| `SELF_SIGNED_CN` | *(host name)* | Name or IPv4 address users type - the per-installation self-signed certificate is issued for it |
+| `HTTP_PORT` / `HTTPS_PORT` | `8080` / `8443` | Host ports of the web server (the cloud node uses 80 / 443) |
+| `DEFAULT_LANGUAGE` | *(empty)* | `en` or `fr`: interface language until each person chooses, and the language of share pages and e-mails; empty = the browser's language |
+| `TZ` | `UTC` | Time zone (IANA name) of the containers - the backup schedule follows it |
 | `LETSENCRYPT_DOMAIN` | *(empty)* | Public domain name; required when `HTTPS_MODE=letsencrypt` |
 | `LETSENCRYPT_EMAIL` | *(empty)* | Email for Let's Encrypt expiry notices; required when `HTTPS_MODE=letsencrypt` |
 | `DATABASE_URL` | `postgresql+asyncpg://sdai:sdai@localhost:5432/sdai` | asyncpg connection string; use `@db:5432` inside Docker |

@@ -332,6 +332,36 @@ def _series_grant_match(doc_series: str, grant_series: str) -> str:
     )
 
 
+def _grant_targets_sql(table: str, doc: str, extra: str = "TRUE") -> str:
+    """True iff a grant of the current tenant targets the document row `doc`
+    of `table` at any scope (and satisfies `extra`, e.g. "held by the
+    user"). Three separate EXISTS so each one is an index probe per row -
+    one OR over the scopes made PostgreSQL test every series grant of the
+    tenant against every document (GED Phase 9 benchmark: 2.5 s for 20 000
+    documents with 50 series grants). A series grant covers its subtree:
+    it targets the document's series or any ancestor, read from the
+    materialized path (sdai_series.path = '/<root>/.../<self>/'); the
+    series' own id is always included, so a grant never stops restricting
+    the series it names (same rule as _series_grant_match)."""
+    tenant = "da.tenant_id = CAST(:__access_tenant_id AS uuid)"
+    ancestors = (
+        "array_append(ARRAY(SELECT x::uuid FROM unnest(string_to_array(gs.path, '/')) x"
+        " WHERE x ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'), gs.id)"
+    )
+    return f"""(
+            EXISTS (SELECT 1 FROM sdai_document_access da
+                    WHERE {tenant} AND da.scope = 'document' AND da.table_name = '{table}'
+                      AND da.document_id = {doc}.id AND {extra})
+            OR EXISTS (SELECT 1 FROM sdai_series gs
+                       JOIN sdai_document_access da
+                         ON {tenant} AND da.scope = 'series' AND da.series_id = ANY({ancestors})
+                       WHERE gs.id = {doc}.series_id AND {extra})
+            OR EXISTS (SELECT 1 FROM sdai_document_access da
+                       WHERE {tenant} AND da.scope = 'doc_type' AND da.table_name = '{table}'
+                         AND {extra})
+        )"""
+
+
 def _access_where_clause(
     table: str,
     current_user: CurrentUser,
@@ -388,21 +418,14 @@ def _access_where_clause(
     # double-quoted table name as the FROM clause's implicit alias, which
     # every caller relies on (none of them alias the outer table explicitly).
     doc = f'"{table}"'
-    targets = f"""da.tenant_id = CAST(:__access_tenant_id AS uuid)
-              AND ((da.scope = 'document' AND da.table_name = '{table}' AND da.document_id = {doc}.id)
-                OR (da.scope = 'series' AND {_series_grant_match(f"{doc}.series_id", "da.series_id")})
-                OR (da.scope = 'doc_type' AND da.table_name = '{table}'))"""
+    holds = f"""da.permission IN ({_sql_list(satisfying)})
+                  AND ((da.grantee_type = 'user' AND da.grantee_id = CAST(:__access_user_id AS uuid))
+                    OR (da.grantee_type = 'group' AND da.grantee_id = ANY(CAST(:__access_group_ids AS uuid[]))))"""
     access = f"""(
         COALESCE({doc}.confidentiality, 'internal') IN ({_sql_list(allowed_levels)})
         AND (
-            NOT EXISTS (SELECT 1 FROM sdai_document_access da WHERE {targets})
-            OR EXISTS (
-                SELECT 1 FROM sdai_document_access da
-                WHERE {targets}
-                  AND da.permission IN ({_sql_list(satisfying)})
-                  AND ((da.grantee_type = 'user' AND da.grantee_id = CAST(:__access_user_id AS uuid))
-                    OR (da.grantee_type = 'group' AND da.grantee_id = ANY(CAST(:__access_group_ids AS uuid[]))))
-            )
+            NOT {_grant_targets_sql(table, doc)}
+            OR {_grant_targets_sql(table, doc, holds)}
         )
     )"""
     if permission == "edit" and not current_user.can_manage_document_lifecycle:
@@ -1003,11 +1026,13 @@ async def _run_list_query(
     if tag:
         params["tag"] = tag
 
+    # The planner can't cost the per-row access and page subqueries well,
+    # and the inflated estimate makes PostgreSQL JIT-compile this short
+    # query - ~0.5 s for nothing. The app's connections already have JIT off
+    # (ingest_router._set_node_id_on_connect); this keeps it off for any
+    # other engine (scripts, tests). This transaction only.
+    await conn.execute(text("SET LOCAL jit = off"))
     if q:
-        # The planner can't cost the per-row page subqueries well, and the
-        # inflated estimate makes PostgreSQL JIT-compile this short query -
-        # hundreds of ms on every search for nothing. This transaction only.
-        await conn.execute(text("SET LOCAL jit = off"))
         # Best match first: field matches weigh _FIELD_WEIGHT times the
         # best matching page.
         sql = f"""
