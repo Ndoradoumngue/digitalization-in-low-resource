@@ -14,10 +14,11 @@ import { summarizeExtra } from "../utils/format";
 import SearchSnippet from "../components/SearchSnippet";
 import type { DbDocument, ExportDocumentRef, ExportRequest } from "@sdai/types";
 import { useCreateExport } from "../hooks/useSharing";
+import { useExtractDocuments } from "../hooks/useVersions";
 import { useCreateLegalHold } from "../hooks/useLifecycle";
 import LifecycleBadge from "../components/LifecycleBadge";
 import { useAuth } from "../context/AuthContext";
-import { canManageLifecycle } from "../utils/permissions";
+import { canManageLifecycle, isReader } from "../utils/permissions";
 
 // The real document-browsing experience: categories, reviewer, keyword
 // search - no confidence/review_status/table-name plumbing shown (that's
@@ -25,6 +26,8 @@ import { canManageLifecycle } from "../utils/permissions";
 // document detail route (/documents/:tableName/:id).
 
 const PAGE_SIZE = 24;
+// review_status of a document uploaded without extraction (GED Phase 10).
+const NOT_EXTRACTED = "not_extracted";
 // "page N" badges shown per search result before collapsing into "+N".
 const MAX_PAGE_BADGES = 6;
 
@@ -45,6 +48,7 @@ export default function DocumentsPage() {
   const [seriesId, setSeriesId] = useState("");
   const [includeSubseries, setIncludeSubseries] = useState(true);
   const [tagId, setTagId] = useState("");
+  const [notExtracted, setNotExtracted] = useState(false);
   const { data: tags } = useTags();
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -66,6 +70,7 @@ export default function DocumentsPage() {
     ...(reviewedBy && { reviewed_by: reviewedBy }),
     ...(seriesId && { series: seriesId, include_subseries: includeSubseries }),
     ...(tagId && { tag: tagId }),
+    ...(notExtracted && { review_status: NOT_EXTRACTED }),
     ...(dateFrom && { date_from: dateFrom }),
     ...(dateTo && { date_to: dateTo }),
     ...(q && { q }),
@@ -77,6 +82,8 @@ export default function DocumentsPage() {
   // Multi-select for a selective export - kept across pages and filters
   // until cleared, keyed "<table>/<id>".
   const [selected, setSelected] = useState<Map<string, ExportDocumentRef>>(new Map());
+  // Checked documents that were uploaded without extraction ("<table>/<id>").
+  const [plainIds, setPlainIds] = useState<Set<string>>(new Set());
   const [exportVersions, setExportVersions] = useState<"current" | "all">("current");
   const createExport = useCreateExport();
   const toggleSelected = useCallback((row: DbDocument) => {
@@ -87,6 +94,9 @@ export default function DocumentsPage() {
       else next.set(key, { table_name: row.table_name, id: row.id });
       return next;
     });
+    if (row.review_status === NOT_EXTRACTED) {
+      setPlainIds((prev) => new Set(prev).add(`${row.table_name}/${row.id}`));
+    }
   }, []);
   // The current search, as export and legal-hold selections take it.
   const searchSelection = {
@@ -98,6 +108,19 @@ export default function DocumentsPage() {
     ...(dateFrom && { date_from: dateFrom }),
     ...(dateTo && { date_to: dateTo }),
   };
+  // Extraction on demand of the checked documents uploaded without it.
+  const extractSelection = useExtractDocuments();
+  const selectedPlain = [...selected.values()].filter((d) => plainIds.has(`${d.table_name}/${d.id}`));
+  function extractSelected() {
+    extractSelection.mutate(selectedPlain, {
+      onSuccess: () => setSelected((prev) => {
+        const next = new Map(prev);
+        for (const d of selectedPlain) next.delete(`${d.table_name}/${d.id}`);
+        return next;
+      }),
+    });
+  }
+
   function exportSelection(kind: "selected" | "results") {
     const body: ExportRequest = kind === "selected"
       ? { documents: [...selected.values()], versions: exportVersions }
@@ -156,7 +179,7 @@ export default function DocumentsPage() {
   }
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const hasFilters = category || reviewedBy || seriesId || tagId || dateFrom || dateTo || q;
+  const hasFilters = category || reviewedBy || seriesId || tagId || notExtracted || dateFrom || dateTo || q;
 
   return (
     <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
@@ -204,6 +227,15 @@ export default function DocumentsPage() {
               ))}
             </select>
           )}
+          <label className="flex items-center gap-1.5 text-xs text-gray-600">
+            <input
+              type="checkbox"
+              checked={notExtracted}
+              onChange={(e) => { setNotExtracted(e.target.checked); setPage(1); }}
+              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
+            />
+            {t("documents.notExtractedFilter")}
+          </label>
           <label className="flex items-center gap-1 text-xs text-gray-500">
             {t("documents.from")}
             <input
@@ -226,7 +258,7 @@ export default function DocumentsPage() {
           {hasFilters && (
             <button
               onClick={() => {
-                setCategory(""); setReviewedBy(""); setSeriesId(""); setTagId("");
+                setCategory(""); setReviewedBy(""); setSeriesId(""); setTagId(""); setNotExtracted(false);
                 setDateFrom(""); setDateTo("");
                 setQ(""); setInputQ(""); setPage(1);
               }}
@@ -279,6 +311,15 @@ export default function DocumentsPage() {
                 <option value="all">{t("exports.versions.all")}</option>
               </select>
             </label>
+            {!isReader(user) && selectedPlain.length > 0 && (
+              <button
+                onClick={extractSelected}
+                disabled={extractSelection.isPending}
+                className="h-7 px-2.5 rounded-md font-semibold border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"
+              >
+                {t("extraction.extractSelected", { count: selectedPlain.length })}
+              </button>
+            )}
             <button
               onClick={() => exportSelection("selected")}
               disabled={selected.size === 0 || createExport.isPending}
@@ -337,6 +378,21 @@ export default function DocumentsPage() {
             {createExport.isError && (
               <span role="alert" className="w-full text-red-600">{(createExport.error as Error).message}</span>
             )}
+            {extractSelection.isSuccess && (
+              <span role="status" className="w-full text-emerald-700">
+                {t("extraction.started", { count: extractSelection.data.started })}
+                {extractSelection.data.results.some((r) => r.error) && (
+                  <span className="text-amber-700">
+                    {" "}{t("extraction.notStarted", {
+                      count: extractSelection.data.results.filter((r) => r.error).length,
+                    })}
+                  </span>
+                )}
+              </span>
+            )}
+            {extractSelection.isError && (
+              <span role="alert" className="w-full text-red-600">{(extractSelection.error as Error).message}</span>
+            )}
           </div>
         )}
 
@@ -349,6 +405,19 @@ export default function DocumentsPage() {
           onIncludeSubseriesChange={(value) => { setIncludeSubseries(value); setPage(1); }}
         />
         <div className="flex-1 overflow-auto p-6">
+          {seriesId && !isReader(user) && (
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-indigo-100 bg-indigo-50/60 px-4 py-2.5">
+              <span className="text-sm text-indigo-900 truncate">
+                {seriesName.get(seriesId) ?? ""}
+              </span>
+              <Link
+                to={`/upload?series=${encodeURIComponent(seriesId)}`}
+                className="flex-shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700"
+              >
+                {t("documents.uploadHere")}
+              </Link>
+            </div>
+          )}
           {error ? (
             <div className="text-sm text-red-500">{t("documents.loadError")}</div>
           ) : isLoading && rows.length === 0 ? (
@@ -378,6 +447,11 @@ export default function DocumentsPage() {
                       <span className="text-[11px] font-mono text-gray-400 truncate">{row.record_id}</span>
                     )}
                     <LifecycleBadge status={row.lifecycle_status} legalHold={row.legal_hold} />
+                    {row.review_status === NOT_EXTRACTED && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">
+                        {t("extraction.notExtracted")}
+                      </span>
+                    )}
                     {row.series_id && seriesName.get(row.series_id) && (
                       <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-teal-100 text-teal-800 truncate">
                         {seriesName.get(row.series_id)}

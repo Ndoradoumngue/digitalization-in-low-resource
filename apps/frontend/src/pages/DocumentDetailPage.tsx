@@ -24,6 +24,8 @@ import { canShare, canShareLevel, isActor } from "../utils/permissions";
 import CheckoutControl from "../components/CheckoutControl";
 import CommentsSection from "../components/CommentsSection";
 import SignaturesSection from "../components/SignaturesSection";
+import ExtractionPanel from "../components/ExtractionPanel";
+import { useDocumentLocation } from "../hooks/useVersions";
 
 // The document-management record view: presents a document the way a real
 // records system would - every extracted field as a labeled entry, no QA
@@ -81,6 +83,14 @@ export default function DocumentDetailPage() {
   const perms = useDocumentPermissions(tableName, id);
   const { user } = useAuth();
   const { data, isLoading, error } = useDbDocumentDetail(tableName, id);
+  // A document's first extraction moves it into its detected type (GED
+  // Phase 10): an old link then 404s - follow it to where it is now.
+  const { data: moved } = useDocumentLocation(id, !!error);
+  useEffect(() => {
+    if (moved && moved.table_name !== tableName) {
+      navigate(`/documents/${moved.table_name}/${id}${location.search}`, { replace: true, state: location.state });
+    }
+  }, [moved, tableName, id, navigate, location.search, location.state]);
 
   const pageImagePaths = Array.isArray(data?.page_image_paths)
     ? (data.page_image_paths as unknown[]).map(String)
@@ -306,6 +316,9 @@ export default function DocumentDetailPage() {
                 <SignaturesSection tableName={tableName} id={id} canRequest={perms.canAct} />
               )}
 
+              {tab === "record" && tableName && id && data?.review_status === "not_extracted" && (
+                <ExtractionPanel tableName={tableName} id={id} canExtract={perms.canAct} />
+              )}
               {tab === "record" && tableName && id && (
                 <FieldsPanel
                   tableName={tableName}

@@ -1,4 +1,5 @@
 import { Fragment, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,6 +23,8 @@ import { useAuth } from "../context/AuthContext";
 import { useConfirm } from "../context/ConfirmContext";
 import { dbImageUrl } from "@sdai/api-client";
 import { canEditExtraction as canEditExtractionFor } from "../utils/permissions";
+import { useSeries } from "../hooks/useSeries";
+import { flattenTree, seriesLabel } from "../utils/series";
 import type { DocumentStatus, BatchSummary, Page } from "@sdai/types";
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -211,6 +214,20 @@ function FailedPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId:
   );
 }
 
+/** A page of a document uploaded without extraction: kept as it is. */
+function StoredPageRow({ page }: { page: Page }) {
+  const { t } = useTranslation();
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 flex items-center justify-between gap-3">
+      <span className="text-xs font-semibold text-gray-700">
+        {t("upload.completedPage.page", { n: page.page_number })}
+        <span className="ml-1.5 text-[10px] font-medium text-gray-500">{t("upload.storedPage")}</span>
+      </span>
+      <ViewImageLink imagePath={page.image_path} />
+    </div>
+  );
+}
+
 function CompletedPageRow({ page, batchDocumentId }: { page: Page; batchDocumentId: string }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -361,7 +378,7 @@ function DocumentPageProgress({ batchDocumentId }: { batchDocumentId: string }) 
   // Only worth showing for genuinely multi-page documents.
   if (!data || data.total <= 1) return null;
 
-  const done = data.completed + data.failed + data.manual + data.skipped;
+  const done = data.completed + data.failed + data.manual + data.skipped + data.stored;
   const sortedPages = [...data.pages].sort((a, b) => a.page_number - b.page_number);
   // Includes failed pages, not just pending ones, so a paused document
   // (its cancelled page left "failed") still offers a way to restart in
@@ -431,6 +448,9 @@ function DocumentPageProgress({ batchDocumentId }: { batchDocumentId: string }) 
           }
           if (p.status === "skipped") {
             return <SkippedPageRow key={p.id} page={p} batchDocumentId={batchDocumentId} />;
+          }
+          if (p.status === "stored") {
+            return <StoredPageRow key={p.id} page={p} />;
           }
           return <PendingPageRow key={p.id} page={p} batchDocumentId={batchDocumentId} />;
         })}
@@ -699,6 +719,13 @@ export default function UploadPage() {
   const [batchId, setBatchId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // "Upload here" in a category opens this page with ?series=<id>.
+  const [searchParams] = useSearchParams();
+  const [seriesId, setSeriesId] = useState(searchParams.get("series") ?? "");
+  // From a category ("Upload here") documents are filed as they are by
+  // default; the general upload page extracts by default.
+  const [extract, setExtract] = useState(!searchParams.has("series"));
+  const { data: allSeries } = useSeries();
 
   const upload = useUpload();
   const ingestPath = useIngestPath();
@@ -740,16 +767,22 @@ export default function UploadPage() {
     try {
       if (mode === "files") {
         if (files.length === 0) { setError(t("upload.errors.selectFile")); return; }
-        const { batch_id } = await upload.mutateAsync(files);
+        const { batch_id } = await upload.mutateAsync({ files, extract, seriesId: seriesId || null });
         setBatchId(batch_id);
       } else if (mode === "path") {
         if (!serverPath.trim()) { setError(t("upload.errors.enterPath")); return; }
-        const { batch_id } = await ingestPath.mutateAsync({ path: serverPath.trim() });
+        const { batch_id } = await ingestPath.mutateAsync({
+          path: serverPath.trim(),
+          extract,
+          series_id: seriesId || null,
+        });
         setBatchId(batch_id);
       } else {
         if (!driveId.trim()) { setError(t("upload.errors.enterDriveId")); return; }
         const { batch_id } = await ingestPath.mutateAsync({
           google_drive_folder_id: driveId.trim(),
+          extract,
+          series_id: seriesId || null,
         });
         setBatchId(batch_id);
       }
@@ -786,6 +819,59 @@ export default function UploadPage() {
                     {m === "files" ? t("upload.modeTabs.files") : m === "path" ? t("upload.modeTabs.path") : t("upload.modeTabs.drive")}
                   </button>
                 ))}
+              </div>
+
+              {/* ── Filing options (all modes) ── */}
+              <div className="mb-6 space-y-4">
+                <fieldset>
+                  <legend className="block text-sm font-medium text-gray-700 mb-2">{t("upload.options.howLabel")}</legend>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[false, true].map((value) => (
+                      <label
+                        key={String(value)}
+                        className={`flex items-start gap-3 rounded-xl border px-4 py-3 cursor-pointer transition-colors ${extract === value
+                          ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
+                          : "border-gray-200 bg-white hover:border-indigo-300"
+                          }`}
+                      >
+                        <input
+                          type="radio"
+                          name="upload-extract"
+                          checked={extract === value}
+                          onChange={() => setExtract(value)}
+                          className="mt-0.5 h-4 w-4 border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>
+                          <span className="block text-sm font-semibold text-gray-800">
+                            {value ? t("upload.options.extract") : t("upload.options.fileAsIs")}
+                          </span>
+                          <span className="block text-xs text-gray-500">
+                            {value ? t("upload.options.extractOn") : t("upload.options.extractOff")}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <div className="space-y-1">
+                  <label htmlFor="upload-series" className="block text-sm font-medium text-gray-700">
+                    {t("upload.options.category")}
+                  </label>
+                  <select
+                    id="upload-series"
+                    value={seriesId}
+                    onChange={(e) => setSeriesId(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="">{t("upload.options.automaticFiling")}</option>
+                    {flattenTree(allSeries ?? []).map(({ series, depth }) => (
+                      <option key={series.id} value={series.id}>
+                        {"\u00a0\u00a0".repeat(depth)}
+                        {seriesLabel(series, t)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               {/* ── File upload mode ── */}

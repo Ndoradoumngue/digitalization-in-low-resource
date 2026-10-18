@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import uuid
@@ -44,6 +45,7 @@ import notifications
 import numpy as np
 import page_text
 import pytesseract
+import relocate
 import retention
 from audit import log_action
 from auth import (
@@ -679,6 +681,13 @@ ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS target_version INTEGER;
 CREATE INDEX IF NOT EXISTS idx_batch_documents_target_document_id
     ON batch_documents (target_document_id) WHERE target_document_id IS NOT NULL;
 
+-- Plain upload (GED Phase 10): extract = false files the document as it is
+-- (generic type, review_status 'not_extracted') without running the VLM,
+-- series_id is the category chosen at upload. Synced, so an upload made on
+-- the cloud node keeps both when the local node picks it up.
+ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS extract BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE batch_documents ADD COLUMN IF NOT EXISTS series_id UUID;
+
 -- Before/after value of every changed extraction field (GED field
 -- history), written in the same transaction as the change itself by
 -- field edits, review approve-with-edits and re-extraction.
@@ -915,6 +924,7 @@ ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_by UUID;
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_email TEXT;
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_full_name TEXT;
 
+
 -- E-mail outbox - node-local: the node that queued an e-mail sends it
 -- (notifications.send_due). dedupe_key makes queueing idempotent
 -- (n:<notification id>, digest:<user>:<date>). No document content in
@@ -1038,6 +1048,10 @@ ALTER TABLE sdai_audit_log ADD COLUMN IF NOT EXISTS prev_hash TEXT;
 ALTER TABLE sdai_audit_log ADD COLUMN IF NOT EXISTS row_hash TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS sdai_audit_log_chain_idx ON sdai_audit_log (origin_node, chain_seq);
 CREATE INDEX IF NOT EXISTS sdai_audit_log_document_idx ON sdai_audit_log (table_name, document_id);
+-- Per-document audit queries match on document_id alone: a document moved
+-- into its detected type (GED Phase 10, relocate.py) keeps its id, and its
+-- earlier entries keep the old table name (the log is never rewritten).
+CREATE INDEX IF NOT EXISTS sdai_audit_log_document_id_idx ON sdai_audit_log (document_id);
 
 -- user_id is part of the hashed content - ON DELETE SET NULL would
 -- silently rewrite (and break) the chain if a user row were ever deleted.
@@ -2551,6 +2565,12 @@ async def _guard_page(page_id: str, current_user: CurrentUser, permission: str) 
         [batch_document_id], current_user, permission
     ):
         raise HTTPException(status_code=404, detail=t("common.page_not_found", current_user.locale))
+    # A plain upload's pages were never extracted: no retry/reload/manual
+    # entry/skip on them - extract the whole document instead (GED Phase 10).
+    if permission == "edit" and batch_document_id and await _plain_upload(batch_document_id):
+        raise HTTPException(
+            status_code=409, detail=t("ingest.plain_upload_page", current_user.locale)
+        )
 
 
 async def _resolve_preset_for_batch(batch_id: str) -> str | None:
@@ -3668,6 +3688,11 @@ async def _original_upload_path(conn, batch_document_id: str) -> str | None:
 # whatever the stored name.
 TO_BE_FILED_NAME = os.getenv("TO_BE_FILED_SERIES_NAME", "À classer")
 
+# review_status of a plain upload (GED Phase 10): filed as it is, under the
+# generic type, never extracted yet. Extraction on demand moves it into the
+# detected type (relocate.move_document) and gives it a normal status.
+NOT_EXTRACTED = "not_extracted"
+
 
 async def _to_be_filed_series(conn, tenant_id: str) -> str:
     """The tenant's 'to be filed' series, created on first need - or an
@@ -3708,6 +3733,21 @@ async def _to_be_filed_series(conn, tenant_id: str) -> str:
     ).scalar()
 
 
+async def _chosen_series(conn, tenant_id: str, series_id: str | None) -> str | None:
+    """The category picked at upload, if it (still) exists in this tenant."""
+    if not series_id:
+        return None
+    return (
+        await conn.execute(
+            text(
+                "SELECT id::text FROM sdai_series"
+                " WHERE id = CAST(:sid AS uuid) AND tenant_id = CAST(:tid AS uuid)"
+            ),
+            {"sid": series_id, "tid": tenant_id},
+        )
+    ).scalar()
+
+
 async def _filing_series(conn, tenant_id: str, table_name: str) -> str:
     """Series a newly filed document of this type goes into (GED Phase 3):
     the type's filing rule (sdai_type_series_defaults), else 'to be filed'."""
@@ -3735,7 +3775,12 @@ async def _store_extraction(
     source_pdf_path: str | None = None,
     page_image_paths: list[str] | None = None,
     batch_document_id: str | None = None,
+    series_id: str | None = None,
 ) -> None:
+    """File one document. `series_id` is the category chosen at upload (kept
+    only while it still exists in the tenant); review_status
+    'not_extracted' is a plain upload (GED Phase 10) - no fields, filed
+    under the generic type, extracted later on demand."""
     doc_type = fields.get("document_type") or "document"
     table_name = _tenant_table_name(tenant_slug, doc_type)
 
@@ -3752,9 +3797,13 @@ async def _store_extraction(
 
         col_names = ["source_image_path", "batch_id", "confidence", "review_status", "record_id"]
         col_vals = [image_path, batch_id, confidence, review_status, record_id]
-        # Automatic filing: the type's filing rule, else "À classer".
+        # The category chosen at upload, else automatic filing: the type's
+        # filing rule, else "À classer".
         col_names.append("series_id")
-        col_vals.append(await _filing_series(conn, tenant_id, table_name))
+        col_vals.append(
+            await _chosen_series(conn, tenant_id, series_id)
+            or await _filing_series(conn, tenant_id, table_name)
+        )
 
         if uploaded_by is not None:
             col_names.append("uploaded_by")
@@ -3806,7 +3855,8 @@ async def _store_extraction(
         # High-confidence documents skip review_required and land here
         # already auto_approved - see the module note above
         # _grant_uploader_access for why that's the point privacy applies.
-        if review_status == "auto_approved":
+        # A plain upload never enters the review pipeline either.
+        if review_status in ("auto_approved", NOT_EXTRACTED):
             await _grant_uploader_access(conn, tenant_id, table_name, doc_id, uploaded_by)
 
     # ── Audit logging (outside the main transaction; never raises) ────────────
@@ -3836,7 +3886,7 @@ async def _store_extraction(
             "batch_id": batch_id,
         },
     )
-    if review_status != "auto_approved":
+    if review_status not in ("auto_approved", NOT_EXTRACTED):
         # Tell whoever can review it (coalesced: one unread "N to review").
         await notifications.notify_review_pending(tenant_id, table_name, doc_id)
 
@@ -3882,8 +3932,10 @@ async def _create_page_rows(
     page_paths: list[Path],
     source_page_numbers: list[int] | None = None,
     page_numbers: list[int] | None = None,
+    status: str = "pending",
 ) -> list[str]:
-    """Insert one pending row per page; returns their ids in page order.
+    """Insert one row per page - pending, or `status` ('stored' for a plain
+    upload's pages, which the VLM never sees); returns their ids in page order.
 
     source_page_numbers tracks which page of the *original* source
     document each row came from - when column-splitting produces two
@@ -3908,10 +3960,10 @@ async def _create_page_rows(
             result = await sess.execute(
                 text(
                     "INSERT INTO batch_document_pages"
-                    " (batch_document_id, page_number, source_page_number, image_path)"
-                    " VALUES (:bd, :n, :sn, :p) RETURNING id"
+                    " (batch_document_id, page_number, source_page_number, image_path, status)"
+                    " VALUES (:bd, :n, :sn, :p, :st) RETURNING id"
                 ),
-                {"bd": batch_document_id, "n": n, "sn": source_n, "p": str(path)},
+                {"bd": batch_document_id, "n": n, "sn": source_n, "p": str(path), "st": status},
             )
             page_ids.append(str(result.scalar()))
         await sess.commit()
@@ -4031,6 +4083,13 @@ async def _stage1_process(
         t0 = time.monotonic()
         await _update_doc_status(doc_id, "processing")
         try:
+            plain = await _plain_upload(doc_id)
+            if plain is not None:
+                await _file_plain(
+                    doc_id, batch_id, src_path, filename, content_hash,
+                    tenant_id, tenant_slug, plain["series_id"], t0,
+                )
+                return
             preset_id = await _resolve_preset_for_batch(batch_id)
             cfg = await _get_tenant_config(tenant_id, preset_id)
             pdf_path = None
@@ -4101,6 +4160,86 @@ async def _stage1_process(
                 error_message=_exc_message(e),
                 processing_time=round(time.monotonic() - t0, 2),
             )
+
+
+async def _plain_upload(batch_document_id: str) -> dict | None:
+    """{'series_id'} when this upload skips extraction, else None."""
+    async with _engine().connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT extract, series_id::text AS series_id FROM batch_documents"
+                    " WHERE id = CAST(:bd AS uuid)"
+                ),
+                {"bd": batch_document_id},
+            )
+        ).mappings().one_or_none()
+    if row is None or row["extract"] is not False:
+        return None
+    return {"series_id": row["series_id"]}
+
+
+def _render_plain_pages(src_path: Path, dest_dir: Path) -> list[Path]:
+    """Page images of a plain upload, as they are: every PDF page rendered,
+    or the image itself as PNG - no deskew, no column split, blank pages kept."""
+    from PIL import Image, ImageOps
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if src_path.suffix.lower() == ".pdf":
+        rendered = _pdf_to_png(src_path)
+        out = []
+        for i, page in enumerate(rendered):
+            dest = dest_dir / f"{src_path.stem}_page{i + 1:03d}.png"
+            shutil.move(str(page), dest)
+            out.append(dest)
+        return out
+    dest = dest_dir / f"{src_path.stem}.png"
+    with Image.open(src_path) as img:
+        ImageOps.exif_transpose(img).save(str(dest), "PNG")
+    return [dest]
+
+
+async def _file_plain(
+    doc_id: str,
+    batch_id: str,
+    src_path: Path,
+    filename: str,
+    content_hash: str,
+    tenant_id: str,
+    tenant_slug: str,
+    series_id: str | None,
+    t0: float,
+) -> None:
+    """Stage 1 of a plain upload (GED Phase 10): render the pages, queue
+    their Tesseract transcription (full-text search works without the VLM)
+    and file the document right away - generic type, no fields,
+    review_status 'not_extracted'. Never reaches Stage 2."""
+    pages = await asyncio.to_thread(_render_plain_pages, src_path, IMAGES_DIR / batch_id)
+    if not pages:
+        raise RuntimeError(f"no page could be read from {filename}")
+    await _create_page_rows(doc_id, pages, status="stored")
+    page_paths = [str(p) for p in pages]
+    await _store_extraction(
+        batch_id,
+        page_paths[0],
+        {},
+        "unknown",
+        NOT_EXTRACTED,
+        tenant_id,
+        tenant_slug,
+        content_hash=content_hash,
+        source_pdf_path=str(src_path) if src_path.suffix.lower() == ".pdf" else None,
+        page_image_paths=page_paths,
+        batch_document_id=doc_id,
+        series_id=series_id,
+    )
+    await _update_doc_status(
+        doc_id,
+        "completed",
+        document_type="document",
+        image_path=page_paths[0],
+        processing_time=round(time.monotonic() - t0, 2),
+    )
 
 
 async def _stage1_worker() -> None:
@@ -4402,13 +4541,21 @@ async def _apply_reextraction(
     """Write re-extracted `fields` into the target document, recording each
     changed value in sdai_field_history (change_source 'reextract') in the
     same transaction. `review_status` None keeps the current one (a page
-    re-merge); file paths None keep the current pages. Returns
-    {"fields_changed", "detected_type"} or None when the document is gone."""
+    re-merge); file paths None keep the current pages.
+
+    The first extraction of a plain upload (review_status 'not_extracted',
+    GED Phase 10) moves the document into its detected type first
+    (relocate.move_document) - the only case where the type changes - and
+    re-files it by that type's rule when it was still "to be filed".
+
+    Returns {"fields_changed", "detected_type", "table_name"} or None when
+    the document is gone."""
     table_name = target.table_name
     tenant = await _resolve_tenant_for_batch_document(batch_document_id)
     if tenant is None:
         return None
-    tenant_id, _ = tenant
+    tenant_id, tenant_slug = tenant
+    moved_from: str | None = None
 
     async with _engine().begin() as conn:
         old = (
@@ -4420,11 +4567,41 @@ async def _apply_reextraction(
         if old is None:
             return None
         old = dict(old)
+        first_extraction = old.get("review_status") == NOT_EXTRACTED and review_status is not None
+        if first_extraction:
+            detected_table = _tenant_table_name(
+                tenant_slug, fields.get("document_type") or "document"
+            )
+            if detected_table != table_name:
+                await relocate.move_document(
+                    conn,
+                    table_name,
+                    target.document_id,
+                    detected_table,
+                    {k: v for k, v in fields.items() if not k.startswith("_")},
+                )
+                moved_from, table_name = table_name, detected_table
+                if old.get("series_id") and str(old["series_id"]) == await _to_be_filed_series(
+                    conn, tenant_id
+                ):
+                    await conn.execute(
+                        text(
+                            f'UPDATE "{table_name}" SET series_id = CAST(:s AS uuid)'
+                            " WHERE id = CAST(:id AS uuid)"
+                        ),
+                        {
+                            "s": await _filing_series(conn, tenant_id, table_name),
+                            "id": target.document_id,
+                        },
+                    )
 
+        # A first extraction also records the detected type (a plain row
+        # has none); a re-extraction never changes it.
+        skip = _REEXTRACT_SKIP_FIELDS - {"document_type"} if first_extraction else _REEXTRACT_SKIP_FIELDS
         content = {
             k: v
             for k, v in fields.items()
-            if not k.startswith("_") and k not in _REEXTRACT_SKIP_FIELDS
+            if not k.startswith("_") and k not in skip
         }
         await _ensure_table(conn, table_name, content)
 
@@ -4484,6 +4661,15 @@ async def _apply_reextraction(
         )
 
     detected = fields.get("document_type")
+    if moved_from is not None:
+        await log_action(
+            action="document_type_assigned",
+            user_id=changed_by,
+            table_name=table_name,
+            document_id=target.document_id,
+            details={"from_table": moved_from, "to_table": table_name, "document_type": detected},
+        )
+        await invalidate_cache("schema", "types")
     await log_action(
         action="document_reextracted",
         user_id=changed_by,
@@ -4497,7 +4683,9 @@ async def _apply_reextraction(
         },
     )
     await invalidate_cache("review")
-    return {"fields_changed": sorted(changes), "detected_type": detected}
+    if first_extraction and review_status == "review_required":
+        await notifications.notify_review_pending(tenant_id, table_name, target.document_id)
+    return {"fields_changed": sorted(changes), "detected_type": detected, "table_name": table_name}
 
 
 async def _stage3_reextract(result: "_VlmResult", target: _ReextractTarget) -> None:
@@ -4588,7 +4776,14 @@ async def _create_batch(
 
 
 async def _register_and_enqueue(
-    batch_id: str, src_path: Path, filename: str, tenant_id: str, tenant_slug: str
+    batch_id: str,
+    src_path: Path,
+    filename: str,
+    tenant_id: str,
+    tenant_slug: str,
+    *,
+    extract: bool = True,
+    series_id: str | None = None,
 ) -> None:
     content_hash = await asyncio.to_thread(_compute_hash, src_path)
     duplicate = await _find_duplicate(content_hash, tenant_slug)
@@ -4608,10 +4803,16 @@ async def _register_and_enqueue(
     async with _session()() as sess:
         result = await sess.execute(
             text(
-                "INSERT INTO batch_documents (batch_id, filename, source_path)"
-                " VALUES (:b, :f, :sp) RETURNING id"
+                "INSERT INTO batch_documents (batch_id, filename, source_path, extract, series_id)"
+                " VALUES (:b, :f, :sp, :ex, CAST(:sid AS uuid)) RETURNING id"
             ),
-            {"b": batch_id, "f": filename, "sp": str(src_path)},
+            {
+                "b": batch_id,
+                "f": filename,
+                "sp": str(src_path),
+                "ex": extract,
+                "sid": series_id,
+            },
         )
         doc_id = str(result.scalar())
         await sess.commit()
@@ -5537,12 +5738,16 @@ async def upload_files(
     request: Request,
     files: list[UploadFile] = File(...),
     preset: str | None = Form(None),
+    extract: bool = Form(True),
+    series_id: str | None = Form(None),
     current_user: CurrentUser = Depends(require_contributor),
 ):
     """Accept one or more image/PDF files, return a batch_id immediately.
     'preset' optionally selects one of the tenant's admin-defined prompt
     presets (see GET /ingest/presets) instead of its default extraction
-    config - never caller-supplied prompt text."""
+    config - never caller-supplied prompt text. extract=false files the
+    documents as they are, without extraction (GED Phase 10); series_id
+    files them into that category."""
     for f in files:
         ext = Path(f.filename or "").suffix.lower()
         if ext not in ALLOWED_EXTS:
@@ -5557,6 +5762,7 @@ async def upload_files(
                 ),
             )
 
+    series_id = await _upload_series(current_user, series_id)
     preset_id = await _resolve_upload_preset_id(current_user.tenant_id, preset, current_user.locale)
     # API-key callers have no sdai_users row to attribute the batch to -
     # created_by=None is the same, already-handled "no known uploader" path
@@ -5592,15 +5798,42 @@ async def upload_files(
             )
         dest.write_bytes(content)
         await _register_and_enqueue(
-            batch_id, dest, filename, current_user.tenant_id, current_user.tenant_slug
+            batch_id,
+            dest,
+            filename,
+            current_user.tenant_id,
+            current_user.tenant_slug,
+            extract=extract,
+            series_id=series_id,
         )
 
     return {"batch_id": batch_id}
 
 
+async def _upload_series(current_user: CurrentUser, series_id: str | None) -> str | None:
+    """The category an upload is filed into, checked against the caller's
+    tenant (422 when unknown there); None = automatic filing."""
+    if not series_id:
+        return None
+    try:
+        uuid.UUID(series_id)
+    except ValueError:
+        found = None
+    else:
+        async with _engine().connect() as conn:
+            found = await _chosen_series(conn, current_user.tenant_id, series_id)
+    if found is None:
+        raise HTTPException(
+            status_code=422, detail=t("common.series_not_found", current_user.locale)
+        )
+    return found
+
+
 class PathRequest(BaseModel):
     path: str | None = None
     google_drive_folder_id: str | None = None
+    extract: bool = True
+    series_id: str | None = None
 
 
 @router.post("/path")
@@ -5620,6 +5853,7 @@ async def ingest_from_path(
             status_code=422,
             detail=t("ingest.provide_path_or_drive", current_user.locale),
         )
+    series_id = await _upload_series(current_user, body.series_id)
 
     if body.google_drive_folder_id and not _DRIVE_FOLDER_ID_RE.match(
         body.google_drive_folder_id
@@ -5668,7 +5902,13 @@ async def ingest_from_path(
 
     for p in files:
         await _register_and_enqueue(
-            batch_id, p, p.name, current_user.tenant_id, current_user.tenant_slug
+            batch_id,
+            p,
+            p.name,
+            current_user.tenant_id,
+            current_user.tenant_slug,
+            extract=body.extract,
+            series_id=series_id,
         )
 
     return {"batch_id": batch_id}
@@ -6026,6 +6266,7 @@ async def list_pages(
         "failed": _count("failed"),
         "manual": _count("manual"),
         "skipped": _count("skipped"),
+        "stored": _count("stored"),
         "flagged": sum(1 for p in pages if p["status"] == "completed" and p["quality_flags"]),
         "pages": pages,
     }

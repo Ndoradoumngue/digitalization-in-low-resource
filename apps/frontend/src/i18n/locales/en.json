@@ -73,7 +73,7 @@
     "count_other": "{{count}} documents",
     "searchPlaceholder": "Search fields and page text…",
     "allReviewers": "All reviewers",
-    "allSeries": "All series",
+    "allSeries": "All categories",
     "from": "From",
     "to": "To",
     "reset": "Reset",
@@ -83,7 +83,9 @@
     "notYetReviewed": "Not yet reviewed",
     "pagination": "Page {{page}} of {{totalPages}} - {{total}} total",
     "previous": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "notExtractedFilter": "Not extracted",
+    "uploadHere": "Upload here"
   },
   "documentDetail": {
     "backToDocuments": "Back to documents",
@@ -146,28 +148,28 @@
     "addLink": "Add link"
   },
   "series": {
-    "heading": "Series",
+    "heading": "Category",
     "change": "Change",
     "assign": "+ Assign",
-    "none": "No series",
+    "none": "No category",
     "cancel": "Cancel",
-    "notAssigned": "Not assigned to a series",
+    "notAssigned": "Not in a category",
     "toBeFiled": "To be filed",
     "planHeading": "Filing plan",
-    "addRoot": "+ Series",
+    "addRoot": "+ Category",
     "allDocuments": "All documents",
-    "noneYet": "No series yet.",
-    "includeSubseries": "Include sub-series",
+    "noneYet": "No categories yet.",
+    "includeSubseries": "Include subcategories",
     "collapse": "Collapse",
     "expand": "Expand",
-    "addChild": "Add a sub-series",
+    "addChild": "Add a subcategory",
     "rename": "Rename",
     "move": "Move",
     "delete": "Delete",
     "moveTo": "Move under",
     "root": "(top level)",
     "codePlaceholder": "1.2",
-    "namePlaceholder": "Series name",
+    "namePlaceholder": "Category name",
     "code": "Code",
     "name": "Name",
     "breadcrumb": "Place in the filing plan"
@@ -191,7 +193,7 @@
       "download": "Download",
       "edit": "Edit"
     },
-    "viaSeries": "via series “{{name}}”",
+    "viaSeries": "via category “{{name}}”",
     "viaType": "via document type",
     "yourAccess": "Your access: {{level}}"
   },
@@ -344,7 +346,17 @@
     "startIngestion": "Start ingestion",
     "ingestionStarted": "Ingestion started",
     "batchLabel": "batch {{id}}",
-    "newBatch": "New batch"
+    "newBatch": "New batch",
+    "options": {
+      "category": "Category",
+      "automaticFiling": "Automatic filing (by document type)",
+      "extract": "Extract data (Ollama)",
+      "extractOn": "The fields are read from each document by the extraction model, then reviewed if needed.",
+      "extractOff": "The documents are filed as they are, searchable by their text. You can extract their data later.",
+      "howLabel": "How should these documents be filed?",
+      "fileAsIs": "File as is (no extraction)"
+    },
+    "storedPage": "stored as it is"
   },
   "review": {
     "pages": {
@@ -407,7 +419,7 @@
   },
   "accessAdmin": {
     "header": "Access & Groups",
-    "subtitle": "Manage groups and their members, series, automatic filing, tags, and who can see whole series or document types.",
+    "subtitle": "Manage groups and their members, categories, automatic filing, tags, and who can see whole categories or document types.",
     "export": {
       "heading": "Export archive",
       "descriptionPrefix": "Downloads every document in this tenant - all extracted fields plus a ",
@@ -448,14 +460,14 @@
       }
     },
     "series": {
-      "heading": "Series (fonds)",
-      "namePlaceholder": "New series name (e.g. Land Deeds 1990-2000)",
+      "heading": "Categories",
+      "namePlaceholder": "New category name (e.g. Land Deeds 1990-2000)",
       "descriptionPlaceholder": "Description (optional)",
       "creating": "Creating…",
       "create": "Create",
       "loading": "Loading…",
-      "none": "No series yet.",
-      "confirmDelete": "Delete this series? Documents assigned to it will show as unassigned.",
+      "none": "No categories yet.",
+      "confirmDelete": "Delete this category? Documents in it will show as not in a category.",
       "delete": "Delete"
     },
     "groups": {
@@ -485,10 +497,10 @@
       "readerFlagHint": "Read-only accounts can't hold this permission"
     },
     "seriesGrants": {
-      "heading": "Series access",
-      "description": "Restrict every document of a series to the people or groups listed here (plus admins and any document-level grants). A series with no grant stays open to everyone.",
-      "selectTarget": "Select a series…",
-      "none": "No series is restricted."
+      "heading": "Category access",
+      "description": "Restrict every document of a category to the people or groups listed here (plus admins and any document-level grants). A category with no grant stays open to everyone.",
+      "selectTarget": "Select a category…",
+      "none": "No category is restricted."
     },
     "typeGrants": {
       "heading": "Document type access",
@@ -502,10 +514,10 @@
     },
     "filing": {
       "heading": "Automatic filing",
-      "help": "Series each new document of a type is filed into. Without a rule, documents go to \"To be filed\".",
+      "help": "Category each new document of a type is filed into. Without a rule, documents go to \"To be filed\".",
       "noTypes": "No document type yet.",
       "toBeFiled": "To be filed (default)",
-      "seriesFor": "Series for {{type}}"
+      "seriesFor": "Category for {{type}}"
     },
     "tags": {
       "heading": "Tags",
@@ -544,8 +556,8 @@
       "document_link_removed": "document link removed",
       "document_access_granted": "document access granted",
       "document_access_revoked": "document access revoked",
-      "series_created": "series created",
-      "series_assigned": "series assigned",
+      "series_created": "category created",
+      "series_assigned": "category assigned",
       "integrity_check_failed": "integrity check failed",
       "document_fields_edited": "document fields edited",
       "archive_exported": "archive exported",
@@ -562,9 +574,9 @@
       "sync_conflict": "Sync conflict",
       "sync_conflict_resolved": "Sync conflict resolved",
       "sync_files_retried": "Sync files retried",
-      "series_updated": "Series updated",
-      "series_moved": "Series moved",
-      "series_deleted": "Series deleted",
+      "series_updated": "Category updated",
+      "series_moved": "Category moved",
+      "series_deleted": "Category deleted",
       "tag_created": "Tag created",
       "tag_updated": "Tag updated",
       "tags_merged": "Tags merged",
@@ -609,7 +621,9 @@
       "signature_password_failed": "Signature - wrong password",
       "notification_preferences_changed": "Notification preferences changed",
       "emails_retried": "E-mails sent again",
-      "emails_discarded": "Failed e-mails dropped"
+      "emails_discarded": "Failed e-mails dropped",
+      "document_type_assigned": "Document type assigned",
+      "document_extraction_requested": "Extraction requested"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -1054,7 +1068,7 @@
     },
     "kind": {
       "documents": "Selected documents",
-      "series": "Series",
+      "series": "Category",
       "search": "Search results"
     },
     "documents_one": "{{count}} document",
@@ -1100,7 +1114,7 @@
     "manualDate": "manual date",
     "legalHold": "Legal hold",
     "legalHoldHint": "Under legal hold: cannot be deleted or destroyed",
-    "holdOnSeries": "on the series {{name}}",
+    "holdOnSeries": "on the category {{name}}",
     "holdOnSearch": "on a search",
     "archive": "Archive",
     "archiveConfirm": "Archive this document? It becomes read-only (only lifecycle managers can still change it) and its retention period may start.",
@@ -1119,7 +1133,7 @@
   },
   "retention": {
     "header": "Retention rules",
-    "intro": "How long documents are kept and what happens when their retention ends. The most specific rule wins: a series rule (nearest series up the tree), then the document type.",
+    "intro": "How long documents are kept and what happens when their retention ends. The most specific rule wins: a category rule (nearest category up the tree), then the document type.",
     "add": "New rule",
     "edit": "Edit rule",
     "editShort": "Edit",
@@ -1129,9 +1143,9 @@
     "deleteConfirm": "Delete the rule \"{{name}}\"? Its documents fall back to the next applicable rule.",
     "name": "Name",
     "scope": "Applies to",
-    "scopeSeries": "Series",
+    "scopeSeries": "Category",
     "scopeDocType": "Document type",
-    "series": "Series (and everything below it)",
+    "series": "Category (and everything below it)",
     "docType": "Document type",
     "appliesTo": "Applies to",
     "duration": "Duration (months)",
@@ -1162,10 +1176,10 @@
   },
   "legalHolds": {
     "header": "Legal holds",
-    "intro": "A hold suspends retention: held documents cannot be trashed, purged or destroyed. A series hold covers every series below it, including documents filed there later.",
+    "intro": "A hold suspends retention: held documents cannot be trashed, purged or destroyed. A category hold covers every subcategory below it, including documents filed there later.",
     "showReleased": "Show released holds",
-    "pickSeries": "Choose a series…",
-    "holdSeries": "Hold this series",
+    "pickSeries": "Choose a category…",
+    "holdSeries": "Hold this category",
     "none": "No legal hold.",
     "onDocuments_one": "{{count}} document",
     "onDocuments_other": "{{count}} documents",
@@ -1432,5 +1446,18 @@
     "saving": "Saving…",
     "changed": "Password changed.",
     "sessionsNote": "Changing your password signs you out everywhere else."
+  },
+  "extraction": {
+    "notExtracted": "Not extracted",
+    "explanation": "This document was filed as it is. Extract its data to fill in its fields and file it under its document type.",
+    "running": "Extraction running… the page updates when it is done.",
+    "extract": "Extract data",
+    "extracting": "Extracting…",
+    "failed": "The extraction failed. The document was left as it was - try again later.",
+    "extractSelected": "Extract data ({{count}})",
+    "started_one": "Extraction started for {{count}} document.",
+    "started_other": "Extraction started for {{count}} documents.",
+    "notStarted_one": "{{count}} document could not be extracted (already extracted, running or not editable).",
+    "notStarted_other": "{{count}} documents could not be extracted (already extracted, running or not editable)."
   }
 }

@@ -520,6 +520,33 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
   `tests/test_search_benchmark_pg.py -m benchmark` (`BENCH_DOCS=20000` = 100 000 pages, production-like
   grants); results in docs/ged/PROGRESS.md (local, git-ignored) and CHANGELOG 2.0.0.
 
+### Categories, Plain Upload, Extraction on Demand (GED Phase 10)
+
+- **Wording**: series are shown as **categories** (fr *Catégorie / Sous-catégorie*, tree heading
+  *Catégories*) in every screen, API message, PV and guide; routes, fields, tables and code keep `series`.
+- **Plain upload**: `extract` (default true) and `series_id` on `POST /api/ingest/upload` and `/path`,
+  stored on `batch_documents` (synced - a cloud-node upload keeps them). Stage 1 calls `_file_plain` when
+  `extract = false`: pages rendered as they are (`_render_plain_pages` - no deskew/split, blank pages
+  kept), page rows `status = 'stored'` (Tesseract transcription queued as usual), then `_store_extraction`
+  with no fields under the generic type `<tenant>_document`, `review_status = 'not_extracted'`
+  (`NOT_EXTRACTED`), the chosen category (`_chosen_series`) else the filing rule, version 1, uploader
+  grant (like an auto-approved document), no review notification. Never reaches Stage 2. Page actions on
+  a plain upload → 409 (`_guard_page`). Upload page: category picker (`?series=` preselects it - the
+  Documents page's **Upload here**) and the **Extract data** switch.
+- **Extraction on demand** (`versions_router`): `POST /api/db/documents/{t}/{id}/extract` and
+  `POST /api/db/documents/extract` (≤ 200, per-item result, one batch per prompt preset) - reviewer/admin
+  with `edit`, document `not_extracted`, no targeted upload of it pending/processing, current version's
+  file on this node. Runs as a targeted upload (`source_type = 'extract'`, `target_table` /
+  `target_document_id`) through the normal pipeline; `_apply_reextraction` sees `not_extracted` and, when
+  the detected type differs, calls `relocate.move_document` in its transaction (row copied, the
+  14 reference columns in `relocate.REFERENCES` re-pointed, old row deleted - replayed by sync), records
+  `document_type`, re-files by the new type's rule if the document was in "À classer", audits
+  `document_type_assigned`, notifies reviewers when it needs review. A failed extraction leaves the
+  document as it was. `GET /api/db/document-location/{id}` (read) gives the current table - the detail
+  page follows a moved document with it. "Running" is not stored: it is the pending targeted upload.
+- **Audit**: per-document audit queries (history tab, signature evidence) match on `document_id`
+  (index `sdai_audit_log_document_id_idx`) - entries written before a move keep the old table name.
+
 ### Document Upload & Ingestion
 
 - `POST /api/ingest` - accepts multipart file upload, stores document in PostgreSQL.

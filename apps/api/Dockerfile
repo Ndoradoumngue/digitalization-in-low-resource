@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY sync/ ./sync/
 COPY scripts/ ./scripts/
-COPY api_server.py auth.py audit.py cache.py i18n.py rate_limit.py ingest_router.py documents_router.py review_router.py admin_router.py versions_router.py classification_router.py history.py page_text.py export_format.py document_files.py share_router.py export_router.py lifecycle.py lifecycle_router.py retention.py destruction.py pdf_report.py notifications.py notifications_router.py locks.py checkout_router.py comments_router.py signatures.py signature_router.py users_router.py create_admin.py create_tenant.py create_api_key.py create_prompt_preset.py ./
+COPY api_server.py auth.py audit.py cache.py i18n.py rate_limit.py ingest_router.py documents_router.py review_router.py admin_router.py versions_router.py classification_router.py history.py page_text.py export_format.py document_files.py share_router.py export_router.py lifecycle.py lifecycle_router.py retention.py destruction.py pdf_report.py notifications.py notifications_router.py locks.py relocate.py checkout_router.py comments_router.py signatures.py signature_router.py users_router.py create_admin.py create_tenant.py create_api_key.py create_prompt_preset.py ./
 
 # documents/ is mounted as a volume at runtime - never baked into the image
 VOLUME ["/app/documents"]

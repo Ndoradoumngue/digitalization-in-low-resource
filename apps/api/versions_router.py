@@ -11,6 +11,9 @@ Endpoints:
   GET  /api/db/documents/{tbl}/{id}/download[?version=N]   - the original file as
                                                              '<record id>_<name>', audited,
                                                              409 while sync copies it (download)
+  POST /api/db/documents/{tbl}/{id}/extract                - extract a document uploaded without
+                                                             extraction (edit; GED Phase 10)
+  POST /api/db/documents/extract                           - same for a selection, per-item result
   GET  /api/db/documents/{tbl}/{id}/history                - field changes + audit events (read;
                                                              viewed/downloaded events: access
                                                              managers only)
@@ -24,6 +27,7 @@ restore is a new version pointing at the old file.
 import asyncio
 import hashlib
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -186,19 +190,8 @@ async def _insert_version(
     }
 
 
-async def _start_reextraction(
-    table: str,
-    doc_id: str,
-    version_no: int,
-    file_path: Path,
-    file_hash: str,
-    filename: str,
-    current_user: CurrentUser,
-) -> str:
-    """Run a version's file through the ingest pipeline into this same
-    document (see ingest_router._apply_reextraction). Same prompt preset as
-    the document's own upload. Returns the batch id, pollable through
-    GET /api/ingest/status/{batch_id}."""
+async def _document_preset(table: str, doc_id: str) -> str | None:
+    """The prompt preset of the upload that filed this document."""
     async with _engine().connect() as conn:
         doc_batch = (
             await conn.execute(
@@ -208,13 +201,32 @@ async def _start_reextraction(
                 {"id": doc_id},
             )
         ).scalar()
-    preset_id = await _resolve_preset_for_batch(doc_batch) if doc_batch else None
-    batch_id = await _create_batch(
-        "version",
-        current_user.tenant_id,
-        created_by=current_user.id,
-        preset_id=preset_id,
-    )
+    return await _resolve_preset_for_batch(doc_batch) if doc_batch else None
+
+
+async def _start_reextraction(
+    table: str,
+    doc_id: str,
+    version_no: int,
+    file_path: Path,
+    file_hash: str,
+    filename: str,
+    current_user: CurrentUser,
+    *,
+    source_type: str = "version",
+    batch_id: str | None = None,
+) -> str:
+    """Run a version's file through the ingest pipeline into this same
+    document (see ingest_router._apply_reextraction). Same prompt preset as
+    the document's own upload, unless it joins the given `batch_id`.
+    Returns the batch id, pollable through GET /api/ingest/status/{batch_id}."""
+    if batch_id is None:
+        batch_id = await _create_batch(
+            source_type,
+            current_user.tenant_id,
+            created_by=current_user.id,
+            preset_id=await _document_preset(table, doc_id),
+        )
     async with _engine().begin() as conn:
         bd_id = (
             await conn.execute(
@@ -543,6 +555,179 @@ async def restore_version(
     return {"version": version, "batch_id": batch_id}
 
 
+# ── Extraction on demand (GED Phase 10) ──────────────────────────────────────
+# A plain upload (review_status 'not_extracted') is extracted when someone
+# asks: its current file runs through the pipeline as a targeted upload
+# (batch source_type 'extract'), and the first extraction moves it into the
+# detected type (ingest_router._apply_reextraction, relocate.move_document).
+
+
+async def _prepare_extraction(conn, table_name: str, doc_id: str, current_user: CurrentUser):
+    """(table, file path, file hash, file name, version) of a document that
+    may be extracted now - edit permission, not extracted yet, no extraction
+    already running, its current file on this node."""
+    locale = current_user.locale
+    safe = await _table_or_404(conn, table_name, current_user)
+    await _require_document_permission(conn, safe, doc_id, current_user, "edit")
+    status = (
+        await conn.execute(
+            text(f'SELECT review_status FROM "{safe}" WHERE id = CAST(:id AS uuid)'),
+            {"id": doc_id},
+        )
+    ).scalar()
+    if status != ingest_router.NOT_EXTRACTED:
+        raise HTTPException(status_code=409, detail=t("versions.already_extracted", locale))
+    running = (
+        await conn.execute(
+            text(
+                "SELECT 1 FROM batch_documents WHERE target_document_id = CAST(:id AS uuid)"
+                " AND status IN ('pending', 'processing') LIMIT 1"
+            ),
+            {"id": doc_id},
+        )
+    ).scalar()
+    if running:
+        raise HTTPException(status_code=409, detail=t("versions.extraction_running", locale))
+    cols = (await _get_tables_columns(conn, current_user.tenant_slug))[safe]
+    f = await document_files.resolve(conn, safe, cols, doc_id, current_user.tenant_id)
+    if f is None:
+        raise HTTPException(status_code=404, detail=t("versions.not_found", locale))
+    path = await document_files.check_servable(conn, f, locale)
+    file_hash = f.file_hash or await asyncio.to_thread(ingest_router._compute_hash, path)
+    return safe, path, file_hash, f.original_filename or path.name, f.version_no
+
+
+async def _start_extraction(
+    request: Request, items: list[tuple[str, str]], current_user: CurrentUser
+) -> list[dict]:
+    """Start the extraction of each (table, id); one batch per prompt preset.
+    Returns one {table_name, id, batch_id | error} per item, in order."""
+    results: list[dict] = []
+    batches: dict[str | None, str] = {}
+    for table_name, doc_id in items:
+        try:
+            async with _engine().connect() as conn:
+                safe, path, file_hash, filename, version_no = await _prepare_extraction(
+                    conn, table_name, doc_id, current_user
+                )
+            preset_id = await _document_preset(safe, doc_id)
+            if preset_id not in batches:
+                batches[preset_id] = await _create_batch(
+                    "extract",
+                    current_user.tenant_id,
+                    created_by=current_user.id,
+                    preset_id=preset_id,
+                )
+            batch_id = await _start_reextraction(
+                safe,
+                doc_id,
+                version_no,
+                path,
+                file_hash,
+                filename,
+                current_user,
+                batch_id=batches[preset_id],
+            )
+        except HTTPException as e:
+            results.append({"table_name": table_name, "id": doc_id, "error": e.detail})
+            continue
+        await log_action(
+            action="document_extraction_requested",
+            user_id=current_user.id,
+            user_email=current_user.email,
+            table_name=safe,
+            document_id=doc_id,
+            details={"batch_id": batch_id, "version_no": version_no},
+            ip_address=client_ip(request),
+        )
+        results.append({"table_name": safe, "id": doc_id, "batch_id": batch_id})
+    return results
+
+
+@router.post(
+    "/documents/{table_name}/{doc_id}/extract",
+    summary="Extract the data of a document uploaded without extraction",
+)
+@limiter.limit("30/minute")
+async def extract_document(
+    request: Request,
+    table_name: str,
+    doc_id: str,
+    current_user: CurrentUser = Depends(require_reviewer),
+):
+    async with _engine().connect() as conn:
+        await _prepare_extraction(conn, table_name, doc_id, current_user)
+    (result,) = await _start_extraction(request, [(table_name, doc_id)], current_user)
+    if "error" in result:
+        raise HTTPException(status_code=409, detail=result["error"])
+    return {"batch_id": result["batch_id"]}
+
+
+class ExtractItem(BaseModel):
+    table_name: str = Field(..., max_length=63)
+    id: uuid.UUID
+
+
+class ExtractBody(BaseModel):
+    documents: list[ExtractItem] = Field(..., min_length=1, max_length=200)
+
+
+@router.post(
+    "/documents/extract",
+    summary="Extract the data of several documents uploaded without extraction",
+)
+@limiter.limit("10/minute")
+async def extract_documents(
+    request: Request,
+    body: ExtractBody,
+    current_user: CurrentUser = Depends(require_reviewer),
+):
+    results = await _start_extraction(
+        request, [(d.table_name, str(d.id)) for d in body.documents], current_user
+    )
+    return {
+        "results": results,
+        "started": sum(1 for r in results if "batch_id" in r),
+        "batch_ids": sorted({r["batch_id"] for r in results if "batch_id" in r}),
+    }
+
+
+@router.get(
+    "/document-location/{doc_id}",
+    summary="Which type (table) a document is filed under now",
+)
+@limiter.limit("60/minute")
+async def document_location(
+    request: Request,
+    doc_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_user),
+):
+    """Lets a page opened on a document's old table follow it after its
+    first extraction moved it into the detected type. 404 unless readable."""
+    async with _engine().connect() as conn:
+        tables = list(await _get_tables_columns(conn, current_user.tenant_slug))
+        found = None
+        if tables:
+            found = (
+                await conn.execute(
+                    text(
+                        " UNION ALL ".join(
+                            f"SELECT '{t}' AS t FROM \"{t}\" WHERE id = CAST(:id AS uuid)"
+                            for t in tables
+                        )
+                        + " LIMIT 1"
+                    ),
+                    {"id": str(doc_id)},
+                )
+            ).scalar()
+        if found is None:
+            raise HTTPException(
+                status_code=404, detail=t("common.document_not_found", current_user.locale)
+            )
+        await _require_document_permission(conn, found, str(doc_id), current_user, "read")
+    return {"table_name": found}
+
+
 # ── Download ──────────────────────────────────────────────────────────────────
 
 
@@ -721,7 +906,7 @@ async def document_history(
                     text(f"""
                     SELECT id, action, user_id, {display_email_sql()} AS user_email, details, created_at
                     FROM sdai_audit_log
-                    WHERE table_name = :t AND document_id = CAST(:id AS uuid)
+                    WHERE document_id = CAST(:id AS uuid)  -- its id survives a move (relocate.py)
                       {"AND NOT (action = ANY(:hidden))" if hide_tracking else ""}
                     ORDER BY created_at DESC
                     LIMIT :limit

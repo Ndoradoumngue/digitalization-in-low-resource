@@ -226,10 +226,10 @@ services:
   # pulls the peer's every SYNC_INTERVAL_SECONDS; elsewhere it only does
   # housekeeping. Idle without SYNC_NODE_TOKEN.
   sync:
+    # Reuses the image the api service builds; building it twice in parallel
+    # fails with 'image "sdai/api:latest": already exists'.
     image: sdai/api:${SDAI_IMAGE_TAG:-latest}
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+    pull_policy: never
     command: [ "python", "-m", "sync.worker" ]
     volumes:
       # Same mounts and in-container paths as the API: files referenced by

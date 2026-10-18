@@ -1,7 +1,7 @@
 # Guide administrateur - SDAI, gestion électronique des documents
 
 Ce guide s'adresse aux administrateurs de SDAI : la personne qui installe et maintient les serveurs, et
-celles qui gèrent les comptes, les droits, le plan de classement et la conservation. Les parties
+celles qui gèrent les comptes, les droits, les catégories et la conservation. Les parties
 **Installation**, **Sauvegardes**, **Restauration** et **Mises à jour** demandent un accès en ligne de
 commande au serveur ; les autres se font dans l'application.
 
@@ -20,7 +20,7 @@ appliquez-la avec `docker compose up -d`.
 2. [Installation](#2-installation)
 3. [Utilisateurs](#3-utilisateurs)
 4. [Droits d'accès](#4-droits-daccès)
-5. [Plan de classement](#5-plan-de-classement)
+5. [Catégories](#5-catégories)
 6. [Conservation](#6-conservation)
 7. [Élimination](#7-élimination)
 8. [Synchronisation local / cloud](#8-synchronisation-local--cloud)
@@ -304,10 +304,10 @@ Menu **Opérations → Accès & Groupes**.
 **Qui voit un document par défaut :**
 
 - tant qu'il est dans la **File de révision**, toute l'organisation (pour que n'importe quel réviseur
-  puisse le valider), sauf si un accès par série ou par type le concerne déjà ;
+  puisse le valider), sauf si un accès par catégorie ou par type le concerne déjà ;
 - **dès qu'il est validé ou rejeté** (ou validé automatiquement), seulement **les administrateurs et
   la personne qui l'a déposé** (accès « Modification » automatique). Pour l'ouvrir à d'autres, donnez
-  un accès par série, par type ou sur le document ;
+  un accès par catégorie, par type ou sur le document ;
 - les documents déposés avant cette règle (sans déposant connu) restent visibles par toute
   l'organisation tant qu'aucun accès n'est défini.
 
@@ -317,7 +317,7 @@ façons, qui se combinent :
 | Restriction | Où | Effet |
 |---|---|---|
 | Par document | fiche du document, **Restrictions d'accès → + Restreindre à…** | ce document seulement |
-| Par série | **Accès par série** | tous les documents de la série **et de ses sous-séries** |
+| Par catégorie | **Accès par catégorie** | tous les documents de la catégorie **et de ses sous-catégories** |
 | Par type de document | **Accès par type de document** | tous les documents de ce type |
 
 Chaque accès donne un niveau : **Lecture**, **Téléchargement** ou **Modification**. Dès qu'un accès
@@ -328,11 +328,11 @@ voient. Les administrateurs voient tout. Un lecteur ne dépasse jamais le niveau
 puis donnez les accès aux groupes plutôt qu'aux personnes : un départ ou une arrivée se gère alors en
 une opération.
 
-**Conseil** : préparez le plan de classement et les accès par série **avant** les premiers dépôts, et
+**Conseil** : préparez les catégories et les accès par catégorie **avant** les premiers dépôts, et
 définissez le classement automatique (section 5.2) : chaque nouveau document arrive alors dans sa
-série, visible des bonnes personnes.
+catégorie, visible des bonnes personnes.
 
-Retirer le dernier accès d'une série ou d'un type supprime cette restriction : ses documents ne
+Retirer le dernier accès d'une catégorie ou d'un type supprime cette restriction : ses documents ne
 restent visibles que par leurs accès propres (déposant, accès par document).
 
 **Confidentialité** : sur la fiche d'un document, choisissez son niveau. Une personne dont
@@ -340,21 +340,21 @@ l'habilitation est inférieure ne le voit nulle part.
 
 ---
 
-## 5. Plan de classement
+## 5. Catégories
 
-### 5.1 Séries
+### 5.1 Arbre des catégories
 
-Le plan de classement est un arbre de **séries** avec un code (par exemple `1.2`) et un nom. Gérez-le
-dans la page **Documents** (panneau **Plan de classement** : **+ Série**, **Ajouter une sous-série**,
-**Renommer**, **Déplacer**, **Supprimer**) ou dans **Accès & Groupes → Séries (fonds)** - réservé aux
-administrateurs. Seule une série vide peut être supprimée.
+Les catégories forment un arbre (catégories et sous-catégories), chacune avec un code (par
+exemple `1.2`) et un nom. Gérez-le dans la page **Documents** (panneau **Catégories** : **+ Catégorie**, **Ajouter une sous-catégorie**,
+**Renommer**, **Déplacer**, **Supprimer**) ou dans **Accès & Groupes → Catégories** - réservé aux
+administrateurs. Seule une catégorie vide peut être supprimée.
 
-Les accès donnés sur une série s'appliquent à toutes ses sous-séries ; il en va de même pour les règles
-de conservation et les gels juridiques.
+Les accès donnés sur une catégorie s'appliquent à toutes ses sous-catégories ; il en va de même
+pour les règles de conservation et les gels juridiques.
 
 ### 5.2 Classement automatique
 
-**Accès & Groupes → Classement automatique** : pour chaque type de document, la série où un nouveau
+**Accès & Groupes → Classement automatique** : pour chaque type de document, la catégorie où un nouveau
 document est classé. Sans règle, il va dans **À classer** ; un réviseur le classe ensuite depuis sa
 fiche.
 
@@ -375,12 +375,12 @@ conservation et le cycle de vie**).
 
 **Règles de conservation → Nouvelle règle** :
 
-- **S'applique à** une série (et tout ce qui est en dessous) ou un type de document ;
+- **S'applique à** une catégorie (et tout ce qui est en dessous) ou un type de document ;
 - **Durée (mois)** et **À compter de** : la date du document, de versement, de validation ou
   d'archivage ;
 - **Sort final** : **Élimination**, **Réexamen** ou **Conservation définitive**.
 
-La règle la plus précise l'emporte : celle de la série la plus proche, sinon celle du type. La tâche
+La règle la plus précise l'emporte : celle de la catégorie la plus proche, sinon celle du type. La tâche
 quotidienne recalcule les dates et marque **À éliminer** les documents archivés arrivés à échéance ;
 **Exécuter maintenant** la lance tout de suite. Rien n'est jamais éliminé automatiquement à
 l'échéance : il faut une proposition approuvée (section 7).
@@ -394,7 +394,7 @@ date d'archivage. **Prolonger** fixe une nouvelle échéance à un document éch
 ### 6.3 Gel juridique
 
 **Geler (gel juridique)**, avec un motif (affaire, demande) : le document ne peut plus être mis à la
-corbeille, purgé ni éliminé jusqu'à **Lever le gel**. On peut geler un document, une série entière ou
+corbeille, purgé ni éliminé jusqu'à **Lever le gel**. On peut geler un document, une catégorie entière ou
 le résultat d'une recherche (page **Documents**).
 
 ### 6.4 Corbeille

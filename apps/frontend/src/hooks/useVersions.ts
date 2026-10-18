@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  extractDocument,
+  extractDocuments,
   fetchDocumentHistory,
+  fetchDocumentLocation,
   fetchDocumentVersions,
   restoreDocumentVersion,
   uploadDocumentVersion,
@@ -47,5 +50,34 @@ export function useRestoreVersion(tableName: string, id: string) {
     mutationFn: ({ versionNo, ...options }: { versionNo: number } & VersionChangeOptions) =>
       restoreDocumentVersion(tableName, id, versionNo, options),
     onSuccess: () => invalidateDocument(queryClient, tableName, id),
+  });
+}
+
+// ── Extraction on demand (GED Phase 10) ──────────────────────────────────────
+
+export function useExtractDocument(tableName: string, id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => extractDocument(tableName, id),
+    onSuccess: () => invalidateDocument(queryClient, tableName, id),
+  });
+}
+
+export function useExtractDocuments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (documents: { table_name: string; id: string }[]) => extractDocuments(documents),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["db-documents"] }),
+  });
+}
+
+/** Where a document is filed now - followed when a first extraction moved it
+ * into its detected type while it was open. */
+export function useDocumentLocation(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["document-location", id],
+    queryFn: () => fetchDocumentLocation(id),
+    enabled: enabled && !!id,
+    retry: false,
   });
 }

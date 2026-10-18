@@ -64,11 +64,17 @@ import {
   DocumentVersionsResponseSchema,
   LastIntegrityRunSchema,
   VersionChangeResponseSchema,
+  ExtractionStartedSchema,
+  ExtractionSelectionResponseSchema,
+  DocumentLocationSchema,
   type AuditChainResult,
   type DocumentHistoryResponse,
   type DocumentVersionsResponse,
   type LastIntegrityRun,
   type VersionChangeResponse,
+  type ExtractionStarted,
+  type ExtractionSelectionResponse,
+  type DocumentLocation,
   type PermissionLevel,
   type Confidentiality,
   SyncConflictsResponseSchema,
@@ -295,9 +301,21 @@ export function imageUrl(filename: string, variant: ImageVariant): string {
 
 // ── Ingest endpoints ──────────────────────────────────────────────────────────
 
-export async function uploadFiles(files: File[]): Promise<BatchCreated> {
+export interface UploadOptions {
+  /** false = file the documents as they are, without extraction (GED Phase 10). */
+  extract?: boolean;
+  /** Category (series) to file them into; omitted = automatic filing. */
+  seriesId?: string | null;
+}
+
+export async function uploadFiles(
+  files: File[],
+  { extract = true, seriesId }: UploadOptions = {},
+): Promise<BatchCreated> {
   const fd = new FormData();
   for (const f of files) fd.append("files", f);
+  fd.append("extract", String(extract));
+  if (seriesId) fd.append("series_id", seriesId);
 
   const res = await fetch("/api/ingest/upload", withAuth({
     method: "POST",
@@ -311,7 +329,12 @@ export async function uploadFiles(files: File[]): Promise<BatchCreated> {
 }
 
 export async function ingestFromPath(
-  payload: { path?: string; google_drive_folder_id?: string }
+  payload: {
+    path?: string;
+    google_drive_folder_id?: string;
+    extract?: boolean;
+    series_id?: string | null;
+  }
 ): Promise<BatchCreated> {
   const res = await fetch("/api/ingest/path", withAuth({
     method: "POST",
@@ -1024,6 +1047,25 @@ export async function uploadDocumentVersion(
   fd.append("reextract", String(reextract));
   const res = await fetch(`${documentPath(tableName, id)}/versions`, withAuth({ method: "POST", body: fd }));
   return jsonOrThrow(res, VersionChangeResponseSchema);
+}
+
+/** Extract the data of a document uploaded without extraction (GED Phase 10). */
+export async function extractDocument(tableName: string, id: string): Promise<ExtractionStarted> {
+  const res = await fetch(`${documentPath(tableName, id)}/extract`, withAuth({ method: "POST" }));
+  return jsonOrThrow(res, ExtractionStartedSchema);
+}
+
+export async function extractDocuments(
+  documents: { table_name: string; id: string }[],
+): Promise<ExtractionSelectionResponse> {
+  const res = await sendJson("/api/db/documents/extract", "POST", { documents });
+  return jsonOrThrow(res, ExtractionSelectionResponseSchema);
+}
+
+/** The type (table) a document is filed under now - it changes once, on its
+ * first extraction. */
+export async function fetchDocumentLocation(id: string): Promise<DocumentLocation> {
+  return fetchJson(`/api/db/document-location/${encodeURIComponent(id)}`, DocumentLocationSchema);
 }
 
 export async function restoreDocumentVersion(

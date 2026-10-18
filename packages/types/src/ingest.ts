@@ -46,6 +46,8 @@ export const PageStatusEnum = z.enum([
   "failed",
   "manual",
   "skipped",
+  // A plain upload's page (GED Phase 10): kept as it is, never extracted.
+  "stored",
 ]);
 export type PageStatus = z.infer<typeof PageStatusEnum>;
 
@@ -78,6 +80,7 @@ export const PageListSchema = z.object({
   failed:            z.number(),
   manual:            z.number(),
   skipped:           z.number(),
+  stored:            z.number().default(0),
   flagged:           z.number().default(0),
   pages:             z.array(PageSchema),
 });

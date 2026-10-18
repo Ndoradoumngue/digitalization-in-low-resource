@@ -190,13 +190,25 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "User not found",
         "fr": "Utilisateur introuvable",
     },
+    "ingest.plain_upload_page": {
+        "en": "This document was uploaded without extraction - use \"Extract data\" on the document instead",
+        "fr": "Ce document a été déposé sans extraction - utilisez plutôt « Extraire les données » sur le document",
+    },
+    "versions.already_extracted": {
+        "en": "This document has already been extracted",
+        "fr": "Les données de ce document ont déjà été extraites",
+    },
+    "versions.extraction_running": {
+        "en": "An extraction of this document is already running",
+        "fr": "Une extraction de ce document est déjà en cours",
+    },
     "common.series_not_found": {
-        "en": "Series not found",
-        "fr": "Série introuvable",
+        "en": "Category not found",
+        "fr": "Catégorie introuvable",
     },
     "common.series_already_exists": {
-        "en": "Series '{name}' already exists",
-        "fr": "La série « {name} » existe déjà",
+        "en": "Category '{name}' already exists",
+        "fr": "La catégorie « {name} » existe déjà",
     },
     "common.page_not_found": {
         "en": "Page not found",
@@ -237,8 +249,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Vous pouvez consulter ce document mais pas le modifier",
     },
     "documents.grant_target_required": {
-        "en": "A series grant needs series_id and a document-type grant needs table_name",
-        "fr": "Une autorisation sur une série exige series_id, une autorisation sur un type exige table_name",
+        "en": "A category grant needs series_id and a document-type grant needs table_name",
+        "fr": "Une autorisation sur une catégorie exige series_id, une autorisation sur un type exige table_name",
     },
     "documents.confidentiality_above_clearance": {
         "en": "You cannot classify a document above your own clearance",
@@ -464,12 +476,12 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Une étiquette ne peut pas être fusionnée avec elle-même",
     },
     "classification.series_cycle": {
-        "en": "A series cannot be moved under itself or one of its sub-series",
-        "fr": "Une série ne peut pas être déplacée sous elle-même ou sous une de ses sous-séries",
+        "en": "A category cannot be moved under itself or one of its subcategories",
+        "fr": "Une catégorie ne peut pas être déplacée sous elle-même ou sous une de ses sous-catégories",
     },
     "classification.series_not_empty": {
-        "en": "This series is not empty ({children} sub-series, {documents} documents, {rules} filing rules)",
-        "fr": "Cette série n'est pas vide ({children} sous-séries, {documents} documents, {rules} règles de classement)",
+        "en": "This category is not empty ({children} subcategories, {documents} documents, {rules} filing rules)",
+        "fr": "Cette catégorie n'est pas vide ({children} sous-catégories, {documents} documents, {rules} règles de classement)",
     },
     # ── sync/admin.py ────────────────────────────────────────────────────
     "sync.conflict_not_found": {
@@ -579,8 +591,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "fr": "Une règle qui court à partir de la date du document doit nommer le champ de date",
     },
     "retention.rule_exists": {
-        "en": "This series or document type already has a retention rule",
-        "fr": "Cette série ou ce type de document a déjà une règle de conservation",
+        "en": "This category or document type already has a retention rule",
+        "fr": "Cette catégorie ou ce type de document a déjà une règle de conservation",
     },
     "retention.rule_not_found": {
         "en": "Retention rule not found",

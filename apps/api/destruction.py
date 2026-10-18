@@ -816,7 +816,7 @@ _PV = {
             "automatiquement."
         ),
         "docs": "Documents éliminés",
-        "cols": ["Cote", "Type", "Série", "Dates", "Empreintes SHA-256"],
+        "cols": ["Cote", "Type", "Catégorie", "Dates", "Empreintes SHA-256"],
         "ingested": "versé",
         "archived": "archivé",
         "retention": "échéance",
@@ -854,7 +854,7 @@ _PV = {
             "restored from them automatically."
         ),
         "docs": "Destroyed documents",
-        "cols": ["Reference", "Type", "Series", "Dates", "SHA-256 fingerprints"],
+        "cols": ["Reference", "Type", "Category", "Dates", "SHA-256 fingerprints"],
         "ingested": "filed",
         "archived": "archived",
         "retention": "retention end",

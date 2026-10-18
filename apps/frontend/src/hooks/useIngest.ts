@@ -14,6 +14,7 @@ import {
   retryPage,
   skipPage,
   uploadFiles,
+  type UploadOptions,
 } from "@sdai/api-client";
 import type { BatchStatus, BatchSummary, PageList } from "@sdai/types";
 import { isAuthError, isClientError } from "./queryUtils";
@@ -34,13 +35,20 @@ function isDone(status: BatchStatus): boolean {
 }
 
 export function useUpload() {
-  return useMutation({ mutationFn: (files: File[]) => uploadFiles(files) });
+  return useMutation({
+    mutationFn: ({ files, ...options }: { files: File[] } & UploadOptions) =>
+      uploadFiles(files, options),
+  });
 }
 
 export function useIngestPath() {
   return useMutation({
-    mutationFn: (payload: { path?: string; google_drive_folder_id?: string }) =>
-      ingestFromPath(payload),
+    mutationFn: (payload: {
+      path?: string;
+      google_drive_folder_id?: string;
+      extract?: boolean;
+      series_id?: string | null;
+    }) => ingestFromPath(payload),
   });
 }
 

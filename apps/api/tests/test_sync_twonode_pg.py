@@ -1818,3 +1818,42 @@ def test_collaboration_rows_sync_but_the_outbox_stays(nodes):
     summary = run(_sync(local, cloud))
     assert summary["errors"] == 0 and summary["push_errors"] == 0
     assert run(local.q("SELECT 1 FROM sdai_comments WHERE document_id = CAST(:d AS uuid)", {"d": doc})) == []
+
+
+def test_document_moved_into_its_type_moves_on_the_peer(nodes):
+    """GED Phase 10: a plain upload's first extraction moves its row into the
+    detected type (relocate.move_document) - new table, insert, re-pointed
+    references and delete replay on the peer in one go."""
+    import relocate
+
+    local, cloud = nodes
+    doc, user, tenant = DATA["doc"], DATA["user"], DATA["tenant"]
+    run(
+        local.q(
+            "INSERT INTO sdai_comments (tenant_id, table_name, document_id, author_id, body)"
+            " VALUES (CAST(:t AS uuid), :tb, CAST(:d AS uuid), CAST(:u AS uuid), 'avant')",
+            {"t": tenant, "tb": T, "d": doc, "u": user},
+        )
+    )
+    record_id = run(_doc(local, doc))["record_id"]
+
+    async def move():
+        with local.active():
+            async with local.engine.begin() as conn:
+                await relocate.move_document(
+                    conn, T, doc, "t_default_receipt", {"payer": "x"}
+                )
+
+    run(move())
+    summary = run(_sync(local, cloud))
+    assert summary["errors"] == 0 and summary["push_errors"] == 0
+    assert run(_doc(cloud, doc)) is None
+    moved = run(_doc(cloud, doc, "t_default_receipt"))
+    assert moved is not None and moved["record_id"] == record_id
+    [comment] = run(
+        cloud.q(
+            "SELECT table_name FROM sdai_comments WHERE document_id = CAST(:d AS uuid)",
+            {"d": doc},
+        )
+    )
+    assert comment["table_name"] == "t_default_receipt"

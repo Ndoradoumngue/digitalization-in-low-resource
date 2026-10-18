@@ -73,7 +73,7 @@
     "count_other": "{{count}} documents",
     "searchPlaceholder": "Rechercher dans les champs et le texte des pages…",
     "allReviewers": "Tous les réviseurs",
-    "allSeries": "Toutes les séries",
+    "allSeries": "Toutes les catégories",
     "from": "Du",
     "to": "Au",
     "reset": "Réinitialiser",
@@ -83,7 +83,9 @@
     "notYetReviewed": "Pas encore révisé",
     "pagination": "Page {{page}} sur {{totalPages}} - {{total}} au total",
     "previous": "Précédent",
-    "next": "Suivant"
+    "next": "Suivant",
+    "notExtractedFilter": "Non extraits",
+    "uploadHere": "Déposer ici"
   },
   "documentDetail": {
     "backToDocuments": "Retour aux documents",
@@ -146,31 +148,31 @@
     "addLink": "Ajouter le lien"
   },
   "series": {
-    "heading": "Série",
+    "heading": "Catégorie",
     "change": "Modifier",
     "assign": "+ Assigner",
-    "none": "Aucune série",
+    "none": "Aucune catégorie",
     "cancel": "Annuler",
-    "notAssigned": "Non assigné à une série",
+    "notAssigned": "Dans aucune catégorie",
     "toBeFiled": "À classer",
-    "planHeading": "Plan de classement",
-    "addRoot": "+ Série",
+    "planHeading": "Catégories",
+    "addRoot": "+ Catégorie",
     "allDocuments": "Tous les documents",
-    "noneYet": "Aucune série pour l'instant.",
-    "includeSubseries": "Inclure les sous-séries",
+    "noneYet": "Aucune catégorie pour l'instant.",
+    "includeSubseries": "Inclure les sous-catégories",
     "collapse": "Replier",
     "expand": "Déplier",
-    "addChild": "Ajouter une sous-série",
+    "addChild": "Ajouter une sous-catégorie",
     "rename": "Renommer",
     "move": "Déplacer",
     "delete": "Supprimer",
     "moveTo": "Déplacer sous",
     "root": "(premier niveau)",
     "codePlaceholder": "1.2",
-    "namePlaceholder": "Nom de la série",
+    "namePlaceholder": "Nom de la catégorie",
     "code": "Code",
     "name": "Nom",
-    "breadcrumb": "Place dans le plan de classement"
+    "breadcrumb": "Place dans les catégories"
   },
   "access": {
     "group": "Groupe",
@@ -191,7 +193,7 @@
       "download": "Téléchargement",
       "edit": "Modification"
     },
-    "viaSeries": "via la série « {{name}} »",
+    "viaSeries": "via la catégorie « {{name}} »",
     "viaType": "via le type de document",
     "yourAccess": "Votre accès : {{level}}"
   },
@@ -344,7 +346,17 @@
     "startIngestion": "Démarrer l'ingestion",
     "ingestionStarted": "Ingestion démarrée",
     "batchLabel": "lot {{id}}",
-    "newBatch": "Nouveau lot"
+    "newBatch": "Nouveau lot",
+    "options": {
+      "category": "Catégorie",
+      "automaticFiling": "Classement automatique (selon le type de document)",
+      "extract": "Extraire les données (Ollama)",
+      "extractOn": "Les champs de chaque document sont lus par le modèle d'extraction, puis vérifiés si besoin.",
+      "extractOff": "Les documents sont classés tels quels, consultables par leur texte. Vous pourrez extraire leurs données plus tard.",
+      "howLabel": "Comment classer ces documents ?",
+      "fileAsIs": "Classer tel quel (sans extraction)"
+    },
+    "storedPage": "conservée telle quelle"
   },
   "review": {
     "pages": {
@@ -407,7 +419,7 @@
   },
   "accessAdmin": {
     "header": "Accès & Groupes",
-    "subtitle": "Gérez les groupes et leurs membres, les séries, le classement automatique, les étiquettes, et qui peut voir des séries ou des types de documents entiers.",
+    "subtitle": "Gérez les groupes et leurs membres, les catégories, le classement automatique, les étiquettes, et qui peut voir des catégories ou des types de documents entiers.",
     "export": {
       "heading": "Exporter l'archive",
       "descriptionPrefix": "Télécharge tous les documents de ce tenant - tous les champs extraits ainsi qu'un dossier ",
@@ -448,14 +460,14 @@
       }
     },
     "series": {
-      "heading": "Séries (fonds)",
-      "namePlaceholder": "Nom de la nouvelle série (ex. Titres fonciers 1990-2000)",
+      "heading": "Catégories",
+      "namePlaceholder": "Nom de la nouvelle catégorie (ex. Titres fonciers 1990-2000)",
       "descriptionPlaceholder": "Description (facultatif)",
       "creating": "Création…",
       "create": "Créer",
       "loading": "Chargement…",
-      "none": "Aucune série pour le moment.",
-      "confirmDelete": "Supprimer cette série ? Les documents qui lui sont assignés apparaîtront comme non assignés.",
+      "none": "Aucune catégorie pour le moment.",
+      "confirmDelete": "Supprimer cette catégorie ? Les documents qu'elle contient apparaîtront dans aucune catégorie.",
       "delete": "Supprimer"
     },
     "groups": {
@@ -485,10 +497,10 @@
       "readerFlagHint": "Les comptes en lecture seule ne peuvent pas recevoir cette permission"
     },
     "seriesGrants": {
-      "heading": "Accès par série",
-      "description": "Réserve tous les documents d'une série aux personnes ou groupes listés ici (en plus des administrateurs et des autorisations par document). Une série sans autorisation reste ouverte à tous.",
-      "selectTarget": "Choisir une série…",
-      "none": "Aucune série n'est restreinte."
+      "heading": "Accès par catégorie",
+      "description": "Réserve tous les documents d'une catégorie aux personnes ou groupes listés ici (en plus des administrateurs et des autorisations par document). Une catégorie sans autorisation reste ouverte à tous.",
+      "selectTarget": "Choisir une catégorie…",
+      "none": "Aucune catégorie n'est restreinte."
     },
     "typeGrants": {
       "heading": "Accès par type de document",
@@ -502,10 +514,10 @@
     },
     "filing": {
       "heading": "Classement automatique",
-      "help": "Série dans laquelle chaque nouveau document d'un type est classé. Sans règle, les documents vont dans « À classer ».",
+      "help": "Catégorie dans laquelle chaque nouveau document d'un type est classé. Sans règle, les documents vont dans « À classer ».",
       "noTypes": "Aucun type de document pour l'instant.",
       "toBeFiled": "À classer (par défaut)",
-      "seriesFor": "Série pour {{type}}"
+      "seriesFor": "Catégorie pour {{type}}"
     },
     "tags": {
       "heading": "Étiquettes",
@@ -544,8 +556,8 @@
       "document_link_removed": "lien de document supprimé",
       "document_access_granted": "accès document accordé",
       "document_access_revoked": "accès document révoqué",
-      "series_created": "série créée",
-      "series_assigned": "série assignée",
+      "series_created": "catégorie créée",
+      "series_assigned": "catégorie assignée",
       "integrity_check_failed": "échec de vérification d'intégrité",
       "document_fields_edited": "champs de document modifiés",
       "archive_exported": "archive exportée",
@@ -562,9 +574,9 @@
       "sync_conflict": "Conflit de synchronisation",
       "sync_conflict_resolved": "Conflit de synchronisation résolu",
       "sync_files_retried": "Fichiers de synchronisation relancés",
-      "series_updated": "Série modifiée",
-      "series_moved": "Série déplacée",
-      "series_deleted": "Série supprimée",
+      "series_updated": "Catégorie modifiée",
+      "series_moved": "Catégorie déplacée",
+      "series_deleted": "Catégorie supprimée",
       "tag_created": "Étiquette créée",
       "tag_updated": "Étiquette modifiée",
       "tags_merged": "Étiquettes fusionnées",
@@ -609,7 +621,9 @@
       "signature_password_failed": "Signature - mot de passe erroné",
       "notification_preferences_changed": "Préférences de notification modifiées",
       "emails_retried": "E-mails renvoyés",
-      "emails_discarded": "E-mails en échec supprimés"
+      "emails_discarded": "E-mails en échec supprimés",
+      "document_type_assigned": "Type de document attribué",
+      "document_extraction_requested": "Extraction demandée"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -1054,7 +1068,7 @@
     },
     "kind": {
       "documents": "Documents sélectionnés",
-      "series": "Série",
+      "series": "Catégorie",
       "search": "Résultats de recherche"
     },
     "documents_one": "{{count}} document",
@@ -1100,7 +1114,7 @@
     "manualDate": "date manuelle",
     "legalHold": "Gel juridique",
     "legalHoldHint": "Sous gel juridique : ne peut être ni supprimé ni éliminé",
-    "holdOnSeries": "sur la série {{name}}",
+    "holdOnSeries": "sur la catégorie {{name}}",
     "holdOnSearch": "sur une recherche",
     "archive": "Archiver",
     "archiveConfirm": "Archiver ce document ? Il passe en lecture seule (seuls les gestionnaires du cycle de vie peuvent encore le modifier) et sa durée de conservation peut commencer à courir.",
@@ -1119,7 +1133,7 @@
   },
   "retention": {
     "header": "Règles de conservation",
-    "intro": "Durée de conservation des documents et sort final à l'échéance. La règle la plus précise l'emporte : celle de la série (la plus proche en remontant l'arborescence), puis celle du type de document.",
+    "intro": "Durée de conservation des documents et sort final à l'échéance. La règle la plus précise l'emporte : celle de la catégorie (la plus proche en remontant l'arborescence), puis celle du type de document.",
     "add": "Nouvelle règle",
     "edit": "Modifier la règle",
     "editShort": "Modifier",
@@ -1129,9 +1143,9 @@
     "deleteConfirm": "Supprimer la règle « {{name}} » ? Ses documents relèvent alors de la règle applicable suivante.",
     "name": "Nom",
     "scope": "S'applique à",
-    "scopeSeries": "Série",
+    "scopeSeries": "Catégorie",
     "scopeDocType": "Type de document",
-    "series": "Série (et tout ce qui est en dessous)",
+    "series": "Catégorie (et tout ce qui est en dessous)",
     "docType": "Type de document",
     "appliesTo": "S'applique à",
     "duration": "Durée (mois)",
@@ -1162,10 +1176,10 @@
   },
   "legalHolds": {
     "header": "Gels juridiques",
-    "intro": "Un gel suspend la conservation : les documents gelés ne peuvent être ni mis à la corbeille, ni purgés, ni éliminés. Un gel de série couvre toutes les séries en dessous, y compris les documents classés plus tard.",
+    "intro": "Un gel suspend la conservation : les documents gelés ne peuvent être ni mis à la corbeille, ni purgés, ni éliminés. Un gel de catégorie couvre toutes les sous-catégories, y compris les documents classés plus tard.",
     "showReleased": "Afficher les gels levés",
-    "pickSeries": "Choisir une série…",
-    "holdSeries": "Geler cette série",
+    "pickSeries": "Choisir une catégorie…",
+    "holdSeries": "Geler cette catégorie",
     "none": "Aucun gel juridique.",
     "onDocuments_one": "{{count}} document",
     "onDocuments_other": "{{count}} documents",
@@ -1432,5 +1446,18 @@
     "saving": "Enregistrement…",
     "changed": "Mot de passe changé.",
     "sessionsNote": "Changer votre mot de passe vous déconnecte partout ailleurs."
+  },
+  "extraction": {
+    "notExtracted": "Non extrait",
+    "explanation": "Ce document a été classé tel quel. Extrayez ses données pour remplir ses champs et le ranger sous son type de document.",
+    "running": "Extraction en cours… la page se met à jour à la fin.",
+    "extract": "Extraire les données",
+    "extracting": "Extraction…",
+    "failed": "L'extraction a échoué. Le document est resté tel quel - réessayez plus tard.",
+    "extractSelected": "Extraire les données ({{count}})",
+    "started_one": "Extraction lancée pour {{count}} document.",
+    "started_other": "Extraction lancée pour {{count}} documents.",
+    "notStarted_one": "{{count}} document n'a pas pu être extrait (déjà extrait, en cours ou non modifiable).",
+    "notStarted_other": "{{count}} documents n'ont pas pu être extraits (déjà extraits, en cours ou non modifiables)."
   }
 }

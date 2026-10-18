@@ -94,3 +94,25 @@ export const AuditChainResultSchema = AuditChainSummarySchema.extend({
   ),
 });
 export type AuditChainResult = z.infer<typeof AuditChainResultSchema>;
+
+// ── Extraction on demand (GED Phase 10) ──────────────────────────────────────
+
+export const ExtractionStartedSchema = z.object({ batch_id: z.string() });
+export type ExtractionStarted = z.infer<typeof ExtractionStartedSchema>;
+
+export const ExtractionSelectionResponseSchema = z.object({
+  results: z.array(
+    z.object({
+      table_name: z.string(),
+      id:         z.string(),
+      batch_id:   z.string().optional(),
+      error:      z.string().optional(),
+    }),
+  ),
+  started:   z.number(),
+  batch_ids: z.array(z.string()),
+});
+export type ExtractionSelectionResponse = z.infer<typeof ExtractionSelectionResponseSchema>;
+
+export const DocumentLocationSchema = z.object({ table_name: z.string() });
+export type DocumentLocation = z.infer<typeof DocumentLocationSchema>;

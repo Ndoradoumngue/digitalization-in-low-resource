@@ -62,7 +62,7 @@ Un administrateur peut aussi donner des permissions particulières : gérer l'ac
 modifier les données extraites, gérer la conservation (archiviste), créer des liens de partage.
 
 **Accès aux documents.** Un document peut être réservé à certaines personnes ou à certains groupes,
-directement ou par sa série du plan de classement. Chaque accès a un niveau :
+directement ou par sa catégorie. Chaque accès a un niveau :
 
 - **lecture** : voir le document ;
 - **téléchargement** : voir et télécharger l'original ;
@@ -95,7 +95,7 @@ mot aussi (`contrats` trouve « contrat »).
 (**Trouvé en page 3**). Cliquez sur un numéro de page (**p. 3**) pour ouvrir le document directement à
 cette page.
 
-**Filtres** (page **Documents**) : série du plan de classement (avec **Inclure les sous-séries**),
+**Filtres** (page **Documents**) : catégorie (avec **Inclure les sous-catégories**),
 étiquette, type de document, réviseur, dates. Les filtres se combinent avec la recherche.
 
 ---
@@ -107,14 +107,14 @@ Cliquez sur un document dans une liste. À gauche, l'image des pages (molette po
 les onglets :
 
 - **Fiche** : les données extraites, le numéro d'enregistrement (à citer dans vos courriers, par exemple
-  `ACTE-2026-000123`), la **Série** du plan de classement, les **Étiquettes**, les documents liés, les
+  `ACTE-2026-000123`), la **Catégorie**, les **Étiquettes**, les documents liés, les
   **Restrictions d'accès**, le **Cycle de vie**.
 - **Versions** : tous les fichiers successifs du document (voir [section 7](#7-versions-extraction-et-réintégration)).
 - **Historique** : chaque modification d'un champ (avant / après, qui, quand) et chaque consultation
   ou téléchargement.
 - **Commentaires** et **Signatures** (sections 9 et 10).
 
-**Classer un document** : dans **Fiche**, **Série** → **Modifier**, choisissez la série. Un document
+**Classer un document** : dans **Fiche**, **Catégorie** → **Modifier**, choisissez la catégorie. Un document
 encore non classé est dans **À classer**.
 
 **Étiqueter** : **Ajouter une étiquette…**, tapez le mot puis **Ajouter**. Les étiquettes servent de
@@ -134,8 +134,16 @@ Menu **Téléverser des documents** (réviseurs et administrateurs).
 
 1. Glissez-déposez des fichiers **JPG, PNG ou PDF** (50 Mo maximum par fichier), ou cliquez pour
    parcourir. Un PDF de plusieurs pages devient un seul document.
-2. **Démarrer l'ingestion**. Le lot apparaît avec l'avancement de chaque document, page par page.
-3. Pour chaque page, SDAI redresse l'image, lit le texte et extrait les données. Comptez de quelques
+2. Choisissez la **Catégorie** où classer les documents, ou laissez **Classement automatique (selon le
+   type de document)**. Pour déposer directement dans une catégorie, ouvrez-la dans la page
+   **Documents** et cliquez sur **Déposer ici**.
+3. **Comment classer ces documents ?** - **Classer tel quel (sans extraction)** : les documents sont
+   disponibles tout de suite, consultables et retrouvables par le texte de leurs pages, et marqués
+   **Non extrait**. **Extraire les données (Ollama)** : leurs champs sont lus par le modèle
+   d'extraction. Depuis **Déposer ici**, *Classer tel quel* est choisi par défaut ; depuis le menu,
+   *Extraire les données*.
+4. **Démarrer l'ingestion**. Le lot apparaît avec l'avancement de chaque document, page par page.
+5. Avec l'extraction, pour chaque page, SDAI redresse l'image, lit le texte et extrait les données. Comptez de quelques
    secondes à quelques minutes par page selon le serveur. Vous pouvez quitter la page : le travail
    continue, et vous retrouvez vos lots dans **Téléversements récents**.
 
@@ -149,6 +157,13 @@ Menu **Téléverser des documents** (réviseurs et administrateurs).
   données.
 
 Une page blanche ou non pertinente est **ignorée** automatiquement.
+
+**Extraire plus tard** : un document **Non extrait** garde son fichier, ses pages, sa catégorie, ses
+droits et tout ce qui lui a été ajouté. Pour lire ses données, ouvrez-le et cliquez sur **Extraire les
+données** (onglet **Fiche**), ou cochez plusieurs documents dans la page **Documents** (filtre **Non
+extraits**) puis **Extraire les données (n)**. À la fin de l'extraction, le document prend son type
+(facture, acte...), garde son numéro et son historique, et part dans la file de révision si
+nécessaire.
 
 Si vous déposez sur le **serveur cloud**, le document est conservé immédiatement mais son extraction
 est faite par le serveur local : il apparaît complet dès que les deux serveurs se sont synchronisés.

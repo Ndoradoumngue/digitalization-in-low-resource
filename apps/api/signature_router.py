@@ -844,7 +844,7 @@ async def verify(
                     text(f"""
                         SELECT action, {display_email_sql()} AS user_email, created_at, details
                         FROM sdai_audit_log
-                        WHERE table_name = :t AND document_id = CAST(:id AS uuid)
+                        WHERE document_id = CAST(:id AS uuid)  -- its id survives a move (relocate.py)
                           AND action = ANY(:actions)
                         ORDER BY created_at
                     """),

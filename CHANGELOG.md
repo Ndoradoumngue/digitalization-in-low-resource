@@ -10,6 +10,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Upload without extraction (GED Phase 10): an **Extract data (Ollama)** switch on the upload page (and `extract=false` on `POST /api/ingest/upload` / `/path`) files documents as they are - generic type, pages kept as uploaded and transcribed by Tesseract for full-text search, marked **Not extracted** - so the platform works as a plain GED without the extraction model. A category can be chosen at upload (`series_id`), and each category has an **Upload here** button. **Extract data** on a document (or on a selection in the Documents page, filter **Not extracted**; `POST /api/db/documents/{t}/{id}/extract`, `POST /api/db/documents/extract`) runs the extraction later: the document moves into its detected type keeping its id, record number, category, versions, grants, tags, links, comments, signatures and history. `GET /api/db/document-location/{id}` finds a document's current type.
+
+### Changed
+- "Series" are called **categories** (fr: *catégories / sous-catégories*) everywhere a user reads it - screens, API messages, destruction report, guides. API routes, fields and tables keep `series`.
+- A document's audit history is looked up by its id alone (a moved document keeps its earlier entries).
 - Where the extraction model runs is an installation setting, `OLLAMA_MODE` (`docker`, `docker-nvidia`, `docker-amd`, `host`, `remote`), chosen by `scripts/first-run.sh` - which suggests the fastest option for the machine (a Mac: Ollama installed on it, since Docker can't use the Apple GPU; an NVIDIA GPU: Ollama in Docker on the GPU), checks that an Ollama outside Docker answers and has the model, and switches modes when run again. Override files `docker-compose.gpu-nvidia.yml`, `docker-compose.gpu-amd.yml`, `docker-compose.ollama-external.yml` are selected through `COMPOSE_FILE` - no more editing `docker-compose.yml`. `setup.sh` bundles the image of the chosen mode (`OLLAMA_MODE=...`; none for `host` / `remote`).
 
 ### Fixed
