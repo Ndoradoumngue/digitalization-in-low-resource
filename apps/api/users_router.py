@@ -40,6 +40,7 @@ from auth import CurrentUser, require_admin, require_user_manager
 from fastapi import APIRouter, Depends, HTTPException, Request
 from i18n import t
 from ingest_router import _engine
+from profile_router import avatar_url
 from pydantic import BaseModel, Field
 from rate_limit import limiter
 from sqlalchemy import text
@@ -66,7 +67,7 @@ _USER_COLS = """
     u.id::text AS id, u.email, u.full_name, u.role, u.clearance,
     u.can_manage_access, u.can_edit_extraction, u.can_manage_lifecycle, u.can_share,
     u.can_manage_users, COALESCE(u.is_active, true) AS is_active, u.must_change_password,
-    u.created_at, u.last_login_at,
+    u.created_at, u.last_login_at, u.job_title, u.avatar_updated_at,
     COALESCE(ARRAY_AGG(ug.group_id::text) FILTER (WHERE ug.group_id IS NOT NULL), '{}') AS group_ids
 """
 
@@ -93,6 +94,7 @@ def _iso(v):
 
 def _serialize(row) -> dict:
     data = dict(row)
+    data["avatar_url"] = avatar_url(data["id"], data.pop("avatar_updated_at"))
     for key in ("created_at", "last_login_at"):
         data[key] = _iso(data[key])
     return data
@@ -507,6 +509,7 @@ async def delete_user(
                 SET deleted_at = now(), deleted_by = CAST(:by AS uuid),
                     deleted_email = email, deleted_full_name = full_name,
                     email = :tombstone, full_name = NULL,
+                    job_title = NULL, phone = NULL, avatar = NULL, avatar_updated_at = NULL,
                     is_active = false, must_change_password = false
                 WHERE id = CAST(:id AS uuid)
             """),

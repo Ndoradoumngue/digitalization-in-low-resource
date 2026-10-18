@@ -924,6 +924,14 @@ ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_by UUID;
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_email TEXT;
 ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS deleted_full_name TEXT;
 
+-- Profile (profile_router): what a person fills in about themselves, and
+-- their picture - re-encoded server-side to a small JPEG and kept here as
+-- base64 so it reaches the peer node with the row (sync ships rows, not
+-- arbitrary files). avatar_updated_at versions the picture URL.
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS job_title TEXT;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS avatar TEXT;
+ALTER TABLE sdai_users ADD COLUMN IF NOT EXISTS avatar_updated_at TIMESTAMPTZ;
 
 -- E-mail outbox - node-local: the node that queued an e-mail sends it
 -- (notifications.send_due). dedupe_key makes queueing idempotent

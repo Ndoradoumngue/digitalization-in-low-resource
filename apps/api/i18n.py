@@ -162,6 +162,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": 'Change your own password from your account page',
         "fr": 'Changez votre propre mot de passe depuis votre page de compte',
     },
+    "profile.avatar_invalid": {
+        "en": "This file is not a picture we can use. Send a JPEG, PNG, WebP or GIF image.",
+        "fr": "Ce fichier n'est pas une image utilisable. Envoyez une image JPEG, PNG, WebP ou GIF.",
+    },
     "common.not_found": {
         "en": "Not found",
         "fr": "Introuvable",

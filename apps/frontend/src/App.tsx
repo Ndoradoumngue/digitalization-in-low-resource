@@ -25,6 +25,7 @@ import RetentionRulesPage from "./pages/RetentionRulesPage";
 import DestructionsPage from "./pages/DestructionsPage";
 import UsersPage from "./pages/UsersPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
+import ProfilePage from "./pages/ProfilePage";
 import UserManagerRoute from "./components/auth/UserManagerRoute";
 
 /** A temporary password must be replaced before anything else (the backend
@@ -205,6 +206,15 @@ export default function App() {
             <UserManagerRoute>
               <UsersPage />
             </UserManagerRoute>
+          }
+        />
+
+        <Route
+          path="/account"
+          element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
           }
         />
 

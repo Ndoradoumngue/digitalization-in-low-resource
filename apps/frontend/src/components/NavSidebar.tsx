@@ -10,6 +10,7 @@ import { useEligibleDocuments, useDestructions } from "../hooks/useLifecycle";
 import { useSyncStatus } from "../hooks/useSync";
 import { alertText } from "../pages/SyncAdminPage";
 import NotificationBell from "./NotificationBell";
+import Avatar from "./Avatar";
 
 // Alerts worth interrupting an admin for on every page; the rest (no backup
 // target configured on a standalone server, ...) stay on the Sync page.
@@ -256,8 +257,11 @@ export default function NavSidebar() {
       <div className="px-4 py-3 border-t border-gray-200 space-y-2.5">
         <LanguageSwitcher />
         <div className="flex items-center gap-2">
+          <Link to="/account" title={t("nav.myProfile")} className="flex-shrink-0">
+            <Avatar url={user?.avatar_url} name={user?.full_name} email={user?.email} />
+          </Link>
           <div className="flex-1 min-w-0">
-            <Link to="/account/password" title={t("nav.myPassword")}
+            <Link to="/account" title={t("nav.myProfile")}
               className="block text-xs font-medium text-gray-700 truncate hover:text-indigo-700">
               {user?.full_name ?? user?.email}
             </Link>

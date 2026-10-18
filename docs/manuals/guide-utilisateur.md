@@ -39,7 +39,11 @@ Pour l'installation et les réglages, voir le [Guide administrateur](./guide-adm
 - **Se déconnecter** : en bas du menu de gauche. Faites-le toujours sur un poste partagé.
 - **Première connexion** : le mot de passe reçu est temporaire. SDAI vous demande aussitôt d'en choisir
   un (au moins 8 caractères, différent de votre adresse e-mail) ; rien d'autre n'est accessible avant.
-- **Changer mon mot de passe** : cliquez sur votre nom en bas du menu. Vos autres sessions ouvertes
+- **Mon profil** : cliquez sur votre nom ou votre photo en bas du menu. Vous y changez votre nom
+  complet, votre fonction, votre téléphone et votre photo de profil (JPEG, PNG, WebP ou GIF, 5 Mo au
+  plus, recadrée en carré ; vos collègues la voient). L'adresse e-mail sert à vous connecter : seule la
+  personne qui gère les comptes peut la changer.
+- **Changer mon mot de passe** : depuis **Mon profil**. Vos autres sessions ouvertes
   (autre poste, autre navigateur) sont alors fermées.
 - **Mot de passe oublié** : demandez à un administrateur, ou à la personne qui gère les comptes, de le
   réinitialiser ; vous recevrez un nouveau mot de passe temporaire.

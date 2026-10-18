@@ -63,6 +63,9 @@ class CurrentUser:
     can_manage_users: bool = False
     must_change_password: bool = False
     password_changed_at: datetime | None = None
+    job_title: str | None = None
+    phone: str | None = None
+    avatar_updated_at: datetime | None = None
 
     @property
     def is_reader(self) -> bool:
@@ -189,7 +192,7 @@ async def load_user(conn, user_id: str, locale: str = "en") -> CurrentUser | Non
             "       t.is_active AS tenant_is_active, u.can_manage_access,"
             "       u.can_edit_extraction, u.can_manage_lifecycle, u.can_share, u.clearance,"
             "       u.can_manage_users, u.must_change_password, u.deleted_at,"
-            "       u.password_changed_at"
+            "       u.password_changed_at, u.job_title, u.phone, u.avatar_updated_at"
             " FROM sdai_users u"
             " JOIN sdai_tenants t ON t.id = u.tenant_id"
             " WHERE u.id = CAST(:id AS uuid)"
@@ -224,6 +227,9 @@ async def load_user(conn, user_id: str, locale: str = "en") -> CurrentUser | Non
         can_manage_users=user[14],
         must_change_password=user[15],
         password_changed_at=user[17],
+        job_title=user[18],
+        phone=user[19],
+        avatar_updated_at=user[20],
     )
 
 

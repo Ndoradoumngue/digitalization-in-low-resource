@@ -489,6 +489,12 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
   `audit.display_email_sql()`, frontend `replaceDeletedUsers` in api-client ("Utilisateur supprimé du
   système"); signed PDFs and destruction PVs keep the name. Group membership stays admin-only (Accès &
   Groupes).
+- **My profile** (`profile_router.py`, `ProfilePage` at `/account`, `components/Avatar.tsx`): anyone
+  signed in (`require_user`, never an API key) edits `full_name`, `job_title`, `phone` and their picture.
+  The upload (≤ 5 MB, JPEG/PNG/WebP/GIF, ≤ 40 Mpx) is decoded by Pillow and re-encoded to a 256x256 JPEG
+  (no EXIF), kept base64 in `sdai_users.avatar` so the row sync carries it; `avatar_url` (in `/me`, login,
+  `/api/admin/users`) is versioned by `avatar_updated_at`, served `Cache-Control: private` to the same
+  tenant only. E-mail/role/permissions are not editable there. Soft delete clears all four columns.
 - **Security review (9.1)**: every route walks to `get_current_user` (except login/logout, `/s/{token}`
   and HMAC sync); findings fixed are listed in CHANGELOG 2.0.0. `tests/test_hardening.py` also checks that
   the API Dockerfile copies every imported module and that no compose build context is git-ignored.

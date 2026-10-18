@@ -40,7 +40,7 @@
     "retention": "Règles de conservation",
     "trash": "Corbeille",
     "users": "Utilisateurs",
-    "myPassword": "Changer mon mot de passe"
+    "myProfile": "Mon profil"
   },
   "login": {
     "tagline": "Plateforme d'extraction de documents",
@@ -623,7 +623,10 @@
       "emails_retried": "E-mails renvoyés",
       "emails_discarded": "E-mails en échec supprimés",
       "document_type_assigned": "Type de document attribué",
-      "document_extraction_requested": "Extraction demandée"
+      "document_extraction_requested": "Extraction demandée",
+      "profile_updated": "Profil modifié",
+      "avatar_changed": "Photo de profil changée",
+      "avatar_removed": "Photo de profil supprimée"
     },
     "header": "Journal d'audit",
     "eventsRecorded": "{{count}} événements enregistrés",
@@ -1446,6 +1449,27 @@
     "saving": "Enregistrement…",
     "changed": "Mot de passe changé.",
     "sessionsNote": "Changer votre mot de passe vous déconnecte partout ailleurs."
+  },
+  "profile": {
+    "title": "Mon profil",
+    "picture": "Photo de profil",
+    "pictureHint": "JPEG, PNG, WebP ou GIF, 5 Mo au plus. Elle est recadrée en carré.",
+    "choosePicture": "Choisir une photo",
+    "removePicture": "Supprimer",
+    "pictureSaved": "Photo enregistrée.",
+    "pictureRemoved": "Photo supprimée.",
+    "tooLarge": "La photo doit faire au plus {{n}} Mo.",
+    "basicInfo": "Informations de base",
+    "fullName": "Nom complet",
+    "jobTitle": "Fonction",
+    "phone": "Téléphone",
+    "email": "Adresse e-mail",
+    "emailHint": "Votre adresse e-mail sert à vous connecter : demandez à un gestionnaire des utilisateurs de la changer.",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "saved": "Profil enregistré.",
+    "password": "Mot de passe",
+    "changePassword": "Changer mon mot de passe"
   },
   "extraction": {
     "notExtracted": "Non extrait",

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { CONFIDENTIALITY_LEVELS, USER_FLAGS, type AdminUser, type Confidentiality, type Group, type User, type UserFlag } from "@sdai/types";
 import type { UpdateUserBody } from "@sdai/api-client";
 import NavSidebar from "../components/NavSidebar";
+import Avatar from "../components/Avatar";
 import { useAuth } from "../context/AuthContext";
 import { useConfirm } from "../context/ConfirmContext";
 import {
@@ -198,12 +199,16 @@ function UserRow({ me, user, groups }: { me: User; user: AdminUser; groups: Grou
   return (
     <li className={`py-3 ${user.is_active ? "" : "opacity-70"}`}>
       <div className="flex items-start gap-3">
+        <Avatar url={user.avatar_url} name={user.full_name} email={user.email} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-gray-800 truncate">
             {user.full_name ?? user.email}
             {self && <span className="ml-1 text-xs text-gray-400">({t("users.you")})</span>}
           </p>
-          <p className="text-xs text-gray-500 truncate">{user.email}</p>
+          <p className="text-xs text-gray-500 truncate">
+            {user.email}
+            {user.job_title && <span> · {user.job_title}</span>}
+          </p>
           <div className="flex flex-wrap gap-1 mt-1">
             <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${user.role === "admin" ? "bg-indigo-100 text-indigo-700" : "bg-gray-100 text-gray-600"}`}>
               {t(`roles.${user.role}`)}

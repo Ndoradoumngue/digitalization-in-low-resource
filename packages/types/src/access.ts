@@ -44,6 +44,8 @@ export const AdminUserSchema = z.object({
   must_change_password: z.boolean().default(false),
   created_at: z.string().nullable().optional(),
   last_login_at: z.string().nullable().optional(),
+  job_title: z.string().nullable().optional(),
+  avatar_url: z.string().nullable().optional(),
 });
 export type AdminUser = z.infer<typeof AdminUserSchema>;
 

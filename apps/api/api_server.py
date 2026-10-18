@@ -206,7 +206,8 @@ async def login(
                 "       t.slug AS tenant_slug, t.name AS tenant_name, t.is_active AS tenant_is_active,"
                 "       u.can_manage_access, u.can_edit_extraction,"
                 "       u.can_manage_lifecycle, u.can_share, u.clearance,"
-                "       u.can_manage_users, u.must_change_password"
+                "       u.can_manage_users, u.must_change_password,"
+                "       u.job_title, u.phone, u.avatar_updated_at"
                 " FROM sdai_users u"
                 " JOIN sdai_tenants t ON t.id = u.tenant_id"
                 " WHERE lower(u.email) = lower(:e) AND u.deleted_at IS NULL"
@@ -263,6 +264,9 @@ async def login(
         "clearance": user[13],
         "can_manage_users": user[14],
         "must_change_password": user[15],
+        "job_title": user[16],
+        "phone": user[17],
+        "avatar_url": avatar_url(str(user[0]), user[18]),
         "node_id": NODE_ID,
         "node_role": NODE_ROLE,
     }
@@ -328,6 +332,9 @@ async def me(current_user: CurrentUser = Depends(get_current_user)):
         "clearance": current_user.clearance,
         "can_manage_users": current_user.can_manage_users,
         "must_change_password": current_user.must_change_password,
+        "job_title": current_user.job_title,
+        "phone": current_user.phone,
+        "avatar_url": avatar_url(current_user.id, current_user.avatar_updated_at),
         "node_id": NODE_ID,
         "node_role": NODE_ROLE,
     }
@@ -614,6 +621,13 @@ app.include_router(admin_router)
 from users_router import router as users_router
 
 app.include_router(users_router)
+
+# ── My profile (any signed-in person) ─────────────────────────────────────────
+
+from profile_router import avatar_url
+from profile_router import router as profile_router
+
+app.include_router(profile_router)
 
 # ── Node-to-node sync router (local/cloud) ────────────────────────────────────
 # Signed by the peer node (sync.auth), never by a user session.

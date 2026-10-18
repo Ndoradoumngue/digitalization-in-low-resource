@@ -1,6 +1,9 @@
 import { z } from "zod";
 import {
   AdminUserSchema,
+  AvatarResponseSchema,
+  ProfileSchema,
+  type Profile,
   AdminUsersResponseSchema,
   AllOcrResultsSchema,
   AllVlmResultsSchema,
@@ -962,6 +965,23 @@ export async function changePassword(currentPassword: string, newPassword: strin
     current_password: currentPassword,
     new_password: newPassword,
   });
+}
+
+/** Change my name, job title or phone - an empty string clears one. */
+export async function updateProfile(changes: Partial<Profile>): Promise<Profile> {
+  return ProfileSchema.parse(await (await sendJson("/api/account/profile", "PATCH", changes)).json());
+}
+
+/** Set my profile picture - the server crops it to a square. Returns its new URL. */
+export async function uploadAvatar(file: File): Promise<string | null> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch("/api/account/avatar", withAuth({ method: "PUT", body: fd }));
+  return (await jsonOrThrow(res, AvatarResponseSchema)).avatar_url;
+}
+
+export async function deleteAvatar(): Promise<void> {
+  await sendJson("/api/account/avatar", "DELETE");
 }
 
 export async function addUserToGroup(userId: string, groupId: string): Promise<void> {

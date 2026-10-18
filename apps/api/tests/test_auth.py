@@ -26,6 +26,9 @@ def _user_row(active: bool = True, tenant_active: bool = True):
         "internal",  # clearance
         False,  # can_manage_users
         False,  # must_change_password
+        None,  # job_title
+        None,  # phone
+        None,  # avatar_updated_at
     )
 
 

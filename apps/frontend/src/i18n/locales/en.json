@@ -40,7 +40,7 @@
     "retention": "Retention rules",
     "trash": "Trash",
     "users": "Users",
-    "myPassword": "Change my password"
+    "myProfile": "My profile"
   },
   "login": {
     "tagline": "Document extraction platform",
@@ -623,7 +623,10 @@
       "emails_retried": "E-mails sent again",
       "emails_discarded": "Failed e-mails dropped",
       "document_type_assigned": "Document type assigned",
-      "document_extraction_requested": "Extraction requested"
+      "document_extraction_requested": "Extraction requested",
+      "profile_updated": "Profile updated",
+      "avatar_changed": "Profile picture changed",
+      "avatar_removed": "Profile picture removed"
     },
     "header": "Audit Log",
     "eventsRecorded": "{{count}} events recorded",
@@ -1446,6 +1449,27 @@
     "saving": "Saving…",
     "changed": "Password changed.",
     "sessionsNote": "Changing your password signs you out everywhere else."
+  },
+  "profile": {
+    "title": "My profile",
+    "picture": "Profile picture",
+    "pictureHint": "JPEG, PNG, WebP or GIF, up to 5 MB. It is cropped to a square.",
+    "choosePicture": "Choose a picture",
+    "removePicture": "Remove",
+    "pictureSaved": "Picture saved.",
+    "pictureRemoved": "Picture removed.",
+    "tooLarge": "The picture must be at most {{n}} MB.",
+    "basicInfo": "Basic information",
+    "fullName": "Full name",
+    "jobTitle": "Job title",
+    "phone": "Phone",
+    "email": "E-mail address",
+    "emailHint": "Your e-mail address is your sign-in: ask a user manager to change it.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Profile saved.",
+    "password": "Password",
+    "changePassword": "Change my password"
   },
   "extraction": {
     "notExtracted": "Not extracted",
