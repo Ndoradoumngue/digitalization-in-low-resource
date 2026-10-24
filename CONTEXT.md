@@ -553,7 +553,18 @@ sync) and a **cloud** node (plain VM at DigitalOcean/AWS, no Ollama, always reac
 - **Audit**: per-document audit queries (history tab, signature evidence) match on `document_id`
   (index `sdai_audit_log_document_id_idx`) - entries written before a move keep the old table name.
 
-### Document Upload & Ingestion
+### Getting Started Guide
+
+- `GuidePage` at `/guide` (every signed-in person, sidebar link **Getting started** / *Prise en main*): the
+  journey of a document (upload, page reading, extraction, review, filing, use and retention - the steps
+  the person takes part in marked "You"), "Your account" (role, tenant, clearance, a capability list
+  computed with `utils/permissions.ts`, greyed where not allowed), then one section per task shown only
+  to those who can do it (upload/review/versions: reviewers and admins, lifecycle: archivists,
+  administration: admins and user managers), FAQ. Text in `guide.*` (fr/en, arrays read with
+  `returnObjects`), condensed from `docs/manuals/guide-utilisateur.md` - keep both in step.
+- Dashboard: "How does it work?" links to the guide, and a "New here?" banner shows until the guide is
+  opened or dismissed on this browser (`utils/guide.ts`, localStorage `sdai_guide_seen`).
+
 
 - `POST /api/ingest` - accepts multipart file upload, stores document in PostgreSQL.
 - Dynamic schema management: `_ensure_table()` creates or alters tables based on extracted fields.

@@ -40,7 +40,8 @@
     "retention": "Retention rules",
     "trash": "Trash",
     "users": "Users",
-    "myProfile": "My profile"
+    "myProfile": "My profile",
+    "guide": "Getting started"
   },
   "login": {
     "tagline": "Document extraction platform",
@@ -1483,5 +1484,213 @@
     "started_other": "Extraction started for {{count}} documents.",
     "notStarted_one": "{{count}} document could not be extracted (already extracted, running or not editable).",
     "notStarted_other": "{{count}} documents could not be extracted (already extracted, running or not editable)."
+  },
+  "guide": {
+    "title": "Getting started",
+    "subtitle": "How the system works, from the paper document to the archive - and what your account lets you do.",
+    "toc": "On this page",
+    "open": "Open {{page}} →",
+    "flow": {
+      "title": "How a document travels through the system",
+      "intro": "Every document follows the same path. You take part in the steps marked “You”.",
+      "you": "You",
+      "optional": "optional",
+      "steps": [
+        {
+          "title": "Upload",
+          "text": "A scan (JPG, PNG) or a PDF is uploaded. A file already in the archive is recognised and not stored twice."
+        },
+        {
+          "title": "Page reading",
+          "text": "Each page is transcribed, so the text of every page can be searched."
+        },
+        {
+          "title": "Data extraction",
+          "text": "The extraction model reads the document's fields (number, date, parties…) and recognises its type. It can also be run later."
+        },
+        {
+          "title": "Review",
+          "text": "Reliable results are approved automatically. The others wait in the review queue for a person to check and correct them."
+        },
+        {
+          "title": "Filing",
+          "text": "The document gets a record number and is filed in its category (or in “To be filed”), with its access rights, versions and history."
+        },
+        {
+          "title": "Daily use and retention",
+          "text": "People search, consult, comment, sign, share and export it. When its retention period ends, an archivist decides to keep or destroy it."
+        }
+      ]
+    },
+    "account": {
+      "title": "Your account",
+      "role": "You are signed in as <b>{{role}}</b> in <b>{{tenant}}</b>.",
+      "clearance": "Your clearance is <b>{{level}}</b>: you only see documents up to this confidentiality level.",
+      "can": "What you can do",
+      "cannotNote": "Greyed-out items need another role or a permission an administrator can give you.",
+      "caps": {
+        "read": "Search and consult the documents you have access to",
+        "download": "Download originals, when your access to the document allows it",
+        "upload": "Upload documents",
+        "review": "Review, file, tag, link and comment on documents; request and give signatures",
+        "editFields": "Correct extracted data",
+        "manageAccess": "Restrict access to documents and set their confidentiality",
+        "share": "Create share links for people without an account",
+        "lifecycle": "Archive documents, manage retention, legal holds, the trash and destructions",
+        "users": "Create and manage user accounts",
+        "admin": "Administer groups, audit log, synchronisation and settings"
+      },
+      "tipsTitle": "Good to know",
+      "tips": [
+        "Click your name at the bottom of the menu to open My profile: name, job title, phone, picture and password.",
+        "FR / EN at the bottom of the menu changes the language. Your choice is remembered on this browser.",
+        "A session lasts 8 hours. Always sign out on a shared computer.",
+        "Forgotten password: ask an administrator or the person who manages accounts to reset it. You will get a new temporary password."
+      ]
+    },
+    "sections": {
+      "find": {
+        "title": "Find a document",
+        "intro": "The search box at the top of the menu searches the extracted data and the text of every page.",
+        "steps": [
+          "Type a few words, then Enter. Accents and capitals are ignored, and close word forms match too (“contracts” finds “contract”).",
+          "Results show an extract with the words found highlighted, and the pages they were found on. Click “p. 3” to open the document at that page.",
+          "On the Documents page, combine the search with filters: category (with sub-categories), tag, document type, reviewer and dates.",
+          "A document you have no access to does not appear anywhere - not in lists, searches or counts. That is expected."
+        ],
+        "examplesTitle": "Search syntax",
+        "examples": [
+          {
+            "q": "lease renewal",
+            "text": "documents containing both words"
+          },
+          {
+            "q": "\"lease renewal\"",
+            "text": "the exact phrase"
+          },
+          {
+            "q": "lease -terminated",
+            "text": "contains “lease” but not “terminated”"
+          },
+          {
+            "q": "lease or rental",
+            "text": "either word"
+          }
+        ]
+      },
+      "consult": {
+        "title": "Consult a document",
+        "intro": "Open a document from any list: the pages are on the left (scroll to zoom, ← → to move to the next document), the details on the right.",
+        "steps": [
+          "Record: the extracted data, the record number to quote in your letters, the category, tags, linked documents, access restrictions and lifecycle.",
+          "Versions: every successive file of the document. Nothing is ever overwritten.",
+          "History: every change to a field (before / after, who, when) and every view or download.",
+          "Comments and Signatures: discussions about the document and its signature requests.",
+          "An archived document is read-only. Only archivists can still change it."
+        ]
+      },
+      "upload": {
+        "title": "Upload documents",
+        "intro": "Use Upload documents at the bottom of the menu. JPG, PNG or PDF files, 50 MB at most each; a multi-page PDF becomes one document.",
+        "steps": [
+          "Drag and drop the files, or click to browse.",
+          "Choose the category to file them in, or leave automatic filing (by document type). To upload straight into a category, open it on the Documents page and click Upload here.",
+          "Choose whether to extract the data now, or to file the documents as they are. Filed as they are, they are available at once, searchable by their page text, and marked “Not extracted” - you can extract their data later from the document or from the Documents page.",
+          "Start the upload. You can leave the page: the work goes on, and your batches stay in Recent uploads.",
+          "At the end each document is approved automatically, sent to the review queue, marked Duplicate (already in the archive), Out of scope, or Failed (retry the page or enter its data by hand)."
+        ]
+      },
+      "review": {
+        "title": "Review extracted data",
+        "intro": "The Review Queue lists the documents whose extraction needs a person's check. You only see the documents you may edit.",
+        "steps": [
+          "Compare the image with the fields and correct what is wrong. An empty field means “not found”: fill it only if the information is visible.",
+          "Approve (Enter) to validate the document with your corrections, Reject to set it aside, Flag to have it entered by hand later, Skip (Escape) to move on.",
+          "Every correction is kept in the document's History."
+        ]
+      },
+      "versions": {
+        "title": "Work on a document: versions and check-out",
+        "intro": "Changes never erase anything: each new file is a new version and the history keeps every value.",
+        "steps": [
+          "Versions → New version: add a new file, say what changed, and tick re-extraction if the data must be read again.",
+          "Restore an older version: it becomes the current file again, as a new version.",
+          "Check out locks the document for you (8 hours by default) while you work on it. Others see it as locked by you and can only consult it.",
+          "Check in releases it; you can attach the new file, which becomes the next version. The lock also expires on its own."
+        ]
+      },
+      "share": {
+        "title": "Download, share, export",
+        "intro": "Every download is recorded in the document's history.",
+        "steps": [
+          "Download original: the untouched file of the current version, or of another version from the menu next to it.",
+          "Share (needs the sharing permission): creates a link for someone without an account, valid up to 30 days, with an optional password and download limit. The link is shown only once - copy it, and send the password by another channel.",
+          "Revoke a link at any time. Secret documents can never be shared, confidential ones only by an administrator.",
+          "Export several documents: tick them on the Documents page (or export all results of a search). The ZIP is prepared in the background and stays 24 hours in My exports, with a SHA-256 manifest proving the files are intact."
+        ]
+      },
+      "collaborate": {
+        "title": "Comment, sign, stay informed",
+        "intro": "Collaboration happens on the document itself, and the bell at the top of the menu tells you when you are needed.",
+        "steps": [
+          "Comments tab: write and post (Ctrl+Enter). Type @ and a name to mention someone who has access to the document - they are notified.",
+          "Signatures tab: request signatures from people in order, with a reason. Each signer is asked when the previous one has signed.",
+          "To sign, open the document's Signatures tab when it is your turn and confirm with your password. The signed file becomes a new version, and the tab shows whether each signature is still valid.",
+          "Notifications page: everything addressed to you, what waits for your signature, and how you want to be told by e-mail (each time, once a day, never)."
+        ]
+      },
+      "lifecycle": {
+        "title": "Manage the lifecycle (archivists)",
+        "intro": "Documents go from active to archived, then - when their retention period ends - to eligible for destruction.",
+        "steps": [
+          "Archive a document from its Lifecycle panel: it becomes read-only for everyone else.",
+          "Retention rules set how long each category or document type is kept, and what happens at the end (destroy, review, keep forever). The most specific rule wins.",
+          "Legal holds freeze documents (one document, a category or a search result): they cannot be trashed or destroyed while the hold is active.",
+          "Destructions: propose the eligible documents; another administrator approves. Only a record (number, type, dates, fingerprints) is kept, and a destruction report (PDF) is produced.",
+          "Trash: a deleted document stays there for 30 days by default and can be restored."
+        ]
+      },
+      "admin": {
+        "title": "Administration",
+        "intro": "These pages are in the Operations group of the menu.",
+        "steps": [
+          "Users: create accounts (with a temporary password the person must change), set their role, permissions and clearance, deactivate or reset them.",
+          "Access & Groups (administrators): groups, access grants by category or document type, filing rules and the integrity check.",
+          "Audit Log (administrators): every action, in a tamper-evident log.",
+          "Synchronisation (administrators): the state of the local / cloud servers, sync conflicts to settle, backups and failed e-mails."
+        ]
+      }
+    },
+    "faq": {
+      "title": "Frequently asked questions",
+      "items": [
+        {
+          "q": "I can't find a document my colleague sees.",
+          "a": "You don't have access to it, or your clearance is below its confidentiality. Ask an administrator or the person who manages access."
+        },
+        {
+          "q": "“Locked by …”",
+          "a": "Someone checked the document out. Wait for them to check it in, or ask them - their name is shown."
+        },
+        {
+          "q": "“Read-only document”",
+          "a": "It is archived or its retention has ended. Only an archivist can change it."
+        },
+        {
+          "q": "“File being synchronised from the other server”",
+          "a": "The document was uploaded on the other server and its file has not arrived yet. Try again in a few minutes."
+        },
+        {
+          "q": "I deleted a document by mistake.",
+          "a": "It is in the Trash for 30 days (by default): an archivist or an administrator can restore it."
+        }
+      ]
+    },
+    "banner": {
+      "title": "New here?",
+      "text": "Take a few minutes to see how the system works and what your account lets you do.",
+      "open": "Open the guide",
+      "dismiss": "Dismiss"
+    }
   }
 }

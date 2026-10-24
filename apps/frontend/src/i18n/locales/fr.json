@@ -40,7 +40,8 @@
     "retention": "Règles de conservation",
     "trash": "Corbeille",
     "users": "Utilisateurs",
-    "myProfile": "Mon profil"
+    "myProfile": "Mon profil",
+    "guide": "Prise en main"
   },
   "login": {
     "tagline": "Plateforme d'extraction de documents",
@@ -1483,5 +1484,213 @@
     "started_other": "Extraction lancée pour {{count}} documents.",
     "notStarted_one": "{{count}} document n'a pas pu être extrait (déjà extrait, en cours ou non modifiable).",
     "notStarted_other": "{{count}} documents n'ont pas pu être extraits (déjà extraits, en cours ou non modifiables)."
+  },
+  "guide": {
+    "title": "Prise en main",
+    "subtitle": "Comment fonctionne le système, du document papier à l'archive - et ce que votre compte vous permet de faire.",
+    "toc": "Sur cette page",
+    "open": "Ouvrir {{page}} →",
+    "flow": {
+      "title": "Le parcours d'un document",
+      "intro": "Chaque document suit le même chemin. Vous intervenez aux étapes marquées « Vous ».",
+      "you": "Vous",
+      "optional": "facultatif",
+      "steps": [
+        {
+          "title": "Dépôt",
+          "text": "Une image (JPG, PNG) ou un PDF est déposé. Un fichier déjà présent dans l'archive est reconnu et n'est pas enregistré deux fois."
+        },
+        {
+          "title": "Lecture des pages",
+          "text": "Le texte de chaque page est transcrit : toutes les pages deviennent consultables par la recherche."
+        },
+        {
+          "title": "Extraction des données",
+          "text": "Le modèle d'extraction lit les champs du document (numéro, date, parties…) et reconnaît son type. Elle peut aussi être lancée plus tard."
+        },
+        {
+          "title": "Révision",
+          "text": "Les résultats sûrs sont validés automatiquement. Les autres attendent dans la file de révision qu'une personne les vérifie et les corrige."
+        },
+        {
+          "title": "Classement",
+          "text": "Le document reçoit un numéro d'enregistrement et est classé dans sa catégorie (ou dans « À classer »), avec ses droits d'accès, ses versions et son historique."
+        },
+        {
+          "title": "Usage et conservation",
+          "text": "On le recherche, le consulte, le commente, le signe, le partage et l'exporte. À la fin de sa durée de conservation, un archiviste décide de le garder ou de l'éliminer."
+        }
+      ]
+    },
+    "account": {
+      "title": "Votre compte",
+      "role": "Vous êtes connecté en tant que <b>{{role}}</b> dans <b>{{tenant}}</b>.",
+      "clearance": "Votre habilitation est <b>{{level}}</b> : vous ne voyez que les documents jusqu'à ce niveau de confidentialité.",
+      "can": "Ce que vous pouvez faire",
+      "cannotNote": "Les éléments grisés demandent un autre rôle ou une permission qu'un administrateur peut vous donner.",
+      "caps": {
+        "read": "Rechercher et consulter les documents auxquels vous avez accès",
+        "download": "Télécharger les originaux, quand votre accès au document le permet",
+        "upload": "Déposer des documents",
+        "review": "Valider, classer, étiqueter, lier et commenter les documents ; demander et apposer des signatures",
+        "editFields": "Corriger les données extraites",
+        "manageAccess": "Restreindre l'accès aux documents et fixer leur confidentialité",
+        "share": "Créer des liens de partage pour des personnes sans compte",
+        "lifecycle": "Archiver, gérer la conservation, les gels juridiques, la corbeille et les éliminations",
+        "users": "Créer et gérer les comptes utilisateurs",
+        "admin": "Administrer les groupes, le journal d'audit, la synchronisation et les réglages"
+      },
+      "tipsTitle": "Bon à savoir",
+      "tips": [
+        "Cliquez sur votre nom en bas du menu pour ouvrir Mon profil : nom, fonction, téléphone, photo et mot de passe.",
+        "FR / EN en bas du menu change la langue. Votre choix est mémorisé sur ce navigateur.",
+        "Une session dure 8 heures. Déconnectez-vous toujours sur un poste partagé.",
+        "Mot de passe oublié : demandez à un administrateur, ou à la personne qui gère les comptes, de le réinitialiser. Vous recevrez un nouveau mot de passe temporaire."
+      ]
+    },
+    "sections": {
+      "find": {
+        "title": "Rechercher un document",
+        "intro": "La zone de recherche en haut du menu cherche dans les données extraites et dans le texte de chaque page.",
+        "steps": [
+          "Tapez quelques mots, puis Entrée. Les accents et les majuscules sont ignorés, et les formes proches d'un mot aussi (« contrats » trouve « contrat »).",
+          "Les résultats montrent un extrait avec les mots trouvés surlignés, et les pages où ils figurent. Cliquez sur « p. 3 » pour ouvrir le document à cette page.",
+          "Dans la page Documents, combinez la recherche avec des filtres : catégorie (avec les sous-catégories), étiquette, type de document, réviseur et dates.",
+          "Un document auquel vous n'avez pas accès n'apparaît nulle part : ni dans les listes, ni dans la recherche, ni dans les comptes. C'est normal."
+        ],
+        "examplesTitle": "Syntaxe de recherche",
+        "examples": [
+          {
+            "q": "bail renouvellement",
+            "text": "les documents contenant les deux mots"
+          },
+          {
+            "q": "\"renouvellement du bail\"",
+            "text": "l'expression exacte"
+          },
+          {
+            "q": "bail -résilié",
+            "text": "contient « bail » mais pas « résilié »"
+          },
+          {
+            "q": "bail or location",
+            "text": "l'un ou l'autre mot"
+          }
+        ]
+      },
+      "consult": {
+        "title": "Consulter un document",
+        "intro": "Ouvrez un document depuis une liste : les pages sont à gauche (molette pour zoomer, ← → pour passer au document suivant), les détails à droite.",
+        "steps": [
+          "Fiche : les données extraites, le numéro d'enregistrement à citer dans vos courriers, la catégorie, les étiquettes, les documents liés, les restrictions d'accès et le cycle de vie.",
+          "Versions : tous les fichiers successifs du document. Rien n'est jamais écrasé.",
+          "Historique : chaque modification d'un champ (avant / après, qui, quand) et chaque consultation ou téléchargement.",
+          "Commentaires et Signatures : les discussions sur le document et ses demandes de signature.",
+          "Un document archivé est en lecture seule. Seuls les archivistes peuvent encore le modifier."
+        ]
+      },
+      "upload": {
+        "title": "Déposer des documents",
+        "intro": "Utilisez Téléverser des documents en bas du menu. Fichiers JPG, PNG ou PDF, 50 Mo au plus chacun ; un PDF de plusieurs pages devient un seul document.",
+        "steps": [
+          "Glissez-déposez les fichiers, ou cliquez pour parcourir.",
+          "Choisissez la catégorie où les classer, ou laissez le classement automatique (selon le type de document). Pour déposer directement dans une catégorie, ouvrez-la dans la page Documents et cliquez sur Déposer ici.",
+          "Choisissez d'extraire les données maintenant ou de classer les documents tels quels. Classés tels quels, ils sont disponibles tout de suite, retrouvables par le texte de leurs pages, et marqués « Non extrait » - vous pourrez extraire leurs données plus tard depuis le document ou la page Documents.",
+          "Démarrez l'ingestion. Vous pouvez quitter la page : le travail continue, et vos lots restent dans Téléversements récents.",
+          "À la fin, chaque document est validé automatiquement, envoyé dans la file de révision, marqué Doublon (déjà dans l'archive), Hors périmètre, ou Échoué (réessayez la page ou saisissez ses données à la main)."
+        ]
+      },
+      "review": {
+        "title": "Valider les données extraites",
+        "intro": "La File de révision liste les documents dont l'extraction doit être vérifiée par une personne. Vous n'y voyez que les documents que vous pouvez modifier.",
+        "steps": [
+          "Comparez l'image et les champs et corrigez ce qui est faux. Un champ vide signifie « non trouvé » : remplissez-le seulement si l'information est visible.",
+          "Approuver (Entrée) valide le document avec vos corrections, Rejeter l'écarte, Signaler le met de côté pour une saisie manuelle, Ignorer (Échap) passe au suivant.",
+          "Toutes les corrections sont gardées dans l'Historique du document."
+        ]
+      },
+      "versions": {
+        "title": "Travailler sur un document : versions et verrouillage",
+        "intro": "Une modification n'efface jamais rien : chaque nouveau fichier est une nouvelle version et l'historique garde toutes les valeurs.",
+        "steps": [
+          "Versions → Nouvelle version : ajoutez le nouveau fichier, indiquez ce qui a changé, cochez la ré-extraction si les données doivent être relues.",
+          "Restaurer une ancienne version : elle redevient le fichier courant, sous forme d'une nouvelle version.",
+          "Extraire verrouille le document pour vous (8 heures par défaut) pendant que vous travaillez dessus. Les autres le voient verrouillé par vous et ne peuvent que le consulter.",
+          "Réintégrer le libère ; vous pouvez joindre le nouveau fichier, qui devient la version suivante. Le verrou se libère aussi tout seul à l'échéance."
+        ]
+      },
+      "share": {
+        "title": "Télécharger, partager, exporter",
+        "intro": "Chaque téléchargement est enregistré dans l'historique du document.",
+        "steps": [
+          "Télécharger l'original : le fichier intact de la version courante, ou d'une autre version depuis le menu à côté.",
+          "Partager (permission de partage nécessaire) : crée un lien pour une personne sans compte, valable jusqu'à 30 jours, avec mot de passe et nombre de téléchargements facultatifs. Le lien n'est affiché qu'une fois : copiez-le, et envoyez le mot de passe par un autre moyen.",
+          "Révoquez un lien à tout moment. Les documents Secret ne peuvent jamais être partagés, les Confidentiel seulement par un administrateur.",
+          "Exporter plusieurs documents : cochez-les dans la page Documents (ou exportez tous les résultats d'une recherche). Le ZIP se prépare en arrière-plan et reste 24 heures dans Mes exports, avec un manifeste SHA-256 qui prouve que les fichiers sont intacts."
+        ]
+      },
+      "collaborate": {
+        "title": "Commenter, signer, être informé",
+        "intro": "La collaboration se passe sur le document lui-même, et la cloche en haut du menu vous prévient quand on a besoin de vous.",
+        "steps": [
+          "Onglet Commentaires : écrivez puis publiez (Ctrl+Entrée). Tapez @ et un nom pour mentionner une personne qui a accès au document : elle est notifiée.",
+          "Onglet Signatures : demandez des signatures, dans l'ordre, avec un motif. Chaque signataire est sollicité quand le précédent a signé.",
+          "Pour signer, ouvrez l'onglet Signatures du document quand c'est votre tour et confirmez avec votre mot de passe. Le fichier signé devient une nouvelle version, et l'onglet indique si chaque signature est toujours valide.",
+          "Page Notifications : tout ce qui vous est adressé, ce qui attend votre signature, et comment être prévenu par e-mail (à chaque fois, une fois par jour, jamais)."
+        ]
+      },
+      "lifecycle": {
+        "title": "Gérer le cycle de vie (archivistes)",
+        "intro": "Les documents passent d'actifs à archivés, puis - à la fin de leur durée de conservation - à éliminables.",
+        "steps": [
+          "Archivez un document depuis son panneau Cycle de vie : il passe en lecture seule pour tous les autres.",
+          "Les règles de conservation fixent combien de temps chaque catégorie ou type de document est gardé, et ce qui se passe ensuite (éliminer, réexaminer, conserver indéfiniment). La règle la plus précise l'emporte.",
+          "Les gels juridiques bloquent des documents (un document, une catégorie ou le résultat d'une recherche) : impossible de les mettre à la corbeille ou de les éliminer tant que le gel est actif.",
+          "Éliminations : proposez les documents éliminables ; un autre administrateur approuve. Seule une trace est gardée (numéro, type, dates, empreintes), et un procès-verbal d'élimination (PDF) est produit.",
+          "Corbeille : un document supprimé y reste 30 jours par défaut et peut être restauré."
+        ]
+      },
+      "admin": {
+        "title": "Administration",
+        "intro": "Ces pages sont dans le groupe Opérations du menu.",
+        "steps": [
+          "Utilisateurs : créez les comptes (avec un mot de passe temporaire que la personne doit changer), fixez leur rôle, leurs permissions et leur habilitation, désactivez-les ou réinitialisez-les.",
+          "Accès & Groupes (administrateurs) : groupes, accès par catégorie ou type de document, règles de classement et contrôle d'intégrité.",
+          "Journal d'audit (administrateurs) : chaque action, dans un journal infalsifiable.",
+          "Synchronisation (administrateurs) : l'état des serveurs local / cloud, les conflits de synchronisation à trancher, les sauvegardes et les e-mails en échec."
+        ]
+      }
+    },
+    "faq": {
+      "title": "Questions fréquentes",
+      "items": [
+        {
+          "q": "Je ne trouve pas un document que mon collègue voit.",
+          "a": "Vous n'avez pas l'accès, ou votre habilitation est inférieure à sa confidentialité. Demandez à un administrateur ou à la personne qui gère les accès."
+        },
+        {
+          "q": "« Verrouillé par … »",
+          "a": "Quelqu'un a extrait le document. Attendez sa réintégration, ou demandez-lui (son nom est affiché)."
+        },
+        {
+          "q": "« Document en lecture seule »",
+          "a": "Il est archivé ou sa conservation est échue. Seul un archiviste peut le modifier."
+        },
+        {
+          "q": "« Fichier en cours de synchronisation depuis l'autre serveur »",
+          "a": "Le document a été déposé sur l'autre serveur et son fichier n'est pas encore arrivé. Réessayez dans quelques minutes."
+        },
+        {
+          "q": "J'ai supprimé un document par erreur.",
+          "a": "Il est dans la Corbeille pendant 30 jours (par défaut) : un archiviste ou un administrateur peut le restaurer."
+        }
+      ]
+    },
+    "banner": {
+      "title": "Nouveau ici ?",
+      "text": "Prenez quelques minutes pour voir comment fonctionne le système et ce que votre compte vous permet de faire.",
+      "open": "Ouvrir le guide",
+      "dismiss": "Masquer"
+    }
   }
 }
