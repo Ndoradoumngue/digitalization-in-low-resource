@@ -20,13 +20,20 @@ import type { ReviewQueueItem } from "@sdai/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-// System columns (mirrors _BASE_COLS in apps/api/ingest_router.py) - not
-// extracted content, so never shown as editable fields.
+// System columns (mirrors _BASE_COLS in apps/api/ingest_router.py, and the
+// GED columns skipped by DocumentDetailPage) - not extracted content, so
+// never shown as editable fields.
 const READONLY = new Set([
   "id", "table_name", "document_type", "confidence",
   "review_status", "source_image_path", "source_pdf_path", "page_image_paths",
   "ingested_at", "reviewed_at", "reviewed_by", "batch_id", "batch_document_id",
-  "content_hash",
+  "content_hash", "record_id", "series_id", "uploaded_by",
+  // GED document-level state and lifecycle / sync bookkeeping
+  "lifecycle_status", "confidentiality", "original_path", "original_hash",
+  "current_version", "deleted_at", "deleted_by", "retention_until", "legal_hold",
+  "locked_by", "locked_until", "updated_at", "origin_node", "hlc",
+  "deleted_reason", "archived_at", "archived_by", "retention_rule_id",
+  "retention_override", "destroyed_at", "destruction_id",
 ]);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

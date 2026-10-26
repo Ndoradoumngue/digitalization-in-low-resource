@@ -108,3 +108,26 @@ def test_create_admin_gives_admins_every_clearance(fresh_db, monkeypatch):
         ]
         == "confidential"
     )
+
+
+def test_restart_keeps_other_tenants_tables(fresh_db):
+    # The pre-tenancy migration (_TENANT_TABLE_RENAME_DDL) runs on every
+    # startup: it must rename only unprefixed legacy tables, never another
+    # tenant's t_<slug>_ tables.
+    import ingest_router
+
+    _run(fresh_db, "land", "Land office", None)
+    _sql("CREATE TABLE t_land_titre (id uuid, source_image_path text)")
+    _sql("CREATE TABLE ordre_de_mission (id uuid, source_image_path text)")
+    for _ in range(2):  # once per restart
+        _sql(ingest_router._TENANT_TABLE_RENAME_DDL)
+    names = {
+        r["table_name"]
+        for r in _sql(
+            "SELECT table_name FROM information_schema.tables"
+            " WHERE table_schema = 'public' AND table_name IN"
+            " ('t_land_titre', 't_default_t_land_titre', 'ordre_de_mission',"
+            "  't_default_ordre_de_mission')"
+        )
+    }
+    assert names == {"t_land_titre", "t_default_ordre_de_mission"}

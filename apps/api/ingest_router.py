@@ -1086,7 +1086,10 @@ CREATE TABLE IF NOT EXISTS sdai_audit_chain_heads (
 # `_INIT_DDL.split(";")` would otherwise chop into invalid fragments.
 # Idempotent: the "NOT LIKE 't\\_default\\_%'" guard means already-migrated
 # tables are skipped on every subsequent startup. 'default' is a reserved
-# tenant slug as a result - see README.
+# tenant slug as a result - see README. Tables already carrying another
+# tenant's "t_<slug>_" prefix are not pre-tenancy tables and are left alone
+# (without that guard every non-default tenant's tables were moved into the
+# default tenant at the next restart).
 _TENANT_TABLE_RENAME_DDL = r"""
 DO $$
 DECLARE
@@ -1100,6 +1103,10 @@ BEGIN
           AND c.column_name = 'source_image_path'
           AND c.table_name NOT IN ('batches', 'batch_documents')
           AND c.table_name NOT LIKE 't\_default\_%' ESCAPE '\'
+          AND NOT EXISTS (
+              SELECT 1 FROM sdai_tenants t
+              WHERE starts_with(c.table_name, 't_' || t.slug || '_')
+          )
     LOOP
         new_name := left('t_default_' || r.table_name, 63);
         EXECUTE format('ALTER TABLE %I RENAME TO %I', r.table_name, new_name);
